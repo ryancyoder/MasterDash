@@ -56,8 +56,11 @@ export default function AppFrame({
   const isRunaway = runawayMinutes > settings.runawayThreshold;
 
   if (!fieldMode) {
+    // h-[100dvh], not min-h-screen: the board's h-full needs a definite height
+    // on this ancestor or it collapses to content height and the footer floats
+    // mid-page.
     return (
-      <div className="min-h-screen flex flex-col bg-bg">
+      <div className="h-[100dvh] flex flex-col bg-bg">
         <header className="flex items-center gap-4 px-5 h-14 border-b border-edge shrink-0">
           <span className="font-bold tracking-tight text-lg">MasterDash</span>
           <nav className="flex items-center gap-1">
