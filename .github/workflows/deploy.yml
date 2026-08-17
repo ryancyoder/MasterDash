@@ -25,7 +25,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
 
       - name: Setup Pages
@@ -34,6 +34,9 @@ jobs:
           # Injects basePath/assetPrefix so the app works from /MasterDash/
           # rather than the domain root.
           static_site_generator: next
+          # Turn Pages on for the repo if it isn't already, instead of failing
+          # the build and requiring a trip to repo settings.
+          enablement: true
 
       - name: Install dependencies
         run: npm ci
