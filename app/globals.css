@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+/*
+  MasterDash is a dark, high-contrast field instrument. There is no light theme:
+  the black frame is load-bearing in the design, and a white field UI is
+  unreadable in direct sun.
+*/
+
+:root {
+  --md-bg: #000000;
+  --md-surface: #121214;
+  --md-surface-2: #1c1c20;
+  --md-border: #2c2c32;
+  --md-text: #f5f5f6;
+  --md-muted: #8b8b93;
+  --md-accent: #22c55e;
+}
+
+@theme inline {
+  --color-bg: var(--md-bg);
+  --color-surface: var(--md-surface);
+  --color-surface2: var(--md-surface-2);
+  --color-edge: var(--md-border);
+  --color-ink: var(--md-text);
+  --color-muted: var(--md-muted);
+  --color-accent: var(--md-accent);
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--md-bg);
+  color: var(--md-text);
+  overscroll-behavior: none;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Field use: never select text or fire a magnifier on a long press. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+/* Inputs are the exception — they need selection to be editable. */
+input,
+textarea,
+select {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Honour the notch/home indicator when installed to the home screen. */
+.md-safe {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@keyframes md-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.md-live-dot {
+  animation: md-pulse 2s ease-in-out infinite;
+}
+
+/* Tap feedback has to be instant and unmistakable through a work glove. */
+@keyframes md-flash {
+  from {
+    transform: scale(0.94);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+.md-tapped {
+  animation: md-flash 180ms ease-out;
+}
+
+.md-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--md-border) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+
+.md-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.md-scroll::-webkit-scrollbar-thumb {
+  background: var(--md-border);
+  border-radius: 999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-live-dot,
+  .md-tapped {
+    animation: none;
+  }
+}
