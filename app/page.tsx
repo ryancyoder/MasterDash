@@ -107,15 +107,9 @@ function Board({
   );
 
   /**
-   * A tap either navigates the hierarchy or logs — never both.
-   *
-   * A tile with children is a folder and only opens its set. Keeping the two
-   * meanings apart means a mis-tap while browsing can never start a timer.
-   *
-   * A leaf may additionally carry a link. Time is logged first so the entry
-   * exists even if the browser refuses to open the window, and openUrl runs
-   * synchronously inside this handler because Safari only honours window.open
-   * while a user gesture is still being processed.
+   * Single tap: navigate a folder, or start/stop the timer on a leaf. It never
+   * opens a link, so tapping a running link tile to clock out stays a clean
+   * stop instead of reopening the site every time.
    */
   const handleTap = useCallback(
     (activity: Activity) => {
@@ -123,17 +117,42 @@ function Board({
         setParentId(activity.id);
         return;
       }
-
       tapActivity(activity);
-
-      // openUrl only reports failure for a URL we refuse to open at all.
-      if (activity.url && !openUrl(activity.url)) {
-        setRefusedUrl(activity.url);
-      }
       // Stay on this level: moving between siblings is the common case once
       // you are inside a set.
     },
     [childCounts],
+  );
+
+  /**
+   * Double tap on a link tile: open the link, and clock in if it was not
+   * already running.
+   *
+   * Starting but never stopping is the asymmetry that makes this safe — the
+   * gesture that means "go work in that app" can only ever put you on the
+   * clock, so a double tap can never silently end an entry.
+   */
+  const handleDoubleTap = useCallback(
+    (activity: Activity) => {
+      if (!activity.url) return;
+
+      // Open first: this runs inside the tap gesture, and Safari only honours
+      // a new window while one is still being processed. A store write ahead
+      // of it would still be synchronous, but there is no reason to risk it.
+      const opened = openUrl(activity.url);
+
+      const alreadyRunning = entries.some(
+        (e) => !e.endedAt && e.activityId === activity.id,
+      );
+      // "instant" tiles write a fixed block on their own tap; auto-logging one
+      // here would silently double-count it.
+      if (!alreadyRunning && activity.logMode !== "instant") {
+        tapActivity(activity);
+      }
+
+      if (!opened) setRefusedUrl(activity.url);
+    },
+    [entries],
   );
 
   const openSheetFor = useCallback(
@@ -269,6 +288,7 @@ function Board({
                   dropTarget={drag?.targetId === activity.id}
                   dropRefused={!!drag?.refused}
                   onTap={handleTap}
+                  onDoubleTap={handleDoubleTap}
                   onDragStart={handleDragStart}
                   onDragMove={handleDragMove}
                   onDragEnd={handleDragEnd}

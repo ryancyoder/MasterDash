@@ -47,9 +47,16 @@ Tiles are also created, nested and edited in the **Tiles** table — one row eac
 hierarchy shown by indentation, edits saved as you type. That table is the
 keyboard-accessible path; drag is a touch convenience, not the only way.
 
-**Leaf tiles can carry a link.** Tapping one starts the timer *and* opens the
-URL, so "clock into Aspire and open Aspire" is a single tap. Link tiles show a
-↗ marker, and their icon can be pulled from the site itself — where the site
+**Leaf tiles can carry a link.** **Double-tap** to open it, which also clocks
+you in if the timer was not already running — so "clock into Aspire and open
+Aspire" is one gesture. A **single tap only starts or stops the timer**, which
+means clocking out of a link tile never reopens the site.
+
+Double-tap can start a timer but never stops one, so the gesture that means "go
+work over there" can't silently end an entry. Only link tiles wait out the
+double-tap window; every other tile still fires on touch-up.
+
+Link tiles show a ↗ marker, and their icon can be pulled from the site itself — where the site
 allows it the icon is saved locally so it still shows with no signal, otherwise
 the tile falls back to its glyph. Icons come from Google's favicon service, so
 fetching one tells Google which site you added. Only http and https links are

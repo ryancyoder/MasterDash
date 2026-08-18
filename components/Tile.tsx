@@ -7,6 +7,14 @@ import { formatDuration, formatElapsed } from "@/lib/time";
 const LONG_PRESS_MS = 500;
 /** Movement past this cancels the press — a scroll must never log time. */
 const MOVE_TOLERANCE_PX = 12;
+/**
+ * Window for the second tap of a double tap, matching the platform feel.
+ *
+ * Only link tiles wait this out: their single tap has to be held back until we
+ * know a second one is not coming. Every other tile still acts on touch-up, so
+ * the board keeps its instant response where nothing is ambiguous.
+ */
+const DOUBLE_TAP_MS = 280;
 
 interface TileProps {
   activity: Activity;
@@ -26,6 +34,8 @@ interface TileProps {
   /** …and dropping would be refused (self, or its own descendant). */
   dropRefused: boolean;
   onTap: (activity: Activity) => void;
+  /** Link tiles only: open the link. */
+  onDoubleTap: (activity: Activity) => void;
   onDragStart: (activity: Activity, x: number, y: number) => void;
   onDragMove: (x: number, y: number) => void;
   onDragEnd: (x: number, y: number) => void;
@@ -44,6 +54,7 @@ export default function Tile({
   dropTarget,
   dropRefused,
   onTap,
+  onDoubleTap,
   onDragStart,
   onDragMove,
   onDragEnd,
@@ -52,6 +63,7 @@ export default function Tile({
   const [tapped, setTapped] = useState(false);
   const [iconBroken, setIconBroken] = useState(false);
   const timer = useRef<number | null>(null);
+  const tapTimer = useRef<number | null>(null);
   const origin = useRef<{ x: number; y: number } | null>(null);
   const last = useRef({ x: 0, y: 0 });
   const longFired = useRef(false);
@@ -63,7 +75,20 @@ export default function Tile({
     }
   }, []);
 
-  useEffect(() => clearTimer, [clearTimer]);
+  const clearTapTimer = useCallback(() => {
+    if (tapTimer.current !== null) {
+      window.clearTimeout(tapTimer.current);
+      tapTimer.current = null;
+    }
+  }, []);
+
+  useEffect(
+    () => () => {
+      clearTimer();
+      clearTapTimer();
+    },
+    [clearTimer, clearTapTimer],
+  );
 
   const handleDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     // Capture so the drag keeps receiving moves once the finger leaves this
@@ -113,11 +138,31 @@ export default function Tile({
     origin.current = null;
     setTapped(true);
     window.setTimeout(() => setTapped(false), 200);
-    onTap(activity);
+
+    // Tiles without a link have nothing to disambiguate, so they fire now.
+    if (!activity.url || childCount > 0) {
+      onTap(activity);
+      return;
+    }
+
+    // Second tap inside the window: open the link and drop the pending
+    // single-tap, so a double tap never also toggles the timer.
+    if (tapTimer.current !== null) {
+      clearTapTimer();
+      // Synchronous inside the gesture — Safari only opens windows here.
+      onDoubleTap(activity);
+      return;
+    }
+
+    tapTimer.current = window.setTimeout(() => {
+      tapTimer.current = null;
+      onTap(activity);
+    }, DOUBLE_TAP_MS);
   };
 
   const handleCancel = () => {
     clearTimer();
+    clearTapTimer();
     origin.current = null;
     if (longFired.current) {
       longFired.current = false;
@@ -148,7 +193,7 @@ export default function Tile({
       onPointerCancel={handleCancel}
       onContextMenu={(e) => e.preventDefault()}
       aria-label={`${activity.label}${isFolder ? `, ${childCount} inside` : ""}${
-        isLink ? ", opens a link" : ""
+        isLink ? ", double tap to open its link" : ""
       }${running ? ", running" : ""}`}
       aria-pressed={running}
       aria-haspopup={isFolder ? "menu" : undefined}

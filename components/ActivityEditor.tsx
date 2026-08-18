@@ -371,9 +371,11 @@ export default function ActivityEditor({
           )}
 
           <p className="mt-2 text-xs text-muted leading-relaxed">
-            Tapping the tile starts the timer and opens the link. Icons come from
-            Google&apos;s favicon service, so fetching one tells Google which
-            site you added.
+            <strong className="text-ink">Double-tap</strong> the tile to open
+            the link — it also clocks in if the timer was not already running. A
+            single tap only starts or stops the timer, so clocking out never
+            reopens the site. Icons come from Google&apos;s favicon service, so
+            fetching one tells Google which site you added.
           </p>
         </div>
       )}

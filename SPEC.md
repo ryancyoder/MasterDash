@@ -201,8 +201,19 @@ removing a parent lifts its children one level rather than stranding them.
 
 ## 5c. Link tiles
 
-A leaf tile may carry a URL. Tapping logs time first, then opens the link — in
-that order, so the entry exists even if the browser refuses the window.
+A leaf tile may carry a URL. **Single tap is timer-only; double tap opens the
+link** and clocks in if nothing was running for that tile.
+
+Splitting them this way is what makes a link tile usable as a timer at all —
+when one tap did both, stopping the clock reopened the site every time. The
+double tap can start an entry but never stops one, so the "go work over there"
+gesture cannot silently end the thing you were timing, and on an already-running
+tile it opens the link and touches nothing.
+
+The cost is a 280 ms deferral before a single tap acts, since the app has to
+know a second tap is not coming. It is paid only by tiles that actually carry a
+link; everything else still fires on touch-up, so the board keeps its instant
+response wherever nothing is ambiguous.
 
 - **Opened via a synthesised anchor click**, not `window.open`. With `noopener`
   set, `window.open` returns null by specification whether or not it succeeded,
