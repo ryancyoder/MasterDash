@@ -231,7 +231,10 @@ reads once Safari's UI is gone, which requires standalone display mode.
 ## 10. Decisions taken, still open to change
 
 1. **Punch is the default**, set per tile. Toggle and instant are available on
-   any tile from Settings.
+   any tile from the Tiles table.
+1b. **Folders never log.** A tile with children only navigates. Splitting
+   "navigate" from "log" across two disjoint sets of tiles keeps a single tap
+   unambiguous; the cost is an extra child when you want parent-level time.
 2. **Overnight entries span midnight.** The calendar clips them per day so a
    22:00–02:00 span shows 2h on each day rather than 4h twice.
 3. **Idle detection is a warning only.** Past the threshold (default 10h) the
@@ -245,9 +248,10 @@ Things the spec calls for that are not built yet:
 
 - **Calendar blocks are not draggable.** Corrections go through the entry sheet
   (long-press, or tap a block) instead of direct manipulation.
-- **Tiles are not reorderable by drag.** `reorderActivities` exists in the store
-  but nothing calls it; order follows creation order.
-- **No inline edit in the table.** Rows open the same entry sheet.
+- **Tiles are not reorderable by drag.** The Tiles table moves them with
+  up/down buttons instead, which is more reliable than drag on a touch screen.
+- **No inline edit in the entry table.** Log rows open the entry sheet. The
+  *tiles* table does edit inline.
 - **Contextual reordering is dimming-only.** Recency and continuation scoring is
   implemented in `lib/relevance.ts` but the board keeps manual sort order, so
   tiles do not move under you mid-task.

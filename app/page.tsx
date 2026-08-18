@@ -93,17 +93,14 @@ function Board({
   );
 
   /**
-   * One tap, three possible meanings.
+   * A tap either navigates or logs — never both.
    *
-   * A folder navigates. A folder marked logOnOpen also punches in on the way
-   * through, so you are on the clock from the first tap and can refine to a
-   * child afterwards. A leaf just logs.
+   * A tile with children is a folder and only opens its set. Keeping the two
+   * meanings apart means a mis-tap while browsing can never start a timer.
    */
   const handleTap = useCallback(
     (activity: Activity) => {
-      const isFolder = (childCounts.get(activity.id) ?? 0) > 0;
-      if (isFolder) {
-        if (activity.logOnOpen) tapActivity(activity);
+      if ((childCounts.get(activity.id) ?? 0) > 0) {
         setParentId(activity.id);
         return;
       }

@@ -22,20 +22,12 @@ export interface Activity {
   /**
    * Parent tile, for nesting. Absent = a top-level tile.
    *
-   * A tile with children acts as a folder: tapping it drills into its child
-   * grid. Whether it *also* logs on the way in is `logOnOpen`.
+   * A tile with children is a folder: tapping it opens that set and logs
+   * nothing. Only leaf tiles log time, so a tap never means two things at
+   * once. To log at a parent's level, give it a child named for the general
+   * case.
    */
   parentId?: ActivityId;
-
-  /**
-   * Only meaningful on a tile that has children.
-   *
-   * false (default) — tapping only navigates; the tile never logs.
-   * true            — tapping logs against this tile per its logMode AND
-   *                   drills in, so you are on the clock from the first tap
-   *                   and can refine to a child afterwards.
-   */
-  logOnOpen?: boolean;
 
   logMode: LogMode;
   defaultDuration?: number; // minutes — required for "instant" tiles

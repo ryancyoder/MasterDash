@@ -30,6 +30,16 @@ Each tile has a tap behaviour, set per tile in Settings:
 - **Instant** — writes a fixed-length block (e.g. a 10-minute fuel stop) and
   leaves whatever is running alone.
 
+**Tiles nest.** A tile with children is a folder: tapping it opens that set and
+logs nothing. Only leaf tiles log time, so a tap never means two things at once
+and a mis-tap while browsing can't start a timer. To track time at a parent's
+level, give it a child for the general case. Tapping a child keeps you among its
+siblings, since moving between related tasks is the common case once you're
+inside a set.
+
+Tiles are created, nested and edited in the **Tiles** table — one row each,
+hierarchy shown by indentation, edits saved as you type.
+
 **Long-press** is the only gesture that isn't logging. It opens the entry sheet
 where you adjust times, add a note, split, or delete. Everything destructive
 lives behind it, so a mis-tap on the board can never lose data.

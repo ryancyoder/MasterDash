@@ -144,7 +144,6 @@ function TilesTable({
             <col style={{ width: 170 }} />
             <col style={{ width: 130 }} />
             <col style={{ width: 90 }} />
-            <col style={{ width: 110 }} />
             <col style={{ width: 180 }} />
             <col style={{ width: 130 }} />
             <col style={{ width: 90 }} />
@@ -157,7 +156,6 @@ function TilesTable({
               <Th>Lives inside</Th>
               <Th>Tap</Th>
               <Th>Length</Th>
-              <Th>Opens + logs</Th>
               <Th>Colour</Th>
               <Th>Group</Th>
               <Th>Billable</Th>
@@ -276,19 +274,6 @@ function TilesTable({
                         }
                         aria-label={`Block length of ${activity.label}`}
                         className="w-full h-11 px-2 rounded-lg bg-surface2 border border-edge tabular-nums"
-                      />
-                    ) : (
-                      <span className="text-edge">—</span>
-                    )}
-                  </Td>
-
-                  <Td>
-                    {isParent ? (
-                      <Toggle
-                        on={!!activity.logOnOpen}
-                        onChange={(v) =>
-                          updateActivity(activity.id, { logOnOpen: v })
-                        }
                       />
                     ) : (
                       <span className="text-edge">—</span>

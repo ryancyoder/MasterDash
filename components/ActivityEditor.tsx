@@ -43,7 +43,6 @@ export default function ActivityEditor({
   const [logMode, setLogMode] = useState<LogMode>(activity?.logMode ?? "punch");
   const [duration, setDuration] = useState(activity?.defaultDuration ?? 15);
   const [billable, setBillable] = useState(activity?.billable ?? false);
-  const [logOnOpen, setLogOnOpen] = useState(activity?.logOnOpen ?? false);
   const [parentId, setParentId] = useState<ActivityId | "">(
     activity?.parentId ?? defaultParentId ?? "",
   );
@@ -73,7 +72,6 @@ export default function ActivityEditor({
       logMode,
       defaultDuration: logMode === "instant" ? duration : undefined,
       billable,
-      logOnOpen: logOnOpen || undefined,
       parentId: parentId || undefined,
       contexts: selected.length ? selected : undefined,
       activeFrom: activeFrom || undefined,
@@ -144,20 +142,11 @@ export default function ActivityEditor({
       </div>
 
       {isParent && (
-        <div className="mt-4 p-3 rounded-xl bg-surface2 border border-edge">
-          <label className="flex items-center gap-3">
-            <Toggle on={logOnOpen} onChange={setLogOnOpen} />
-            <span className="min-w-0">
-              <span className="block font-medium text-sm">
-                Also log when opened
-              </span>
-              <span className="block text-xs text-muted mt-0.5">
-                This tile has children, so tapping it opens them. With this on it
-                also starts logging against this tile on the way in.
-              </span>
-            </span>
-          </label>
-        </div>
+        <p className="mt-4 p-3 rounded-xl bg-surface2 border border-edge text-xs text-muted leading-relaxed">
+          This tile has children, so tapping it on the board opens that set and
+          logs nothing. To track time at this level, add a child for the general
+          case.
+        </p>
       )}
 
       <div className="mt-4">
