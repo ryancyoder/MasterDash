@@ -35,6 +35,7 @@ export default function Tile({
   onLongPress,
 }: TileProps) {
   const [tapped, setTapped] = useState(false);
+  const [iconBroken, setIconBroken] = useState(false);
   const timer = useRef<number | null>(null);
   const origin = useRef<{ x: number; y: number } | null>(null);
   const longFired = useRef(false);
@@ -84,6 +85,9 @@ export default function Tile({
 
   const dimmed = dimIrrelevant && !relevant;
   const isFolder = childCount > 0;
+  // A folder never carries a link, so the two markers can never collide.
+  const isLink = !isFolder && !!activity.url;
+  const showIcon = !!activity.iconUrl && !iconBroken;
 
   return (
     <button
@@ -96,8 +100,8 @@ export default function Tile({
       }}
       onContextMenu={(e) => e.preventDefault()}
       aria-label={`${activity.label}${isFolder ? `, ${childCount} inside` : ""}${
-        running ? ", running" : ""
-      }`}
+        isLink ? ", opens a link" : ""
+      }${running ? ", running" : ""}`}
       aria-pressed={running}
       aria-haspopup={isFolder ? "menu" : undefined}
       className={`relative aspect-square rounded-3xl flex flex-col items-center justify-center overflow-hidden touch-manipulation transition-opacity ${
@@ -117,9 +121,22 @@ export default function Tile({
         />
       )}
 
-      <span className="text-[clamp(1.75rem,4.5vw,3rem)] leading-none">
-        {activity.glyph}
-      </span>
+      {showIcon ? (
+        // Plain <img>: the source is an arbitrary third-party host, which the
+        // Next image loader cannot optimise under a static export anyway.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={activity.iconUrl}
+          alt=""
+          onError={() => setIconBroken(true)}
+          draggable={false}
+          className="w-[clamp(1.75rem,4.5vw,3rem)] h-[clamp(1.75rem,4.5vw,3rem)] object-contain rounded-lg"
+        />
+      ) : (
+        <span className="text-[clamp(1.75rem,4.5vw,3rem)] leading-none">
+          {activity.glyph}
+        </span>
+      )}
 
       <span
         className={`mt-2 px-2 text-center font-semibold leading-tight text-[clamp(0.7rem,1.35vw,0.95rem)] ${
@@ -149,6 +166,30 @@ export default function Tile({
       {!isFolder && activity.logMode === "instant" && (
         <span className="absolute bottom-2.5 left-2.5 text-[0.6rem] font-bold tracking-wider text-muted">
           +{activity.defaultDuration ?? 15}M
+        </span>
+      )}
+
+      {/* Link marker. Tapping this tile leaves the app, which the tile has to
+          admit before it is pressed. */}
+      {isLink && (
+        <span
+          className={`absolute bottom-2.5 right-2.5 ${
+            running ? "text-black/60" : "text-muted"
+          }`}
+          aria-hidden="true"
+        >
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          </svg>
         </span>
       )}
 

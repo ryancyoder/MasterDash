@@ -40,6 +40,15 @@ inside a set.
 Tiles are created, nested and edited in the **Tiles** table — one row each,
 hierarchy shown by indentation, edits saved as you type.
 
+**Leaf tiles can carry a link.** Tapping one starts the timer *and* opens the
+URL, so "clock into Aspire and open Aspire" is a single tap. Link tiles show a
+↗ marker, and their icon can be pulled from the site itself — where the site
+allows it the icon is saved locally so it still shows with no signal, otherwise
+the tile falls back to its glyph. Icons come from Google's favicon service, so
+fetching one tells Google which site you added. Only http and https links are
+ever opened. Folders cannot carry links, since their tap already means "open
+this set".
+
 **Long-press** is the only gesture that isn't logging. It opens the entry sheet
 where you adjust times, add a note, split, or delete. Everything destructive
 lives behind it, so a mis-tap on the board can never lose data.

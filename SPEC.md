@@ -181,6 +181,31 @@ removing a parent lifts its children one level rather than stranding them.
 
 ---
 
+## 5c. Link tiles
+
+A leaf tile may carry a URL. Tapping logs time first, then opens the link — in
+that order, so the entry exists even if the browser refuses the window.
+
+- **Opened via a synthesised anchor click**, not `window.open`. With `noopener`
+  set, `window.open` returns null by specification whether or not it succeeded,
+  so its result cannot detect a blocked popup; treating null as failure raised a
+  false "blocked" dialog on every successful tap. An anchor is also the path
+  standalone PWAs handle most reliably. `rel="noopener noreferrer"` denies the
+  opened page a handle back into this one.
+- **Only http and https are opened.** URLs are normalised and checked at both
+  save time and tap time, because a tile can arrive from an imported backup that
+  this app never validated. A refused link raises a dialog naming the value
+  rather than failing silently.
+- **Icons** come from Google's favicon service, which resolves the several ways
+  a site declares an icon. At save time the image is inlined as a data URL where
+  CORS permits, so the tile keeps its icon offline; otherwise the remote URL is
+  kept and `glyph` covers the offline case. Fetching an icon discloses the
+  domain to Google — noted in the UI, since the app otherwise makes no network
+  requests at all.
+- **Folders cannot carry links.** Their tap already means "open this set".
+
+---
+
 ## 6. Contextual tile surfacing
 
 Tiles reorder and dim according to relevance, so the right ones are under the

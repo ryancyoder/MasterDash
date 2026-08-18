@@ -17,6 +17,12 @@ import {
   removeActivity,
   updateActivity,
 } from "@/lib/store";
+import {
+  cacheImageAsDataUrl,
+  faviconUrlFor,
+  hostOf,
+  normalizeUrl,
+} from "@/lib/url";
 
 /**
  * Full editor for one tile. Shared by the tiles table and any other surface
@@ -50,6 +56,10 @@ export default function ActivityEditor({
   const [activeFrom, setActiveFrom] = useState(activity?.activeFrom ?? "");
   const [activeUntil, setActiveUntil] = useState(activity?.activeUntil ?? "");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [url, setUrl] = useState(activity?.url ?? "");
+  const [iconUrl, setIconUrl] = useState(activity?.iconUrl ?? "");
+  const [iconBusy, setIconBusy] = useState(false);
+  const [urlError, setUrlError] = useState<string | null>(null);
 
   const isParent = activity ? hasChildren(activities, activity.id) : false;
 
@@ -61,9 +71,41 @@ export default function ActivityEditor({
     (a) => !a.archived && !forbidden.has(a.id),
   );
 
+  /**
+   * Pull the site's icon. Cached inline where the host allows a cross-origin
+   * read so the tile keeps its icon offline; otherwise the remote URL is kept
+   * and the glyph covers the offline case.
+   */
+  const fetchIcon = async (fromUrl: string) => {
+    const normalized = normalizeUrl(fromUrl);
+    if (!normalized) {
+      setUrlError("That does not look like a web address.");
+      return;
+    }
+    const remote = faviconUrlFor(normalized);
+    if (!remote) return;
+
+    setIconBusy(true);
+    const cached = await cacheImageAsDataUrl(remote);
+    setIconUrl(cached ?? remote);
+    setIconBusy(false);
+  };
+
   const save = () => {
     const trimmed = label.trim();
     if (!trimmed) return;
+
+    // Refuse to store anything we would not be willing to open later.
+    let cleanUrl: string | undefined;
+    if (url.trim()) {
+      const normalized = normalizeUrl(url);
+      if (!normalized) {
+        setUrlError("Only http and https links can be opened from a tile.");
+        return;
+      }
+      cleanUrl = normalized;
+    }
+
     const data = {
       label: trimmed,
       glyph: glyph.trim() || "⭐",
@@ -76,6 +118,8 @@ export default function ActivityEditor({
       contexts: selected.length ? selected : undefined,
       activeFrom: activeFrom || undefined,
       activeUntil: activeUntil || undefined,
+      url: cleanUrl,
+      iconUrl: iconUrl || undefined,
     };
     if (activity) updateActivity(activity.id, data);
     else addActivity(data);
@@ -147,6 +191,77 @@ export default function ActivityEditor({
           logs nothing. To track time at this level, add a child for the general
           case.
         </p>
+      )}
+
+      {!isParent && (
+        <div className="mt-4">
+          <Field label="Opens this link when tapped (optional)">
+            <div className="flex gap-2">
+              <input
+                value={url}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  setUrlError(null);
+                }}
+                onBlur={() => {
+                  if (url.trim() && !iconUrl) fetchIcon(url);
+                }}
+                placeholder="cloud.youraspire.com"
+                inputMode="url"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className="flex-1 min-w-0 h-12 px-4 rounded-xl bg-surface2 border border-edge"
+              />
+              <button
+                onClick={() => fetchIcon(url)}
+                disabled={!url.trim() || iconBusy}
+                className="h-12 px-4 rounded-xl bg-surface2 border border-edge text-sm font-medium disabled:opacity-40 shrink-0"
+              >
+                {iconBusy ? "…" : "Get icon"}
+              </button>
+            </div>
+          </Field>
+
+          {urlError && (
+            <p role="alert" className="mt-2 text-xs text-red-400">
+              {urlError}
+            </p>
+          )}
+
+          {iconUrl && (
+            <div className="mt-3 flex items-center gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={iconUrl}
+                alt=""
+                className="w-11 h-11 rounded-lg object-contain bg-surface2 border border-edge p-1"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-muted">
+                  {iconUrl.startsWith("data:")
+                    ? "Saved on this device — shows with no signal."
+                    : "Loaded from the web — falls back to the glyph offline."}
+                </p>
+                {hostOf(url) && (
+                  <p className="text-xs text-muted truncate">{hostOf(url)}</p>
+                )}
+              </div>
+              <button
+                onClick={() => setIconUrl("")}
+                className="h-10 px-3 rounded-lg bg-surface2 border border-edge text-xs shrink-0"
+              >
+                Use glyph
+              </button>
+            </div>
+          )}
+
+          <p className="mt-2 text-xs text-muted leading-relaxed">
+            Tapping the tile starts the timer and opens the link. Icons come from
+            Google&apos;s favicon service, so fetching one tells Google which
+            site you added.
+          </p>
+        </div>
       )}
 
       <div className="mt-4">

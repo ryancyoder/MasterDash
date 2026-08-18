@@ -5,6 +5,7 @@ import Shell from "@/components/Shell";
 import Icon from "@/components/Icon";
 import ActivityEditor, { Toggle } from "@/components/ActivityEditor";
 import { Activity, ActivityId, LOG_MODES, LogMode, Settings, TILE_COLORS } from "@/lib/types";
+import { hostOf, normalizeUrl } from "@/lib/url";
 import {
   childrenOf,
   descendantIds,
@@ -138,12 +139,13 @@ function TilesTable({
       )}
 
       <div className="flex-1 min-h-0 overflow-auto md-scroll">
-        <table className="border-collapse text-sm table-fixed w-[1400px]">
+        <table className="border-collapse text-sm table-fixed w-[1620px]">
           <colgroup>
             <col style={{ width: 320 }} />
             <col style={{ width: 170 }} />
             <col style={{ width: 130 }} />
             <col style={{ width: 90 }} />
+            <col style={{ width: 220 }} />
             <col style={{ width: 180 }} />
             <col style={{ width: 130 }} />
             <col style={{ width: 90 }} />
@@ -156,6 +158,7 @@ function TilesTable({
               <Th>Lives inside</Th>
               <Th>Tap</Th>
               <Th>Length</Th>
+              <Th>Link</Th>
               <Th>Colour</Th>
               <Th>Group</Th>
               <Th>Billable</Th>
@@ -277,6 +280,19 @@ function TilesTable({
                       />
                     ) : (
                       <span className="text-edge">—</span>
+                    )}
+                  </Td>
+
+                  <Td>
+                    {isParent ? (
+                      <span
+                        className="text-edge"
+                        title="Folders open their child set, so they cannot carry a link"
+                      >
+                        —
+                      </span>
+                    ) : (
+                      <LinkCell activity={activity} />
                     )}
                   </Td>
 
@@ -403,6 +419,66 @@ function TilesTable({
           onClose={() => setEditing(null)}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * Inline link editing. Commits on blur rather than per keystroke so a
+ * half-typed address is never normalised out from under the cursor, and a
+ * non-http value is rejected instead of stored.
+ */
+function LinkCell({ activity }: { activity: Activity }) {
+  const [draft, setDraft] = useState(activity.url ?? "");
+  const [bad, setBad] = useState(false);
+
+  const commit = () => {
+    const raw = draft.trim();
+    if (!raw) {
+      setBad(false);
+      updateActivity(activity.id, { url: undefined });
+      return;
+    }
+    const normalized = normalizeUrl(raw);
+    if (!normalized) {
+      setBad(true);
+      return;
+    }
+    setBad(false);
+    setDraft(normalized);
+    updateActivity(activity.id, { url: normalized });
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      {activity.iconUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={activity.iconUrl}
+          alt=""
+          className="w-7 h-7 shrink-0 rounded object-contain bg-surface2 border border-edge p-0.5"
+        />
+      )}
+      <input
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          setBad(false);
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        placeholder="—"
+        inputMode="url"
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        aria-label={`Link for ${activity.label}`}
+        aria-invalid={bad}
+        title={activity.url ? (hostOf(activity.url) ?? activity.url) : undefined}
+        className={`w-full min-w-0 h-11 px-2 rounded-lg bg-surface2 border ${
+          bad ? "border-red-500" : "border-edge"
+        }`}
+      />
     </div>
   );
 }

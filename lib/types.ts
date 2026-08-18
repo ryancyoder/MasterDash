@@ -29,6 +29,19 @@ export interface Activity {
    */
   parentId?: ActivityId;
 
+  /**
+   * Optional link. Only meaningful on a leaf tile: tapping logs time as usual
+   * and opens this URL. Always http/https — see lib/url.ts.
+   */
+  url?: string;
+
+  /**
+   * Icon for a link tile: either a data URL cached at save time or a remote
+   * favicon URL. `glyph` stays the fallback for when the image cannot load,
+   * which includes being offline.
+   */
+  iconUrl?: string;
+
   logMode: LogMode;
   defaultDuration?: number; // minutes — required for "instant" tiles
 

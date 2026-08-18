@@ -8,6 +8,7 @@ import EntrySheet from "@/components/EntrySheet";
 import Icon from "@/components/Icon";
 import { Activity, ActivityId, Entry, Settings } from "@/lib/types";
 import { pathTo, tapActivity } from "@/lib/store";
+import { openUrl } from "@/lib/url";
 import { dateKey, dayTotals, formatDurationLong } from "@/lib/time";
 import { orderForBoard } from "@/lib/relevance";
 import { useTicker } from "@/lib/useStore";
@@ -39,6 +40,7 @@ function Board({
   fieldMode: boolean;
 }) {
   const [sheetEntry, setSheetEntry] = useState<Entry | null>(null);
+  const [refusedUrl, setRefusedUrl] = useState<string | null>(null);
 
   // Which level of the hierarchy is on screen. Deliberately not persisted: on
   // a fresh open you want the root grid, not wherever you happened to stop.
@@ -93,10 +95,15 @@ function Board({
   );
 
   /**
-   * A tap either navigates or logs — never both.
+   * A tap either navigates the hierarchy or logs — never both.
    *
    * A tile with children is a folder and only opens its set. Keeping the two
    * meanings apart means a mis-tap while browsing can never start a timer.
+   *
+   * A leaf may additionally carry a link. Time is logged first so the entry
+   * exists even if the browser refuses to open the window, and openUrl runs
+   * synchronously inside this handler because Safari only honours window.open
+   * while a user gesture is still being processed.
    */
   const handleTap = useCallback(
     (activity: Activity) => {
@@ -104,7 +111,13 @@ function Board({
         setParentId(activity.id);
         return;
       }
+
       tapActivity(activity);
+
+      // openUrl only reports failure for a URL we refuse to open at all.
+      if (activity.url && !openUrl(activity.url)) {
+        setRefusedUrl(activity.url);
+      }
       // Stay on this level: moving between siblings is the common case once
       // you are inside a set.
     },
@@ -184,6 +197,10 @@ function Board({
         </span>
       </footer>
 
+      {refusedUrl && (
+        <RefusedLink url={refusedUrl} onClose={() => setRefusedUrl(null)} />
+      )}
+
       {sheetEntry && (
         <EntrySheet
           entry={sheetEntry}
@@ -245,6 +262,43 @@ function Breadcrumb({
           );
         })}
       </nav>
+    </div>
+  );
+}
+
+/**
+ * Shown when a tile carries a link we will not open — anything that is not
+ * http or https. The editor blocks these on the way in, so reaching here means
+ * the value came from an imported backup and the user should know.
+ */
+function RefusedLink({ url, onClose }: { url: string; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-8"
+      onClick={onClose}
+    >
+      <div
+        className="bg-surface border border-edge rounded-3xl p-6 w-full max-w-md"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-lg font-semibold mb-2">Link not opened</h2>
+        <p className="text-sm text-muted leading-relaxed">
+          This tile stores something that is not a normal web address, so it was
+          not opened. Your time is still being tracked.
+        </p>
+        <p className="mt-3 p-3 rounded-xl bg-surface2 border border-edge text-xs font-mono break-all text-muted">
+          {url.slice(0, 200)}
+        </p>
+        <p className="mt-3 text-xs text-muted">
+          Clear it in the Tiles table. Only http and https links can be opened.
+        </p>
+        <button
+          onClick={onClose}
+          className="mt-5 w-full h-12 rounded-2xl bg-surface2 border border-edge font-medium"
+        >
+          Close
+        </button>
+      </div>
     </div>
   );
 }
