@@ -21,7 +21,7 @@ export function entryMinutes(entry: Entry, now: number = Date.now()): number {
 
 /** "1:04" / "12:31" — hours:minutes, for tile badges. */
 export function formatDuration(minutes: number): string {
-  const total = Math.floor(minutes);
+  const total = Math.max(0, Math.floor(minutes));
   const h = Math.floor(total / 60);
   const m = total % 60;
   return `${h}:${String(m).padStart(2, "0")}`;
@@ -29,7 +29,7 @@ export function formatDuration(minutes: number): string {
 
 /** "1h 04m" — for prose contexts where a bare colon reads ambiguously. */
 export function formatDurationLong(minutes: number): string {
-  const total = Math.floor(minutes);
+  const total = Math.max(0, Math.floor(minutes));
   const h = Math.floor(total / 60);
   const m = total % 60;
   if (h === 0) return `${m}m`;
@@ -88,13 +88,15 @@ export function entriesForDay(
   const out: { entry: Entry; startMin: number; endMin: number }[] = [];
   for (const entry of entries) {
     const s = new Date(entry.startedAt).getTime();
-    const e = entry.endedAt ? new Date(entry.endedAt).getTime() : now;
+    // An open entry runs to `now`, but a caller's clock can lag the entry's own
+    // start (a ticker sampled before the tap). Never let the end precede the
+    // start, or the day total goes negative.
+    const rawEnd = entry.endedAt ? new Date(entry.endedAt).getTime() : now;
+    const e = Math.max(s, rawEnd);
     if (e <= dayStart || s >= dayEnd) continue;
-    out.push({
-      entry,
-      startMin: Math.max(0, (s - dayStart) / 60000),
-      endMin: Math.min(24 * 60, (e - dayStart) / 60000),
-    });
+    const startMin = Math.max(0, (s - dayStart) / 60000);
+    const endMin = Math.min(24 * 60, (e - dayStart) / 60000);
+    out.push({ entry, startMin, endMin: Math.max(startMin, endMin) });
   }
   return out.sort((a, b) => a.startMin - b.startMin);
 }

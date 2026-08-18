@@ -15,6 +15,8 @@ interface TileProps {
   elapsedMs: number | null;
   /** Today's accumulated minutes for this activity. */
   todayMinutes: number;
+  /** Number of child tiles; > 0 makes this tile a folder. */
+  childCount: number;
   relevant: boolean;
   dimIrrelevant: boolean;
   onTap: (activity: Activity) => void;
@@ -26,6 +28,7 @@ export default function Tile({
   running,
   elapsedMs,
   todayMinutes,
+  childCount,
   relevant,
   dimIrrelevant,
   onTap,
@@ -80,6 +83,7 @@ export default function Tile({
   };
 
   const dimmed = dimIrrelevant && !relevant;
+  const isFolder = childCount > 0;
 
   return (
     <button
@@ -91,8 +95,11 @@ export default function Tile({
         origin.current = null;
       }}
       onContextMenu={(e) => e.preventDefault()}
-      aria-label={`${activity.label}${running ? ", running" : ""}`}
+      aria-label={`${activity.label}${isFolder ? `, ${childCount} inside` : ""}${
+        running ? ", running" : ""
+      }`}
       aria-pressed={running}
+      aria-haspopup={isFolder ? "menu" : undefined}
       className={`relative aspect-square rounded-3xl flex flex-col items-center justify-center overflow-hidden touch-manipulation transition-opacity ${
         tapped ? "md-tapped" : ""
       } ${dimmed ? "opacity-35" : "opacity-100"}`}
@@ -139,9 +146,34 @@ export default function Tile({
         </span>
       )}
 
-      {activity.logMode === "instant" && (
+      {!isFolder && activity.logMode === "instant" && (
         <span className="absolute bottom-2.5 left-2.5 text-[0.6rem] font-bold tracking-wider text-muted">
           +{activity.defaultDuration ?? 15}M
+        </span>
+      )}
+
+      {/* Folder marker. A tile that navigates has to look different from one
+          that logs, or the first tap in a new set is always a guess. */}
+      {isFolder && (
+        <span
+          className={`absolute bottom-2.5 left-2.5 flex items-center gap-1 text-[0.65rem] font-bold ${
+            running ? "text-black/60" : "text-muted"
+          }`}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+          </svg>
+          {childCount}
         </span>
       )}
     </button>

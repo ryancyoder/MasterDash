@@ -41,8 +41,15 @@ export function useTicker(active: boolean, intervalMs = 1000): number {
 
   useEffect(() => {
     if (!active) return;
+    // Resample straight away. `now` was captured at mount and is frozen while
+    // inactive, so the moment something starts running it is already stale —
+    // by more than the age of an entry that has just been created.
+    const kick = window.setTimeout(() => setNow(Date.now()), 0);
     const id = window.setInterval(() => setNow(Date.now()), intervalMs);
-    return () => window.clearInterval(id);
+    return () => {
+      window.clearTimeout(kick);
+      window.clearInterval(id);
+    };
   }, [active, intervalMs]);
 
   return now;

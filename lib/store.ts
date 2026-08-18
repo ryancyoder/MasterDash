@@ -136,10 +136,15 @@ export function saveActivities(activities: Activity[]) {
 
 export function addActivity(data: Omit<Activity, "id" | "sort">): Activity {
   const activities = loadActivities();
+  // Sort is per-level, not global — a new child belongs at the end of its own
+  // parent's list, not at the end of every tile in the app.
+  const siblings = activities.filter(
+    (a) => (a.parentId ?? null) === (data.parentId ?? null),
+  );
   const activity: Activity = {
     ...data,
     id: uid("act"),
-    sort: activities.length,
+    sort: siblings.length,
   };
   saveActivities([...activities, activity]);
   return activity;
@@ -154,14 +159,110 @@ export function updateActivity(id: ActivityId, patch: Partial<Activity>) {
 /**
  * Archive rather than delete when the activity has history — deleting would
  * orphan every entry pointing at it and silently shrink past totals.
+ *
+ * Either way the children survive: they are lifted to the removed tile's own
+ * parent rather than deleted or stranded on an id that no longer resolves.
  */
 export function removeActivity(id: ActivityId) {
+  const activities = loadActivities();
+  const target = activities.find((a) => a.id === id);
+  if (!target) return;
+
+  const lifted = activities.map((a) =>
+    a.parentId === id ? { ...a, parentId: target.parentId } : a,
+  );
+
   const hasHistory = loadEntries().some((e) => e.activityId === id);
   if (hasHistory) {
-    updateActivity(id, { archived: true });
+    saveActivities(
+      lifted.map((a) => (a.id === id ? { ...a, archived: true } : a)),
+    );
     return;
   }
-  saveActivities(loadActivities().filter((a) => a.id !== id));
+  saveActivities(lifted.filter((a) => a.id !== id));
+}
+
+// --- Hierarchy ------------------------------------------------------------
+
+export function childrenOf(
+  activities: Activity[],
+  parentId: ActivityId | null,
+): Activity[] {
+  return activities
+    .filter((a) => (a.parentId ?? null) === parentId)
+    .sort((a, b) => a.sort - b.sort);
+}
+
+export function hasChildren(
+  activities: Activity[],
+  id: ActivityId,
+): boolean {
+  return activities.some((a) => a.parentId === id);
+}
+
+/** Every descendant of `id`, depth-first. Cycle-safe via the seen set. */
+export function descendantIds(
+  activities: Activity[],
+  id: ActivityId,
+): Set<ActivityId> {
+  const out = new Set<ActivityId>();
+  const walk = (parent: ActivityId) => {
+    for (const a of activities) {
+      if (a.parentId !== parent || out.has(a.id)) continue;
+      out.add(a.id);
+      walk(a.id);
+    }
+  };
+  walk(id);
+  return out;
+}
+
+/**
+ * Re-parent a tile, refusing any move that would create a cycle.
+ *
+ * Without this a tile can be dropped onto its own descendant, which detaches
+ * that whole branch from the root and makes it unreachable from the board with
+ * no way back short of editing storage by hand.
+ */
+export function setParent(
+  id: ActivityId,
+  parentId: ActivityId | null,
+): { ok: boolean; reason?: string } {
+  if (id === parentId) return { ok: false, reason: "A tile cannot be its own parent." };
+
+  const activities = loadActivities();
+  if (parentId && descendantIds(activities, id).has(parentId)) {
+    return { ok: false, reason: "That would nest a tile inside its own child." };
+  }
+
+  // Land at the end of the new parent's list rather than colliding on a sort
+  // index already in use by a sibling.
+  const siblings = childrenOf(activities, parentId).filter((a) => a.id !== id);
+  const sort = siblings.length;
+
+  saveActivities(
+    activities.map((a) =>
+      a.id === id ? { ...a, parentId: parentId ?? undefined, sort } : a,
+    ),
+  );
+  return { ok: true };
+}
+
+/** Root-to-tile path, for breadcrumbs. Cycle-safe. */
+export function pathTo(
+  activities: Activity[],
+  id: ActivityId | null,
+): Activity[] {
+  const byId = new Map(activities.map((a) => [a.id, a]));
+  const out: Activity[] = [];
+  const seen = new Set<ActivityId>();
+  let cur = id ? byId.get(id) : undefined;
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    out.unshift(cur);
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  }
+  return out;
 }
 
 export function reorderActivities(ids: ActivityId[]) {

@@ -13,6 +13,7 @@ const VIEWS: { href: string; label: string; icon: IconName }[] = [
   { href: "/", label: "Board", icon: "grid" },
   { href: "/calendar", label: "Calendar", icon: "calendar" },
   { href: "/log", label: "Log", icon: "list" },
+  { href: "/tiles", label: "Tiles", icon: "table" },
   { href: "/settings", label: "Settings", icon: "settings" },
 ];
 

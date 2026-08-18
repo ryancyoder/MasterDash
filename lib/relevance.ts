@@ -71,15 +71,21 @@ export function relevanceOf(
   return { relevant, score };
 }
 
-/** Board ordering: relevant tiles first, then the author's manual sort. */
+/**
+ * Board ordering for one level of the hierarchy.
+ *
+ * `parentId` selects the level: null for the root grid, or a tile's id for the
+ * grid you see after drilling into it.
+ */
 export function orderForBoard(
   activities: Activity[],
   settings: Settings,
   entries: Entry[],
+  parentId: string | null = null,
   now: Date = new Date(),
 ): { activity: Activity; relevant: boolean }[] {
   const scored = activities
-    .filter((a) => !a.archived)
+    .filter((a) => !a.archived && (a.parentId ?? null) === parentId)
     .map((a) => ({ activity: a, ...relevanceOf(a, settings, entries, now) }));
 
   scored.sort((a, b) => {
