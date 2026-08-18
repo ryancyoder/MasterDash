@@ -19,8 +19,17 @@ interface TileProps {
   childCount: number;
   relevant: boolean;
   dimIrrelevant: boolean;
+  /** This tile is the one being dragged. */
+  dragging: boolean;
+  /** A dragged tile is hovering here. */
+  dropTarget: boolean;
+  /** …and dropping would be refused (self, or its own descendant). */
+  dropRefused: boolean;
   onTap: (activity: Activity) => void;
-  onLongPress: (activity: Activity) => void;
+  onDragStart: (activity: Activity, x: number, y: number) => void;
+  onDragMove: (x: number, y: number) => void;
+  onDragEnd: (x: number, y: number) => void;
+  onDragCancel: () => void;
 }
 
 export default function Tile({
@@ -31,13 +40,20 @@ export default function Tile({
   childCount,
   relevant,
   dimIrrelevant,
+  dragging,
+  dropTarget,
+  dropRefused,
   onTap,
-  onLongPress,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+  onDragCancel,
 }: TileProps) {
   const [tapped, setTapped] = useState(false);
   const [iconBroken, setIconBroken] = useState(false);
   const timer = useRef<number | null>(null);
   const origin = useRef<{ x: number; y: number } | null>(null);
+  const last = useRef({ x: 0, y: 0 });
   const longFired = useRef(false);
 
   const clearTimer = useCallback(() => {
@@ -49,38 +65,64 @@ export default function Tile({
 
   useEffect(() => clearTimer, [clearTimer]);
 
-  const start = (x: number, y: number) => {
-    origin.current = { x, y };
+  const handleDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    // Capture so the drag keeps receiving moves once the finger leaves this
+    // tile — which it must, since the whole point is to land on another one.
+    e.currentTarget.setPointerCapture(e.pointerId);
+    origin.current = { x: e.clientX, y: e.clientY };
+    last.current = { x: e.clientX, y: e.clientY };
     longFired.current = false;
     clearTimer();
     timer.current = window.setTimeout(() => {
       longFired.current = true;
-      // Haptic confirmation that the press registered as "edit", not "log".
+      // Haptic confirmation that the tile is now held, not being tapped.
       navigator.vibrate?.(12);
-      onLongPress(activity);
+      onDragStart(activity, last.current.x, last.current.y);
     }, LONG_PRESS_MS);
   };
 
-  const move = (x: number, y: number) => {
+  const handleMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    last.current = { x: e.clientX, y: e.clientY };
+
+    if (longFired.current) {
+      onDragMove(e.clientX, e.clientY);
+      return;
+    }
     if (!origin.current) return;
-    const dx = Math.abs(x - origin.current.x);
-    const dy = Math.abs(y - origin.current.y);
+    const dx = Math.abs(e.clientX - origin.current.x);
+    const dy = Math.abs(e.clientY - origin.current.y);
     if (dx > MOVE_TOLERANCE_PX || dy > MOVE_TOLERANCE_PX) {
       clearTimer();
       origin.current = null;
     }
   };
 
-  const end = () => {
+  const handleUp = (e: React.PointerEvent<HTMLButtonElement>) => {
     clearTimer();
-    if (!origin.current || longFired.current) {
+
+    // Held long enough to pick up: the board decides whether this was a drag
+    // onto another tile or a stationary hold meaning "edit".
+    if (longFired.current) {
+      longFired.current = false;
       origin.current = null;
+      onDragEnd(e.clientX, e.clientY);
       return;
     }
+
+    if (!origin.current) return;
     origin.current = null;
     setTapped(true);
     window.setTimeout(() => setTapped(false), 200);
     onTap(activity);
+  };
+
+  const handleCancel = () => {
+    clearTimer();
+    origin.current = null;
+    if (longFired.current) {
+      longFired.current = false;
+      onDragCancel();
+    }
   };
 
   const dimmed = dimIrrelevant && !relevant;
@@ -89,27 +131,33 @@ export default function Tile({
   const isLink = !isFolder && !!activity.url;
   const showIcon = !!activity.iconUrl && !iconBroken;
 
+  const ring = dropTarget
+    ? dropRefused
+      ? "0 0 0 4px #ef4444"
+      : "0 0 0 4px #22c55e"
+    : running
+      ? `0 0 0 4px ${activity.color}66`
+      : undefined;
+
   return (
     <button
-      onPointerDown={(e) => start(e.clientX, e.clientY)}
-      onPointerMove={(e) => move(e.clientX, e.clientY)}
-      onPointerUp={end}
-      onPointerCancel={() => {
-        clearTimer();
-        origin.current = null;
-      }}
+      data-drop-id={activity.id}
+      onPointerDown={handleDown}
+      onPointerMove={handleMove}
+      onPointerUp={handleUp}
+      onPointerCancel={handleCancel}
       onContextMenu={(e) => e.preventDefault()}
       aria-label={`${activity.label}${isFolder ? `, ${childCount} inside` : ""}${
         isLink ? ", opens a link" : ""
       }${running ? ", running" : ""}`}
       aria-pressed={running}
       aria-haspopup={isFolder ? "menu" : undefined}
-      className={`relative aspect-square rounded-3xl flex flex-col items-center justify-center overflow-hidden touch-manipulation transition-opacity ${
+      className={`relative aspect-square rounded-3xl flex flex-col items-center justify-center overflow-hidden touch-none select-none transition-opacity ${
         tapped ? "md-tapped" : ""
-      } ${dimmed ? "opacity-35" : "opacity-100"}`}
+      } ${dimmed ? "opacity-35" : "opacity-100"} ${dragging ? "opacity-30" : ""}`}
       style={{
         background: running ? activity.color : "var(--md-surface-2)",
-        boxShadow: running ? `0 0 0 4px ${activity.color}66` : undefined,
+        boxShadow: ring,
       }}
     >
       {/* Idle tiles carry their colour as a top band — enough to identify at a

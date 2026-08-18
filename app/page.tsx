@@ -1,17 +1,27 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Shell from "@/components/Shell";
 import Tile from "@/components/Tile";
 import EntrySheet from "@/components/EntrySheet";
 import Icon from "@/components/Icon";
 import { Activity, ActivityId, Entry, Settings } from "@/lib/types";
-import { pathTo, tapActivity } from "@/lib/store";
+import { descendantIds, pathTo, setParent, tapActivity } from "@/lib/store";
 import { openUrl } from "@/lib/url";
 import { dateKey, dayTotals, formatDurationLong } from "@/lib/time";
 import { orderForBoard } from "@/lib/relevance";
 import { useTicker } from "@/lib/useStore";
+
+interface DragState {
+  activity: Activity;
+  x: number;
+  y: number;
+  startX: number;
+  startY: number;
+  targetId: string | null;
+  refused: boolean;
+}
 
 export default function BoardPage() {
   return (
@@ -41,6 +51,8 @@ function Board({
 }) {
   const [sheetEntry, setSheetEntry] = useState<Entry | null>(null);
   const [refusedUrl, setRefusedUrl] = useState<string | null>(null);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   // Which level of the hierarchy is on screen. Deliberately not persisted: on
   // a fresh open you want the root grid, not wherever you happened to stop.
@@ -124,7 +136,7 @@ function Board({
     [childCounts],
   );
 
-  const handleLongPress = useCallback(
+  const openSheetFor = useCallback(
     (activity: Activity) => {
       const running = runningByActivity.get(activity.id);
       if (running) {
@@ -141,6 +153,80 @@ function Board({
     [entries, runningByActivity, today],
   );
 
+  /**
+   * Where a drop at (x,y) would land.
+   *
+   * Hit-tested through elementFromPoint rather than pointerenter on each tile,
+   * because the pointer is captured by the tile being dragged — no other
+   * element sees the events. The ghost is pointer-events:none so it never
+   * shadows what is underneath it.
+   */
+  const resolveDrop = useCallback(
+    (dragged: Activity, x: number, y: number) => {
+      const el = document.elementFromPoint(x, y);
+      const host = el?.closest<HTMLElement>("[data-drop-id]");
+      const id = host?.dataset.dropId ?? null;
+      if (!id) return { targetId: null, refused: false };
+      if (id === dragged.id) return { targetId: id, refused: true };
+
+      // Dropping onto your own descendant would detach the branch from the
+      // root, so it is shown as refused rather than silently ignored.
+      const refused =
+        id !== "root" && descendantIds(activities, dragged.id).has(id);
+      return { targetId: id, refused };
+    },
+    [activities],
+  );
+
+  const handleDragStart = useCallback(
+    (activity: Activity, x: number, y: number) => {
+      setDrag({ activity, x, y, startX: x, startY: y, targetId: null, refused: false });
+    },
+    [],
+  );
+
+  const handleDragMove = useCallback(
+    (x: number, y: number) => {
+      setDrag((d) => (d ? { ...d, x, y, ...resolveDrop(d.activity, x, y) } : d));
+    },
+    [resolveDrop],
+  );
+
+  const handleDragEnd = useCallback(
+    (x: number, y: number) => {
+      const d = drag;
+      setDrag(null);
+      if (!d) return;
+
+      // Held still: this was a long press, which still means "edit".
+      const moved =
+        Math.abs(x - d.startX) > 12 || Math.abs(y - d.startY) > 12;
+      if (!moved) {
+        openSheetFor(d.activity);
+        return;
+      }
+
+      const { targetId, refused } = resolveDrop(d.activity, x, y);
+      if (!targetId || refused) return;
+
+      const parentId = targetId === "root" ? null : targetId;
+      if ((d.activity.parentId ?? null) === parentId) return;
+
+      const result = setParent(d.activity.id, parentId);
+      if (!result.ok) {
+        setToast(result.reason ?? "Could not move that tile.");
+        return;
+      }
+      const target = activities.find((a) => a.id === parentId);
+      setToast(
+        target
+          ? `${d.activity.label} moved inside ${target.label}`
+          : `${d.activity.label} moved to the top level`,
+      );
+    },
+    [drag, resolveDrop, activities, openSheetFor],
+  );
+
   const emptyLevel = ordered.length === 0;
 
   return (
@@ -150,6 +236,7 @@ function Board({
           trail={breadcrumb}
           onGo={setParentId}
           fieldMode={fieldMode}
+          dropTargetId={drag?.targetId ?? null}
         />
       )}
 
@@ -178,8 +265,14 @@ function Board({
                   childCount={childCounts.get(activity.id) ?? 0}
                   relevant={relevant}
                   dimIrrelevant={settings.dimOutOfContext}
+                  dragging={drag?.activity.id === activity.id}
+                  dropTarget={drag?.targetId === activity.id}
+                  dropRefused={!!drag?.refused}
                   onTap={handleTap}
-                  onLongPress={handleLongPress}
+                  onDragStart={handleDragStart}
+                  onDragMove={handleDragMove}
+                  onDragEnd={handleDragEnd}
+                  onDragCancel={() => setDrag(null)}
                 />
               );
             })}
@@ -189,13 +282,20 @@ function Board({
 
       <footer className="shrink-0 h-12 px-5 flex items-center justify-between border-t border-edge text-sm">
         <span className="text-muted">
-          {ordered.filter((o) => o.relevant).length} of {ordered.length} tiles in
-          context
+          {drag
+            ? drag.refused
+              ? "Can't drop a tile inside itself"
+              : "Drop on a tile to nest it, or on the trail to move it out"
+            : `${ordered.filter((o) => o.relevant).length} of ${ordered.length} tiles in context`}
         </span>
         <span className="font-semibold tabular-nums">
           Today {formatDurationLong(dayTotal)}
         </span>
       </footer>
+
+      {drag && <DragGhost drag={drag} />}
+
+      {toast && <Toast message={toast} onDone={() => setToast(null)} />}
 
       {refusedUrl && (
         <RefusedLink url={refusedUrl} onClose={() => setRefusedUrl(null)} />
@@ -220,10 +320,12 @@ function Breadcrumb({
   trail,
   onGo,
   fieldMode,
+  dropTargetId,
 }: {
   trail: Activity[];
   onGo: (id: ActivityId | null) => void;
   fieldMode: boolean;
+  dropTargetId: string | null;
 }) {
   const parent = trail[trail.length - 2] ?? null;
 
@@ -238,9 +340,16 @@ function Breadcrumb({
       </button>
 
       <nav className="flex items-center gap-1 min-w-0 overflow-x-auto md-scroll">
+        {/* Drop zones: dragging a tile onto a crumb lifts it to that level,
+            which is the only way out of a folder from the board. */}
         <button
+          data-drop-id="root"
           onClick={() => onGo(null)}
-          className="h-10 px-3 rounded-lg text-sm font-medium text-muted shrink-0 active:bg-surface2"
+          className={`h-10 px-3 rounded-lg text-sm font-medium shrink-0 active:bg-surface2 ${
+            dropTargetId === "root"
+              ? "bg-accent/20 text-accent ring-2 ring-accent"
+              : "text-muted"
+          }`}
         >
           All
         </button>
@@ -250,10 +359,14 @@ function Breadcrumb({
             <span key={a.id} className="flex items-center gap-1 shrink-0">
               <span className="text-edge">/</span>
               <button
+                data-drop-id={a.id}
                 onClick={() => onGo(a.id)}
-                disabled={last}
                 className={`h-10 px-3 rounded-lg text-sm font-semibold ${
-                  last ? "text-ink" : "text-muted active:bg-surface2"
+                  dropTargetId === a.id
+                    ? "bg-accent/20 text-accent ring-2 ring-accent"
+                    : last
+                      ? "text-ink"
+                      : "text-muted active:bg-surface2"
                 }`}
               >
                 {a.glyph} {a.label}
@@ -262,6 +375,59 @@ function Breadcrumb({
           );
         })}
       </nav>
+    </div>
+  );
+}
+
+/**
+ * The tile under the finger while dragging.
+ *
+ * pointer-events:none is load-bearing — elementFromPoint is how the drop
+ * target is resolved, and the ghost sits exactly where the finger is.
+ */
+function DragGhost({ drag }: { drag: DragState }) {
+  const { activity, refused, targetId } = drag;
+  return (
+    <div
+      className="fixed z-[60] pointer-events-none -translate-x-1/2 -translate-y-1/2"
+      style={{ left: drag.x, top: drag.y }}
+    >
+      <div
+        className="w-28 h-28 rounded-3xl flex flex-col items-center justify-center shadow-2xl scale-105"
+        style={{
+          background: "var(--md-surface-2)",
+          outline: refused
+            ? "4px solid #ef4444"
+            : targetId
+              ? "4px solid #22c55e"
+              : `4px solid ${activity.color}`,
+        }}
+      >
+        <span className="text-3xl leading-none">{activity.glyph}</span>
+        <span className="mt-1.5 px-2 text-center text-xs font-semibold leading-tight">
+          {activity.label}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Confirms a move landed, since the tile itself vanishes from this level. */
+function Toast({
+  message,
+  onDone,
+}: {
+  message: string;
+  onDone: () => void;
+}) {
+  useEffect(() => {
+    const id = window.setTimeout(onDone, 2600);
+    return () => window.clearTimeout(id);
+  }, [message, onDone]);
+
+  return (
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] px-5 h-12 rounded-2xl bg-surface2 border border-edge flex items-center text-sm font-medium shadow-2xl">
+      {message}
     </div>
   );
 }

@@ -37,8 +37,15 @@ level, give it a child for the general case. Tapping a child keeps you among its
 siblings, since moving between related tasks is the common case once you're
 inside a set.
 
-Tiles are created, nested and edited in the **Tiles** table — one row each,
-hierarchy shown by indentation, edits saved as you type.
+**Nest by dragging.** Hold a tile until it lifts, then drag it onto another
+tile to make it a child of that one. Drop it on a crumb in the trail at the top
+to move it back out. A green ring means the drop will land, red means it is
+refused. Releasing without moving still opens the entry sheet, so the hold
+gesture keeps both meanings.
+
+Tiles are also created, nested and edited in the **Tiles** table — one row each,
+hierarchy shown by indentation, edits saved as you type. That table is the
+keyboard-accessible path; drag is a touch convenience, not the only way.
 
 **Leaf tiles can carry a link.** Tapping one starts the timer *and* opens the
 URL, so "clock into Aspire and open Aspire" is a single tap. Link tiles show a

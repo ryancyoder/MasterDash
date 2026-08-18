@@ -175,6 +175,24 @@ The board keeps you on the current level after logging a child, since moving
 between siblings is the common case once you are inside a set. Navigation is a
 breadcrumb with a 56 px back target at the leading edge.
 
+### Drag to nest
+
+Hold a tile past the long-press threshold and it lifts; drag onto another tile
+to reparent, or onto a breadcrumb to move up a level. Dropping on a crumb is the
+only way to leave a folder from the board, so the trail doubles as a drop zone.
+
+- **The hold gesture carries two meanings**, separated by movement: release
+  within 12 px and it opens the entry sheet as before, release further away and
+  it is a move. One gesture, no extra mode to enter.
+- **The pointer is captured by the dragged tile**, so no other element receives
+  events. Targets are therefore hit-tested with `elementFromPoint` against
+  `data-drop-id`, and the ghost is `pointer-events: none` so it never shadows
+  what is beneath the finger.
+- **Refusals are shown, not silent** — a green ring accepts, red refuses, and
+  the footer names the reason.
+- Drag is a touch convenience. The tiles table's parent dropdown remains the
+  keyboard-accessible route.
+
 Hierarchy edits are guarded: a tile cannot be nested inside its own descendant
 (that would detach the branch from the root with no way back from the UI), and
 removing a parent lifts its children one level rather than stranding them.
