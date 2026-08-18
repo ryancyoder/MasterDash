@@ -31,9 +31,12 @@ interface Activity {
   id: ActivityId;
   label: string;              // short — must read at arm's length
   glyph: string;              // emoji or single char shown large on the tile
-  photo?: string;             // optional image (the "photo album" look)
+  photo?: string;             // reserved; no UI writes it yet
   color: string;              // tile accent, high-contrast
   group?: string;             // e.g. "Field", "Shop", "Admin", "Personal"
+
+  parentId?: ActivityId;      // absent = top level; having children = a folder
+  logMode: LogMode;           // "punch" | "toggle" | "instant"
 
   // Contextual relevance — controls whether the tile surfaces
   contexts?: string[];        // named contexts this belongs to
@@ -110,9 +113,16 @@ common field correction is "I actually started that at 8, not 8:20."
 Gaps in the ribbon render explicitly as unlogged time, because unlogged time is
 the thing you want to notice.
 
-### 4.3 Table
-The raw log. Sortable and filterable by activity, group, date range, billable.
-Inline edit. CSV export. This is the audit and invoicing surface.
+### 4.3 Log table
+The raw entry log. Filterable by activity and date range, grouped by day, with
+CSV export. This is the audit and invoicing surface.
+
+### 4.4 Tiles table
+The tile manager. One row per tile, hierarchy shown by indentation, edits saved
+as you type: glyph, label, parent, tap behaviour, block length, colour, group,
+billable, and per-level ordering. Contexts and time windows sit behind a per-row
+editor rather than inline, because they would make the row unusable at iPad
+width.
 
 ---
 
@@ -139,7 +149,7 @@ edges. That real estate is reserved for navigation and kept clear of content.
 - Frame is true black (`#000`) — reads as bezel, disappears on the device.
 - Content sits nearly edge-to-edge vertically; no bottom gutter, since thumbs
   wrap the sides rather than the bottom in landscape.
-- Left gutter: view switcher (Board / Calendar / Table).
+- Left gutter: view switcher (Board / Calendar / Log / Tiles / Settings).
 - Right gutter: context and group filters.
 - Both gutters use icon buttons ≥64 px, vertically centered in thumb arc.
 
@@ -148,6 +158,26 @@ A toggle switches to a desk layout: no black frame, full viewport width, denser
 grid, top nav bar instead of thumb gutters, hover states, keyboard shortcuts,
 and more rows visible in the table. Same data, different ergonomics. Persisted
 per device, auto-defaulted by pointer type (`hover: none` → field mode).
+
+---
+
+## 5b. Nesting
+
+A tile with children is a folder. Tapping it opens that set; it never logs.
+Leaf tiles log. Splitting the two meanings across disjoint sets of tiles is what
+keeps a single tap unambiguous — the alternative, a tile that both logs and
+navigates, turns every mis-tap during browsing into a stray time entry.
+
+Parent-level time is expressed with a child for the general case, which has the
+side benefit of staying visible in the log.
+
+The board keeps you on the current level after logging a child, since moving
+between siblings is the common case once you are inside a set. Navigation is a
+breadcrumb with a 56 px back target at the leading edge.
+
+Hierarchy edits are guarded: a tile cannot be nested inside its own descendant
+(that would detach the branch from the root with no way back from the UI), and
+removing a parent lifts its children one level rather than stranding them.
 
 ---
 
