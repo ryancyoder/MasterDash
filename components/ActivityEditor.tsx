@@ -60,6 +60,31 @@ export default function ActivityEditor({
   const [iconUrl, setIconUrl] = useState(activity?.iconUrl ?? "");
   const [iconBusy, setIconBusy] = useState(false);
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [labelError, setLabelError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+
+  const dirty =
+    label !== (activity?.label ?? "") ||
+    glyph !== (activity?.glyph ?? "⭐") ||
+    color !== (activity?.color ?? TILE_COLORS[4]) ||
+    group !== (activity?.group ?? "") ||
+    logMode !== (activity?.logMode ?? "punch") ||
+    billable !== (activity?.billable ?? false) ||
+    parentId !== (activity?.parentId ?? defaultParentId ?? "") ||
+    url !== (activity?.url ?? "") ||
+    iconUrl !== (activity?.iconUrl ?? "") ||
+    activeFrom !== (activity?.activeFrom ?? "") ||
+    activeUntil !== (activity?.activeUntil ?? "") ||
+    selected.join() !== (activity?.contexts ?? []).join();
+
+  const attemptClose = () => {
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    setConfirmDiscard(true);
+  };
 
   const isParent = activity ? hasChildren(activities, activity.id) : false;
 
@@ -76,24 +101,31 @@ export default function ActivityEditor({
    * read so the tile keeps its icon offline; otherwise the remote URL is kept
    * and the glyph covers the offline case.
    */
-  const fetchIcon = async (fromUrl: string) => {
+  const fetchIcon = async (fromUrl: string): Promise<string | null> => {
     const normalized = normalizeUrl(fromUrl);
     if (!normalized) {
       setUrlError("That does not look like a web address.");
-      return;
+      return null;
     }
     const remote = faviconUrlFor(normalized);
-    if (!remote) return;
+    if (!remote) return null;
 
     setIconBusy(true);
     const cached = await cacheImageAsDataUrl(remote);
-    setIconUrl(cached ?? remote);
+    const resolved = cached ?? remote;
+    setIconUrl(resolved);
     setIconBusy(false);
+    return resolved;
   };
 
-  const save = () => {
+  const save = async () => {
     const trimmed = label.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      setUrlError(null);
+      setLabelError("Give the tile a label first.");
+      return;
+    }
+    setLabelError(null);
 
     // Refuse to store anything we would not be willing to open later.
     let cleanUrl: string | undefined;
@@ -104,6 +136,15 @@ export default function ActivityEditor({
         return;
       }
       cleanUrl = normalized;
+    }
+
+    // The blur that fires when Save is pressed kicks off an icon fetch, so
+    // reading iconUrl here would race it and store nothing. Resolve first.
+    let resolvedIcon = iconUrl;
+    if (cleanUrl && !resolvedIcon) {
+      setSaving(true);
+      resolvedIcon = (await fetchIcon(cleanUrl)) ?? "";
+      setSaving(false);
     }
 
     const data = {
@@ -119,7 +160,7 @@ export default function ActivityEditor({
       activeFrom: activeFrom || undefined,
       activeUntil: activeUntil || undefined,
       url: cleanUrl,
-      iconUrl: iconUrl || undefined,
+      iconUrl: resolvedIcon || undefined,
     };
     if (activity) updateActivity(activity.id, data);
     else addActivity(data);
@@ -127,7 +168,80 @@ export default function ActivityEditor({
   };
 
   return (
-    <Sheet title={activity ? "Edit tile" : "New tile"} onClose={onClose}>
+    <Sheet
+      title={activity ? "Edit tile" : "New tile"}
+      onClose={attemptClose}
+      dismissOnBackdrop={false}
+      footer={
+        <>
+          {(labelError || urlError) && (
+            <p role="alert" className="mb-3 text-sm text-red-400">
+              {labelError ?? urlError}
+            </p>
+          )}
+          <div className="flex gap-3">
+            <button
+              onClick={save}
+              disabled={saving}
+              className="flex-1 h-14 rounded-2xl bg-accent text-black font-semibold disabled:opacity-60"
+            >
+              {saving ? "Saving…" : activity ? "Save" : "Create tile"}
+            </button>
+            <button
+              onClick={attemptClose}
+              className="h-14 px-5 rounded-2xl bg-surface2 border border-edge font-medium"
+            >
+              Cancel
+            </button>
+            {activity && (
+              <button
+                onClick={() => {
+                  if (!confirmDelete) {
+                    setConfirmDelete(true);
+                    return;
+                  }
+                  removeActivity(activity.id);
+                  onClose();
+                }}
+                aria-label={
+                  confirmDelete ? "Confirm delete" : `Delete ${activity.label}`
+                }
+                className={`h-14 px-4 rounded-2xl flex items-center gap-2 font-semibold ${
+                  confirmDelete
+                    ? "bg-red-500 text-black"
+                    : "bg-surface2 border border-edge text-red-400"
+                }`}
+              >
+                <Icon name="trash" size={20} />
+                {confirmDelete && "Sure?"}
+              </button>
+            )}
+          </div>
+        </>
+      }
+    >
+      {confirmDiscard && (
+        <div className="mb-4 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/40">
+          <p className="text-sm font-medium mb-3">
+            Close without saving? Your changes will be lost.
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="h-11 px-4 rounded-xl bg-red-500 text-black font-semibold text-sm"
+            >
+              Discard
+            </button>
+            <button
+              onClick={() => setConfirmDiscard(false)}
+              className="h-11 px-4 rounded-xl bg-surface2 border border-edge font-medium text-sm"
+            >
+              Keep editing
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex gap-3 mb-4">
         <div className="shrink-0">
           <span className="block text-xs font-medium text-muted mb-1.5">
@@ -367,40 +481,10 @@ export default function ActivityEditor({
         </div>
       )}
 
-      <div className="flex gap-3 mt-6">
-        <button
-          onClick={save}
-          disabled={!label.trim()}
-          className="flex-1 h-14 rounded-2xl bg-accent text-black font-semibold disabled:opacity-40"
-        >
-          {activity ? "Save" : "Create tile"}
-        </button>
-        {activity && (
-          <button
-            onClick={() => {
-              if (!confirmDelete) {
-                setConfirmDelete(true);
-                return;
-              }
-              removeActivity(activity.id);
-              onClose();
-            }}
-            className={`h-14 px-5 rounded-2xl flex items-center gap-2 font-semibold ${
-              confirmDelete
-                ? "bg-red-500 text-black"
-                : "bg-surface2 border border-edge text-red-400"
-            }`}
-          >
-            <Icon name="trash" size={20} />
-            {confirmDelete && "Sure?"}
-          </button>
-        )}
-      </div>
       {activity && (
-        <p className="mt-3 text-xs text-muted">
-          Tiles with logged time are archived rather than deleted, so past totals
-          stay correct.
-          {isParent && " Anything inside moves up a level rather than vanishing."}
+        <p className="mt-4 mb-2 text-xs text-muted">
+          Tiles with logged time are archived rather than deleted, so past
+          totals stay correct.
         </p>
       )}
     </Sheet>

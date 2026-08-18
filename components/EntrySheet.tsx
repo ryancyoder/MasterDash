@@ -157,21 +157,31 @@ export function Sheet({
   title,
   onClose,
   children,
+  footer,
+  dismissOnBackdrop = true,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  /** Pinned below the scroll area, so actions survive a long form. */
+  footer?: React.ReactNode;
+  /**
+   * Forms pass false. A backdrop tap discarding a half-filled form is bad
+   * anywhere, and worse on a tablet: with the on-screen keyboard up, the tap
+   * that dismisses the keyboard often lands on the backdrop.
+   */
+  dismissOnBackdrop?: boolean;
 }) {
   return (
     <div
       className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6"
-      onClick={onClose}
+      onClick={dismissOnBackdrop ? onClose : undefined}
     >
       <div
-        className="bg-surface border border-edge rounded-3xl p-6 w-full max-w-lg max-h-[88dvh] overflow-y-auto md-scroll"
+        className="bg-surface border border-edge rounded-3xl w-full max-w-lg max-h-[88dvh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between mb-5">
+        <div className="shrink-0 flex items-center justify-between px-6 pt-6 pb-4">
           <h2 className="text-lg font-semibold">{title}</h2>
           <button
             onClick={onClose}
@@ -181,7 +191,17 @@ export function Sheet({
             <Icon name="close" size={22} />
           </button>
         </div>
-        {children}
+
+        <div className="flex-1 min-h-0 overflow-y-auto md-scroll px-6">
+          {children}
+        </div>
+
+        {footer && (
+          <div className="shrink-0 px-6 pt-4 pb-6 border-t border-edge bg-surface">
+            {footer}
+          </div>
+        )}
+        {!footer && <div className="shrink-0 h-6" />}
       </div>
     </div>
   );
