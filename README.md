@@ -43,9 +43,11 @@ to move it back out. A green ring means the drop will land, red means it is
 refused. Releasing without moving still opens the entry sheet, so the hold
 gesture keeps both meanings.
 
-Tiles are also created, nested and edited in the **Tiles** table — one row each,
-hierarchy shown by indentation, edits saved as you type. That table is the
-keyboard-accessible path; drag is a touch convenience, not the only way.
+Tiles are also created, nested and edited in the **Tiles** list — one compact
+row each, hierarchy by indentation, folders collapsible, with a filter across
+label and group. Rename in place on the row; everything else opens from the
+row's gear. That list is the keyboard-accessible path for nesting; drag is a
+touch convenience, not the only way.
 
 **Leaf tiles can carry a link.** **Double-tap** to open it, which also clocks
 you in if the timer was not already running — so "clock into Aspire and open

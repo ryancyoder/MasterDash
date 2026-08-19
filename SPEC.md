@@ -117,12 +117,25 @@ the thing you want to notice.
 The raw entry log. Filterable by activity and date range, grouped by day, with
 CSV export. This is the audit and invoicing surface.
 
-### 4.4 Tiles table
-The tile manager. One row per tile, hierarchy shown by indentation, edits saved
-as you type: glyph, label, parent, tap behaviour, block length, colour, group,
-billable, and per-level ordering. Contexts and time windows sit behind a per-row
-editor rather than inline, because they would make the row unusable at iPad
-width.
+### 4.4 Tiles list
+The tile manager: one 44 px row per tile, hierarchy by indentation, nothing off
+the right edge.
+
+Editing every field inline is what made the first version a 1620 px table on an
+1180 px screen — it scrolled in both directions at once, which is the wrong
+trade for a screen you visit to find one tile and change one thing. Only the
+label stays on the row, since renaming is the frequent edit; the rest opens in
+the editor sheet.
+
+Three levers against scrolling, in order of how much they buy:
+
+1. **Collapsible folders**, persisted, so a tidied hierarchy stays tidy.
+2. **A filter** that matches label and group and keeps matched rows' ancestors,
+   so the tree still reads correctly, and reaches into collapsed folders.
+3. **Compact rows** — 44 px instead of 56 px, about 15 visible at iPad height.
+
+Status that would otherwise need a column is compressed to chips: child count,
+tap behaviour when it is not the default, billable, and a link marker.
 
 ---
 
