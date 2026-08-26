@@ -144,6 +144,23 @@ that *do* have depth keep an undo in the header of the level they open.
 Only **Drainage** and **Assemblies** navigate without committing. Navigate-only
 folders are the exception in v2, not the rule.
 
+### Arrange mode
+
+Tiles can be dragged into whatever order suits the way a job gets quoted, iOS
+home-screen style: tiles wiggle, drag to reorder, **Done** to finish, **Reset**
+to restore the shipped order for that level.
+
+Getting in is the one place this cannot copy iOS. Long-pressing a tile already
+means *refine*, and taking that gesture would cost the drill-downs — so arrange
+mode is entered by **long-pressing empty space**, or from the **Arrange** button
+in the header. While arranging, tile gestures are off, so a drag can never
+commit a load or open a level by accident.
+
+Order is saved per level and survives a reload. It is stored as a list of tile
+ids, so a tile added by a later catalog sync joins the end of the grid rather
+than vanishing because it was missing from a saved list. Generated levels — the
+962-row plant lists — are deliberately not arrangeable.
+
 ### One tap is a load, not a unit
 
 A tap adds one **purchase increment** — the amount Ricci's actually buys, from

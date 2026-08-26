@@ -24,6 +24,8 @@ interface EstimateTileProps {
   navigateOnly: boolean;
   showPrices: boolean;
   markupPercent: number;
+  /** Arrange mode: the tile is being dragged, so its own gestures are off. */
+  editing?: boolean;
   /** TAP: commit, or open when the tile only navigates. */
   onTap: (node: TileNode) => void;
   /** LONG PRESS: refine, or back one off where there is nothing to refine. */
@@ -38,6 +40,7 @@ export default function EstimateTile({
   navigateOnly,
   showPrices,
   markupPercent,
+  editing = false,
   onTap,
   onLongPress,
 }: EstimateTileProps) {
@@ -70,6 +73,7 @@ export default function EstimateTile({
     : undefined;
 
   const handleDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (editing) return;
     origin.current = { x: e.clientX, y: e.clientY };
     longFired.current = false;
     clearTimer();
@@ -93,6 +97,7 @@ export default function EstimateTile({
   };
 
   const handleUp = () => {
+    if (editing) return;
     clearTimer();
     // The long press already acted; its release must not also commit.
     if (longFired.current) {
@@ -134,7 +139,7 @@ export default function EstimateTile({
       aria-label={ariaLabel(node, item, count, hasDepth, navigateOnly)}
       aria-pressed={navigateOnly ? undefined : selected}
       aria-haspopup={hasDepth ? "menu" : undefined}
-      className={`relative aspect-square rounded-3xl flex flex-col overflow-hidden touch-none select-none transition-opacity ${
+      className={`relative w-full aspect-square rounded-3xl flex flex-col overflow-hidden touch-none select-none transition-opacity ${
         flash ? "md-tapped" : ""
       } ${showImage ? "justify-end" : "items-center justify-center"} ${
         selected ? "opacity-100" : showImage ? "opacity-[0.62]" : "opacity-40"

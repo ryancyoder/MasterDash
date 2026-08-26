@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AssemblyPage from "@/components/estimator/AssemblyPage";
-import EstimateTile from "@/components/estimator/EstimateTile";
+import TileGrid from "@/components/estimator/TileGrid";
 import { formatMoneyShort, getItem } from "@/lib/estimator/catalog";
 import { loadPlants, plantsInGroup, type PlantRow } from "@/lib/estimator/plants";
 import {
@@ -11,7 +11,8 @@ import {
   buildProposal,
   rollupCount,
 } from "@/lib/estimator/proposal";
-import { tap, untap } from "@/lib/estimator/store";
+import { tap, untap, updateSettings } from "@/lib/estimator/store";
+import { applyOrder, isArrangeable, levelKey } from "@/lib/estimator/tileOrder";
 import { HOME_TILES, hasDepth, isNavigateOnly, subtreeItemIds } from "@/lib/estimator/tree";
 import { useEstimate } from "@/lib/estimator/useEstimate";
 import { selectionKey, type TileNode } from "@/lib/estimator/types";
@@ -42,6 +43,8 @@ export default function EstimatorPage() {
   /** Selections made during this visit to this level. */
   const [visitTaps, setVisitTaps] = useState(0);
   const [lastTapAt, setLastTapAt] = useState(0);
+  /** Arrange mode: tiles wiggle and drag instead of committing. */
+  const [editing, setEditing] = useState(false);
 
   const current = stack.length ? stack[stack.length - 1] : null;
 
@@ -65,6 +68,7 @@ export default function EstimatorPage() {
     setStack([]);
     setOpenAssembly(null);
     setVisitTaps(0);
+    setEditing(false);
   }, []);
 
   const goBack = useCallback(() => {
@@ -74,13 +78,17 @@ export default function EstimatorPage() {
     }
     setStack((s) => s.slice(0, -1));
     setVisitTaps(0);
+    setEditing(false);
   }, [openAssembly]);
 
   // Auto-backout. The timer only starts once something has been selected, so
   // opening a level to look around never bounces you out mid-thought, and it
   // restarts on every tap so several picks in one visit are the normal case.
   const autoBackout =
-    current !== null && settings.folderReturn === "auto" && visitTaps > 0;
+    current !== null &&
+    settings.folderReturn === "auto" &&
+    visitTaps > 0 &&
+    !editing;
 
   useEffect(() => {
     if (!autoBackout) return;
@@ -97,6 +105,7 @@ export default function EstimatorPage() {
   const drillInto = useCallback((node: TileNode) => {
     setStack((s) => [...s, node]);
     setVisitTaps(0);
+    setEditing(false);
   }, []);
 
   /** TAP: commit, or open when the tile only navigates. */
@@ -156,6 +165,22 @@ export default function EstimatorPage() {
     return current.children ?? [];
   }, [current, plants]);
 
+  const key = levelKey(current);
+  const arrangeable = isArrangeable(current);
+  const orderedNodes = useMemo(
+    () => applyOrder(levelNodes, settings.tileOrder[key]),
+    [levelNodes, settings.tileOrder, key],
+  );
+
+  const saveOrder = (ids: string[]) =>
+    updateSettings({ tileOrder: { ...settings.tileOrder, [key]: ids } });
+
+  const resetOrder = () => {
+    const next = { ...settings.tileOrder };
+    delete next[key];
+    updateSettings({ tileOrder: next });
+  };
+
   const onAssembliesPage = current?.page === "assemblies";
   const parentKey = current?.commit ? selectionKey(current.commit) : null;
   const parentTaps = parentKey ? (estimate.taps[parentKey] ?? 0) : 0;
@@ -163,7 +188,30 @@ export default function EstimatorPage() {
   return (
     <main className="md-safe relative h-dvh w-full flex flex-col bg-bg overflow-hidden">
       <header className="shrink-0 flex items-center justify-between gap-3 px-4 pt-3 pb-1 h-11">
-        {current ? (
+        {editing ? (
+          <>
+            <span className="text-sm font-semibold text-ink">
+              Arranging
+              <span className="ml-2 font-medium text-muted">
+                drag tiles to reorder
+              </span>
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={resetOrder}
+                className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
+              >
+                Reset
+              </button>
+              <button
+                onClick={() => setEditing(false)}
+                className="px-4 py-1.5 rounded-full bg-accent text-black text-sm font-bold"
+              >
+                Done
+              </button>
+            </div>
+          </>
+        ) : current ? (
           <>
             <button
               onClick={goBack}
@@ -217,9 +265,21 @@ export default function EstimatorPage() {
             >
               ‹ MasterDash
             </Link>
-            <span className="text-xs font-semibold text-muted tracking-wide">
-              QUICK ESTIMATOR
-            </span>
+            <div className="flex items-center gap-3">
+              {/* The discoverable way in. Long-pressing empty space works on
+                  any arrangeable level, but nothing on screen says so. */}
+              {arrangeable && (
+                <button
+                  onClick={() => setEditing(true)}
+                  className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
+                >
+                  Arrange
+                </button>
+              )}
+              <span className="text-xs font-semibold text-muted tracking-wide">
+                QUICK ESTIMATOR
+              </span>
+            </div>
           </>
         )}
       </header>
@@ -240,28 +300,22 @@ export default function EstimatorPage() {
             the job.
           </p>
         ) : (
-          <div
-            className="grid gap-3"
-            style={{
-              gridTemplateColumns:
-                "repeat(auto-fill, minmax(clamp(8rem, 15.2vw, 13rem), 1fr))",
-            }}
-          >
-            {levelNodes.map((node) => (
-              <EstimateTile
-                key={node.id}
-                node={node}
-                item={node.commit ? (getItem(node.commit.itemId) ?? null) : null}
-                count={countFor(node)}
-                hasDepth={hasDepth(node)}
-                navigateOnly={isNavigateOnly(node)}
-                showPrices={settings.showPrices}
-                markupPercent={settings.markupPercent}
-                onTap={handleTap}
-                onLongPress={handleLongPress}
-              />
-            ))}
-          </div>
+          <TileGrid
+            nodes={orderedNodes}
+            editing={editing}
+            arrangeable={arrangeable}
+            settings={settings}
+            countFor={countFor}
+            itemFor={(node) =>
+              node.commit ? (getItem(node.commit.itemId) ?? null) : null
+            }
+            hasDepthOf={hasDepth}
+            navigateOnlyOf={isNavigateOnly}
+            onTap={handleTap}
+            onLongPress={handleLongPress}
+            onReorder={saveOrder}
+            onEnterArrange={() => setEditing(true)}
+          />
         )}
       </div>
 

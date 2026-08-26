@@ -119,6 +119,11 @@ export interface EstimatorSettings {
    * depends on them, so the toggle covers money only.
    */
   showPrices: boolean;
+  /**
+   * Custom tile order per level, keyed by level id ("home", or the parent
+   * node's id). Holds only levels that have actually been rearranged.
+   */
+  tileOrder: Record<string, string[]>;
 }
 
 export const DEFAULT_ESTIMATOR_SETTINGS: EstimatorSettings = {
@@ -127,6 +132,7 @@ export const DEFAULT_ESTIMATOR_SETTINGS: EstimatorSettings = {
   autoDeliveryItemId: "svc:delivery_supplier",
   markupPercent: 0,
   showPrices: true,
+  tileOrder: {},
 };
 
 export interface LineItem {
