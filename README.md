@@ -249,7 +249,10 @@ marked up.
 ### Tile photography
 
 Tiles prefer a real photo and fall back to their glyph, which is also what
-happens offline since the images are remote.
+happens offline since the images are remote. A photo fills the whole tile,
+with the label over a bottom scrim so it stays readable against any image.
+Photo tiles dim less than glyph tiles when untapped — under a scrim at 40% the
+picture goes black, which loses the only thing an image-led tile is for.
 
 - **Materials** — cover photos come from `master_photos`
   (`entity_type = 'material'`, `is_cover`), keyed by `materials.id`. Four exist
