@@ -8,16 +8,18 @@ one glance and one tap.
 
 ---
 
-## The three views
+## The views
 
 | View | What it is |
 |---|---|
 | **Board** | The tile grid. Tap to log, long-press to correct. |
 | **Calendar** | Day and week timeline of what you logged, laid out proportionally. |
 | **Log** | The raw table — filter, edit, export CSV. |
+| **Estimator** | The tile grid for pricing a job. See below. |
 
-All three read the same two entities: an **Activity** (a tile) and an **Entry**
-(one logged span against it).
+The first three read the same two entities: an **Activity** (a tile) and an
+**Entry** (one logged span against it). The Estimator is a separate surface with
+its own model and its own storage — clearing an estimate never touches the log.
 
 ## How logging works
 
@@ -105,6 +107,84 @@ reads mean zero delay between a tap and the visual confirmation, which matters
 more than capacity at this stage. The practical ceiling is roughly 4–5 years of
 20 entries a day. All access is behind `lib/store.ts`, so moving the entry log
 to IndexedDB later touches one file.
+
+## Quick Estimator
+
+A second surface at **/estimator**, for building a proposal on site. Same
+instrument, different job: the Board logs time, the Estimator prices work.
+
+### One tap is a load, not a unit
+
+The tapping flow never asks "how many?". A tap adds one **purchase increment** —
+the amount Ricci's actually buys — taken from `materials.units_per_load`:
+
+| Tile | One tap adds |
+|---|---|
+| Mulch | 8 cy + 1 delivery |
+| Decorative Stone | 5 ton + 1 delivery |
+| Clean 8 | 5 ton + 1 delivery |
+| 4-Man Crew | 1 crew-day = 44 h |
+
+Two loads is two taps. Quantities are always whole increments; an odd quantity —
+6 yards rather than 8 — is corrected downstream on the proposal document, not in
+the field.
+
+**Deliveries are automatic.** Any material with `delivery_fee` set books a
+delivery load when tapped, and gives it back when untapped, because the delivery
+count is derived from the material taps rather than stored beside them. That is
+why the Delivery tile means an *extra* delivery: the ones that come with
+material are already counted.
+
+**Crew tiles are crew-days with the multiplier baked in.** A 4-man day is a
+10-hour day plus travel, four times over — 44 hours. Four taps is 176.
+
+### The grid is a checklist
+
+Every tile is dim until tapped and full colour after, with a red count badge
+once there is a number worth reading. Folders light up and roll up the count
+inside them, so a still-dim **Equipment** tile means "no equipment on this job"
+and can be trusted to mean it. A proposal with no labour is visible from across
+the truck.
+
+Folders open a full page. Leaving one is a setting: back out automatically after
+a pause (the default — the timer only starts after the first selection, so
+opening a folder to look never bounces you out), or press **Done**. A long press
+on any tile backs off one increment, which is the only way to correct a mis-tap
+without leaving the grid.
+
+Totals stay off the grid. The running figure is one pill in the corner; the line
+items, the markup and the total live on the **proposal screen** behind it.
+
+### Catalog data
+
+Prices come from Supabase (`materials`, `equipment`, and the per-load Delivery
+and Debris rows in `aspire_catalog`), but they are **committed as a snapshot** in
+`lib/estimator/catalog-data.ts` rather than fetched at runtime. Two reasons, and
+either alone would decide it:
+
+1. Those tables have RLS enabled with **no policies**, so a browser holding the
+   publishable key reads zero rows. Reading them needs the service role key,
+   which can never ship to a client.
+2. The app is a static export used where there is no signal. An estimate that
+   needs a network round-trip before the first tile lights up is not usable on a
+   job site.
+
+Re-run after a price change:
+
+```bash
+SUPABASE_URL=https://<ref>.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=<key> \
+node scripts/sync-catalog.mjs
+```
+
+The key stays on the machine running the script — the generated file holds only
+prices. A new row that nobody files into `lib/estimator/layout.ts` lands in a
+catch-all **Other** folder rather than becoming silently unreachable.
+
+Tile placement in `layout.ts` is deliberate and per-item, not derived from
+category — which materials deserve a home tile is a judgement about how Ryan
+sells, and it is meant to be argued with.
+
 
 ## Development
 

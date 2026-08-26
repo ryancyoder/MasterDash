@@ -109,3 +109,26 @@ select {
     animation: none;
   }
 }
+
+/* Folder auto-backout countdown. The duration is set inline, per setting. */
+@keyframes qe-countdown {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
+.qe-countdown {
+  animation-name: qe-countdown;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qe-countdown {
+    animation: none;
+    width: 100%;
+  }
+}
