@@ -7,6 +7,7 @@
 
 import {
   EQUIPMENT,
+  MATERIAL_PHOTOS,
   MATERIALS,
   SERVICES,
   type EquipmentRow,
@@ -182,6 +183,7 @@ function fromMaterial(row: MaterialRow): CatalogItem {
     tileName: TILE_NAMES[row.id] ?? row.name,
     glyph: glyphFor(row.id, row.category),
     color: colorFor(row.category),
+    image: MATERIAL_PHOTOS[row.id] ?? null,
     hoursPerUnit: CREW_HOURS[row.id],
   };
 }

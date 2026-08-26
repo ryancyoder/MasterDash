@@ -61,6 +61,7 @@ function itemNode(itemId: string, extra: Partial<TileNode> = {}): TileNode {
     label: item.tileName,
     glyph: item.glyph,
     color: item.color,
+    image: item.image,
     commit: { itemId },
     ...extra,
   };
@@ -124,6 +125,7 @@ export const HOME_TILES: TileNode[] = [
         label,
         glyph: item.glyph,
         color: item.color,
+        image: item.image,
         commit: { itemId },
         childSource: { kind: "plants" as const, group, itemId },
       };

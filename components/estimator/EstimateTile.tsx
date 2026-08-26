@@ -115,6 +115,15 @@ export default function EstimateTile({
 
   const showImage = Boolean(node.image) && !imgBroken;
 
+  // Over a photo the label needs its own contrast, so it stops following the
+  // selected/unselected text colours and rides the scrim instead.
+  const textOnPhoto = showImage;
+
+  // Unselected tiles dim, but a photo tile dims less than a glyph tile: it is
+  // already carrying a scrim, and at 40% under one the picture goes black —
+  // which loses the only thing an image-led tile is for. Selection still reads
+  // unmistakably from the colour wash and the ring.
+
   return (
     <button
       onPointerDown={handleDown}
@@ -125,52 +134,82 @@ export default function EstimateTile({
       aria-label={ariaLabel(node, item, count, hasDepth, navigateOnly)}
       aria-pressed={navigateOnly ? undefined : selected}
       aria-haspopup={hasDepth ? "menu" : undefined}
-      className={`relative aspect-square rounded-3xl flex flex-col items-center justify-center overflow-hidden touch-none select-none transition-opacity ${
+      className={`relative aspect-square rounded-3xl flex flex-col overflow-hidden touch-none select-none transition-opacity ${
         flash ? "md-tapped" : ""
-      } ${selected ? "opacity-100" : "opacity-40"}`}
+      } ${showImage ? "justify-end" : "items-center justify-center"} ${
+        selected ? "opacity-100" : showImage ? "opacity-[0.62]" : "opacity-40"
+      }`}
       style={{
-        background: selected ? node.color : "var(--md-surface-2)",
+        background: selected && !showImage ? node.color : "var(--md-surface-2)",
         boxShadow: selected
-          ? `0 0 0 4px ${node.color}55${depthShadow ? `, ${depthShadow}` : ""}`
+          ? `0 0 0 4px ${node.color}${showImage ? "" : "55"}${depthShadow ? `, ${depthShadow}` : ""}`
           : depthShadow,
       }}
     >
-      {!selected && (
+      {showImage && (
+        <>
+          {/* Full-bleed: the photo is the tile. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={node.image ?? ""}
+            alt=""
+            draggable={false}
+            loading="lazy"
+            onError={() => setImgBroken(true)}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+          {/* A scrim, not a dimmer: the label has to stay readable in direct
+              sun over whatever the photo happens to be. */}
+          <span className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-black/5" />
+          {/* Selected tiles still carry their identity colour, which the photo
+              would otherwise cover completely. */}
+          {selected && (
+            <span
+              className="absolute inset-0 mix-blend-overlay"
+              style={{ background: node.color, opacity: 0.45 }}
+            />
+          )}
+        </>
+      )}
+
+      {!selected && !showImage && (
+        <span
+          className="absolute inset-x-0 top-0 h-1.5"
+          style={{ background: node.color }}
+        />
+      )}
+      {showImage && (
         <span
           className="absolute inset-x-0 top-0 h-1.5"
           style={{ background: node.color }}
         />
       )}
 
-      {showImage ? (
-        // A remote catalog photo; the Next image loader cannot optimise it
-        // under a static export, and offline it simply falls back to the glyph.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={node.image ?? ""}
-          alt=""
-          draggable={false}
-          loading="lazy"
-          onError={() => setImgBroken(true)}
-          className="w-[clamp(2.5rem,7vw,4.5rem)] h-[clamp(2.5rem,7vw,4.5rem)] object-cover rounded-2xl"
-        />
-      ) : (
+      {!showImage && (
         <span className="text-[clamp(1.75rem,4.5vw,3rem)] leading-none">
           {node.glyph}
         </span>
       )}
 
       <span
-        className={`mt-2 px-2 text-center font-semibold leading-tight text-[clamp(0.7rem,1.35vw,0.95rem)] ${
-          selected ? "text-black/85" : "text-ink"
+        className={`relative ${showImage ? "px-2.5 text-left" : "mt-2 px-2 text-center"} font-semibold leading-tight text-[clamp(0.7rem,1.35vw,0.95rem)] ${
+          textOnPhoto
+            ? "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
+            : selected
+              ? "text-black/85"
+              : "text-ink"
         }`}
       >
         {node.label}
       </span>
 
       <span
-        className={`mt-1 px-2 text-center text-[clamp(0.6rem,1.1vw,0.78rem)] font-medium tabular-nums ${
-          selected ? "text-black/65" : "text-muted"
+        className={`relative ${showImage ? "px-2.5 pb-2.5 text-left" : "mt-1 px-2 text-center"} text-[clamp(0.6rem,1.1vw,0.78rem)] font-medium tabular-nums ${
+          textOnPhoto
+            ? "text-white/85 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
+            : selected
+              ? "text-black/65"
+              : "text-muted"
         }`}
       >
         {subLabel(node, item, count, navigateOnly, showPrices, markupPercent)}
@@ -188,8 +227,8 @@ export default function EstimateTile({
           never gets tapped "just in case". */}
       {item?.autoDelivery && (
         <span
-          className={`absolute bottom-2.5 right-2.5 text-[0.7rem] ${
-            selected ? "text-black/55" : "text-muted"
+          className={`absolute ${showImage ? "top-2.5 left-2.5" : "bottom-2.5 right-2.5"} text-[0.7rem] ${
+            textOnPhoto ? "" : selected ? "text-black/55" : "text-muted"
           }`}
           aria-hidden="true"
         >
