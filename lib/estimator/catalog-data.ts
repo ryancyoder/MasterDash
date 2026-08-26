@@ -120,3 +120,134 @@ export const SERVICES: ServiceRow[] = [
   { id: "delivery_rlm", name: "Delivery (RLM Truck)", category: "delivery", unit: "load", costPerUnit: 85, aspireName: "Delivery Charge - RLM (per load)" },
   { id: "debris", name: "Debris / Dumping", category: "debris", unit: "load", costPerUnit: 166.667, aspireName: "Debris / Dumping Fee (per load)" },
 ];
+
+// --- Refinement and takeoff tables ----------------------------------------
+// These drive the drill-downs and the assembly range buckets. They are small
+// (78 rows all told) so they ride along in the bundle; `plants` is 962 rows and
+// lives in public/catalog/plants.json, fetched on demand and precached by the
+// service worker.
+
+/** A material used in a particular context, with the coverage rate for it. */
+export interface ApplicationRow {
+  id: string;
+  materialId: string;
+  application: string;
+  displayName: string;
+  /** False = only meaningful inside an assembly, never tappable on its own. */
+  standalone: boolean;
+  coverageRate: number | null;
+  coverageUnit: string;
+  /** "divide": area / rate. "multiply": length * rate. */
+  coverageMethod: string;
+  roundTo: number | null;
+}
+
+export interface AssemblyRow {
+  id: string;
+  name: string;
+  operationStage: string;
+  unitOfWork: string;
+  equipmentRequired: boolean;
+}
+
+export interface AssemblyRoleRow {
+  assemblyId: string;
+  roleKey: string;
+  applicationId: string | null;
+  required: boolean;
+}
+
+export interface AssemblyEquipmentRow {
+  assemblyId: string;
+  equipmentId: string;
+}
+
+export const APPLICATIONS: ApplicationRow[] = [
+  { id: "clean_8_french_drain", materialId: "clean_8", application: "french_drain", displayName: "Clean 8 (French Drain)", standalone: true, coverageRate: 0.03, coverageUnit: "ln_ft", coverageMethod: "multiply", roundTo: null },
+  { id: "clean_8_patio", materialId: "clean_8", application: "patio", displayName: "Clean 8 (Pavers)", standalone: true, coverageRate: 20, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+  { id: "compost_bed", materialId: "compost", application: "bed_installation", displayName: "Compost", standalone: true, coverageRate: 125, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+  { id: "decorative_stone_bed", materialId: "decorative_stone", application: "bed_installation", displayName: "Decorative Stone", standalone: true, coverageRate: 80, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: 5 },
+  { id: "erosion_blanket_lawn", materialId: "erosion_blanket", application: "lawn_install", displayName: "Erosion Blanket", standalone: true, coverageRate: 900, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+  { id: "grass_seed_lawn", materialId: "grass_seed", application: "lawn_install", displayName: "Grass Seed", standalone: true, coverageRate: 5000, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: 0.25 },
+  { id: "grid_wall", materialId: "grid_wall_reinforcement", application: "wall", displayName: "Grid (Wall Reinforcement)", standalone: true, coverageRate: 900, coverageUnit: "face_ft", coverageMethod: "divide", roundTo: null },
+  { id: "hf_grand_ledge_wall", materialId: "hf_grand_ledge", application: "wall", displayName: "HF Grand Ledge", standalone: true, coverageRate: 18, coverageUnit: "face_ft", coverageMethod: "divide", roundTo: null },
+  { id: "hpb_bedding_patio", materialId: "hpb_bedding", application: "patio", displayName: "HPB Bedding", standalone: true, coverageRate: 100, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+  { id: "landscape_fabric_bed", materialId: "landscape_fabric", application: "bed_installation", displayName: "Landscape Fabric", standalone: true, coverageRate: 1500, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: 0.25 },
+  { id: "landscape_fabric_french_drain", materialId: "landscape_fabric", application: "french_drain", displayName: "Landscape Fabric (French Drain)", standalone: false, coverageRate: 0.0025, coverageUnit: "ln_ft", coverageMethod: "multiply", roundTo: null },
+  { id: "metal_edging_bed", materialId: "metal_edging", application: "bed_installation", displayName: "Metal Edging", standalone: true, coverageRate: 1, coverageUnit: "linear_ft", coverageMethod: "divide", roundTo: null },
+  { id: "mirimichi_bed", materialId: "mirimichi", application: "bed_installation", displayName: "Miramichi (Bed)", standalone: true, coverageRate: 100, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+  { id: "mirimichi_lawn", materialId: "mirimichi", application: "lawn_install", displayName: "Miramichi (Lawn)", standalone: true, coverageRate: 500, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+  { id: "mulch_bed", materialId: "mulch", application: "bed_installation", displayName: "Mulch", standalone: true, coverageRate: 65, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+  { id: "pavers_patio", materialId: "pavers", application: "patio", displayName: "Paver (Generic)", standalone: true, coverageRate: 116, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+  { id: "perma_edge_patio", materialId: "perma_edge", application: "patio", displayName: "Perma Edge", standalone: true, coverageRate: 80, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+  { id: "polymeric_sand_patio", materialId: "polymeric_sand", application: "patio", displayName: "Polymeric Sand", standalone: true, coverageRate: 75, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+  { id: "pulverized_topsoil_lawn", materialId: "pulverized_topsoil", application: "lawn_install", displayName: "Pulverized Topsoil (Lawn)", standalone: true, coverageRate: 175, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+  { id: "slotted_drain_pipe_drainage", materialId: "slotted_drain_tile", application: "drainage", displayName: "4\" Slotted Drain Pipe", standalone: true, coverageRate: 100, coverageUnit: "ln_ft", coverageMethod: "divide", roundTo: 1 },
+  { id: "slotted_drain_tile_french_drain", materialId: "slotted_drain_tile", application: "french_drain", displayName: "Slotted Drain Tile", standalone: false, coverageRate: 0.01, coverageUnit: "ln_ft", coverageMethod: "multiply", roundTo: null },
+  { id: "sod_installation_lawn", materialId: "sod_installation", application: "lawn_install", displayName: "Sod Installation", standalone: true, coverageRate: 450, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+  { id: "solid_drain_pipe_drainage", materialId: "solid_drain_pipe", application: "drainage", displayName: "4\" Solid Drain Pipe", standalone: true, coverageRate: 100, coverageUnit: "ln_ft", coverageMethod: "divide", roundTo: 1 },
+  { id: "stabilization_fabric_patio", materialId: "stabilization_fabric", application: "patio", displayName: "Stabilization Fabric", standalone: true, coverageRate: 1500, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+  { id: "steel_edging_bed", materialId: "steel_edging", application: "bed_installation", displayName: "Steel Edging", standalone: true, coverageRate: 8, coverageUnit: "linear_ft", coverageMethod: "divide", roundTo: 1 },
+  { id: "steps_hardscape", materialId: "steps_6ft", application: "patio", displayName: "Steps (6 ft Generic)", standalone: true, coverageRate: 1, coverageUnit: "sq_ft", coverageMethod: "divide", roundTo: null },
+];
+
+export const ASSEMBLIES: AssemblyRow[] = [
+  { id: "lawn_installation_standard", name: "Lawn Installation – Standard", operationStage: "lawn_install", unitOfWork: "sq_ft", equipmentRequired: true },
+  { id: "mulch_bed_installation_standard", name: "Mulch Bed Installation – Standard", operationStage: "bed_installation", unitOfWork: "sq_ft", equipmentRequired: false },
+  { id: "decorative_stone_bed_installation_standard", name: "Decorative Stone Bed Installation – Standard", operationStage: "bed_installation", unitOfWork: "sq_ft", equipmentRequired: true },
+  { id: "patio_standard", name: "Patio – Standard", operationStage: "patio", unitOfWork: "sq_ft", equipmentRequired: true },
+  { id: "planting_landscape_bed", name: "Planting – Landscape Bed", operationStage: "planting", unitOfWork: "sq_ft", equipmentRequired: false },
+  { id: "outcropping_installation_standard", name: "Outcropping Installation – Standard", operationStage: "outcropping", unitOfWork: "ton", equipmentRequired: true },
+  { id: "french_drain_standard", name: "French Drain – Standard", operationStage: "excavation", unitOfWork: "ln_ft", equipmentRequired: true },
+];
+
+export const ASSEMBLY_ROLES: AssemblyRoleRow[] = [
+  { assemblyId: "decorative_stone_bed_installation_standard", roleKey: "compost", applicationId: "compost_bed", required: true },
+  { assemblyId: "decorative_stone_bed_installation_standard", roleKey: "mirimichi", applicationId: "mirimichi_bed", required: true },
+  { assemblyId: "decorative_stone_bed_installation_standard", roleKey: "decorative_stone", applicationId: "decorative_stone_bed", required: true },
+  { assemblyId: "decorative_stone_bed_installation_standard", roleKey: "landscape_fabric", applicationId: "landscape_fabric_bed", required: true },
+  { assemblyId: "decorative_stone_bed_installation_standard", roleKey: "steel_edging", applicationId: "steel_edging_bed", required: true },
+  { assemblyId: "french_drain_standard", roleKey: "clean_8", applicationId: "clean_8_french_drain", required: true },
+  { assemblyId: "french_drain_standard", roleKey: "landscape_fabric", applicationId: "landscape_fabric_french_drain", required: true },
+  { assemblyId: "french_drain_standard", roleKey: "slotted_drain_tile", applicationId: "slotted_drain_tile_french_drain", required: true },
+  { assemblyId: "lawn_installation_standard", roleKey: "pulverized_topsoil", applicationId: "pulverized_topsoil_lawn", required: true },
+  { assemblyId: "lawn_installation_standard", roleKey: "erosion_blanket", applicationId: "erosion_blanket_lawn", required: true },
+  { assemblyId: "lawn_installation_standard", roleKey: "grass_seed", applicationId: "grass_seed_lawn", required: true },
+  { assemblyId: "lawn_installation_standard", roleKey: "mirimichi", applicationId: "mirimichi_lawn", required: true },
+  { assemblyId: "mulch_bed_installation_standard", roleKey: "compost", applicationId: "compost_bed", required: true },
+  { assemblyId: "mulch_bed_installation_standard", roleKey: "mirimichi", applicationId: "mirimichi_bed", required: true },
+  { assemblyId: "mulch_bed_installation_standard", roleKey: "mulch", applicationId: "mulch_bed", required: true },
+  { assemblyId: "outcropping_installation_standard", roleKey: "eden_outcropping", applicationId: null, required: false },
+  { assemblyId: "outcropping_installation_standard", roleKey: "weathered_limestone_outcropping", applicationId: null, required: false },
+  { assemblyId: "outcropping_installation_standard", roleKey: "high_format_outcropping", applicationId: null, required: false },
+  { assemblyId: "outcropping_installation_standard", roleKey: "beach_pebbles", applicationId: null, required: false },
+  { assemblyId: "outcropping_installation_standard", roleKey: "gun_metal_boulders", applicationId: null, required: false },
+  { assemblyId: "patio_standard", roleKey: "base_material", applicationId: "clean_8_patio", required: true },
+  { assemblyId: "patio_standard", roleKey: "bedding_material", applicationId: "hpb_bedding_patio", required: true },
+  { assemblyId: "patio_standard", roleKey: "stabilization_fabric", applicationId: "stabilization_fabric_patio", required: true },
+  { assemblyId: "patio_standard", roleKey: "edge_restraint", applicationId: "perma_edge_patio", required: true },
+  { assemblyId: "patio_standard", roleKey: "pavers", applicationId: "pavers_patio", required: true },
+  { assemblyId: "patio_standard", roleKey: "polymeric_sand", applicationId: "polymeric_sand_patio", required: true },
+  { assemblyId: "planting_landscape_bed", roleKey: "shade_tree", applicationId: null, required: false },
+  { assemblyId: "planting_landscape_bed", roleKey: "ornamental_tree", applicationId: null, required: false },
+  { assemblyId: "planting_landscape_bed", roleKey: "evergreen", applicationId: null, required: false },
+  { assemblyId: "planting_landscape_bed", roleKey: "shrub", applicationId: null, required: false },
+  { assemblyId: "planting_landscape_bed", roleKey: "ornamental_grass", applicationId: null, required: false },
+  { assemblyId: "planting_landscape_bed", roleKey: "perennial", applicationId: null, required: false },
+  { assemblyId: "planting_landscape_bed", roleKey: "ground_cover", applicationId: null, required: false },
+  { assemblyId: "planting_landscape_bed", roleKey: "bulbs", applicationId: null, required: false },
+];
+
+export const ASSEMBLY_EQUIPMENT: AssemblyEquipmentRow[] = [
+  { assemblyId: "decorative_stone_bed_installation_standard", equipmentId: "buggy" },
+  { assemblyId: "french_drain_standard", equipmentId: "excavator_mini" },
+  { assemblyId: "lawn_installation_standard", equipmentId: "track_loader" },
+  { assemblyId: "lawn_installation_standard", equipmentId: "harley_rake" },
+  { assemblyId: "lawn_installation_standard", equipmentId: "sod_cutter" },
+  { assemblyId: "outcropping_installation_standard", equipmentId: "excavator_engcon" },
+  { assemblyId: "patio_standard", equipmentId: "track_loader" },
+  { assemblyId: "patio_standard", equipmentId: "excavator_mini" },
+  { assemblyId: "patio_standard", equipmentId: "demo_saw" },
+  { assemblyId: "patio_standard", equipmentId: "brick_saw" },
+  { assemblyId: "patio_standard", equipmentId: "compactor_large" },
+];

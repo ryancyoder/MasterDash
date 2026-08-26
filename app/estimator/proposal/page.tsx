@@ -1,32 +1,43 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   formatMoney,
   formatQuantity,
   formatUnitCost,
+  sellFor,
   unitLabel,
 } from "@/lib/estimator/catalog";
+import { CATALOG_SYNCED_AT, SERVICES } from "@/lib/estimator/catalog-data";
 import { buildProposal } from "@/lib/estimator/proposal";
 import {
+  attachDeal,
   clearEstimate,
+  setAssemblyBuckets,
   setJobName,
   setTaps,
   updateSettings,
 } from "@/lib/estimator/store";
+import {
+  getServerSyncState,
+  getSyncState,
+  queueSave,
+  readQueue,
+  startAutoFlush,
+  subscribeSync,
+  transportConfigured,
+} from "@/lib/estimator/sync";
 import { useEstimate } from "@/lib/estimator/useEstimate";
-import { CATALOG_SYNCED_AT } from "@/lib/estimator/catalog-data";
-import { SERVICES } from "@/lib/estimator/catalog-data";
-import type { LineItem } from "@/lib/estimator/types";
+import type { EstimatorSettings, LineItem } from "@/lib/estimator/types";
 
 /**
  * Where the numbers live.
  *
- * Kept off the grid deliberately: quantities here are whole purchase
- * increments, and the odd quantity — 6 yards of mulch, not 8 — is corrected on
- * the proposal document downstream. This screen is the handoff to that, not a
- * second estimating surface.
+ * Kept off the grid deliberately. Quantities here are whole purchase
+ * increments, and the odd quantity — 6 yards rather than 8 — is corrected on
+ * the proposal document downstream. This screen is the handoff to that, plus
+ * the one place an estimate is saved.
  */
 export default function ProposalPage() {
   const { estimate, settings } = useEstimate();
@@ -34,8 +45,23 @@ export default function ProposalPage() {
     () => buildProposal(estimate, settings),
     [estimate, settings],
   );
+  const [saved, setSaved] = useState(false);
+
+  const syncState = useSyncExternalStore(
+    subscribeSync,
+    getSyncState,
+    getServerSyncState,
+  );
+
+  useEffect(() => startAutoFlush(), []);
 
   const empty = proposal.lines.length === 0;
+
+  const save = () => {
+    queueSave(estimate, proposal);
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 2500);
+  };
 
   return (
     <main className="md-safe min-h-dvh w-full bg-bg flex flex-col">
@@ -47,20 +73,29 @@ export default function ProposalPage() {
           value={estimate.jobName}
           onChange={(e) => setJobName(e.target.value)}
           placeholder="Job name"
-          className="flex-1 bg-transparent text-ink placeholder:text-muted text-base font-semibold outline-none px-2 py-1 rounded-lg focus:bg-surface2"
+          className="flex-1 min-w-0 bg-transparent text-ink placeholder:text-muted text-base font-semibold outline-none px-2 py-1 rounded-lg focus:bg-surface2"
         />
         <button
+          onClick={save}
+          disabled={empty}
+          className="px-4 py-1.5 rounded-full bg-accent text-black text-xs font-bold disabled:opacity-40"
+        >
+          {saved ? "Saved" : "Save"}
+        </button>
+        <button
           onClick={() => {
-            if (window.confirm("Clear this estimate? This cannot be undone.")) {
+            if (window.confirm("Start a new estimate? Save this one first.")) {
               clearEstimate();
             }
           }}
           disabled={empty}
           className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted disabled:opacity-40"
         >
-          Clear
+          New
         </button>
       </header>
+
+      <SyncBanner state={syncState} />
 
       <div className="flex-1 md-scroll overflow-y-auto px-4 py-4">
         {empty ? (
@@ -68,34 +103,85 @@ export default function ProposalPage() {
             Nothing tapped yet. Go back to the grid and build the job.
           </p>
         ) : (
-          proposal.sections.map((section) => (
-            <section key={section.section} className="mb-7">
-              <div className="flex items-baseline justify-between mb-2">
-                <h2 className="text-[0.7rem] font-bold tracking-widest text-muted">
-                  {section.section.toUpperCase()}
+          <>
+            {proposal.assemblies.length > 0 && (
+              <section className="mb-7">
+                <h2 className="text-[0.7rem] font-bold tracking-widest text-muted mb-2">
+                  ASSEMBLIES
                 </h2>
-                <span className="text-sm font-semibold tabular-nums text-muted">
-                  {formatMoney(section.subtotal)}
-                </span>
-              </div>
-              <ul className="rounded-2xl overflow-hidden border border-edge">
-                {section.lines.map((line) => (
-                  <Row key={line.item.id} line={line} />
-                ))}
-              </ul>
-            </section>
-          ))
+                <ul className="rounded-2xl overflow-hidden border border-edge">
+                  {proposal.assemblies.map((a) => (
+                    <li
+                      key={a.id}
+                      className="flex items-center gap-3 px-3 py-2.5 bg-surface border-b border-edge last:border-b-0"
+                    >
+                      <span aria-hidden="true">📐</span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-sm font-semibold text-ink truncate">
+                          {a.name}
+                        </span>
+                        <span className="block text-xs text-muted tabular-nums">
+                          {a.work.toLocaleString()}{" "}
+                          {unitLabel(a.unit)} · {a.buckets} load
+                          {a.buckets === 1 ? "" : "s"} — expanded into the
+                          materials below
+                        </span>
+                      </span>
+                      <button
+                        onClick={() => setAssemblyBuckets(a.id, 0)}
+                        className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {proposal.sections.map((section) => (
+              <section key={section.section} className="mb-7">
+                <div className="flex items-baseline justify-between mb-2">
+                  <h2 className="text-[0.7rem] font-bold tracking-widest text-muted">
+                    {section.section.toUpperCase()}
+                  </h2>
+                  <span className="text-sm font-semibold tabular-nums text-muted">
+                    {formatMoney(section.subtotal)}
+                  </span>
+                </div>
+                <ul className="rounded-2xl overflow-hidden border border-edge">
+                  {section.lines.map((line) => (
+                    <Row
+                      key={line.key}
+                      line={line}
+                      markupPercent={settings.markupPercent}
+                    />
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </>
         )}
 
         {proposal.autoDeliveryLoads > 0 && (
-          <p className="text-xs text-muted mb-6">
+          <p className="text-xs text-muted mb-4">
             {proposal.autoDeliveryLoads} delivery load
             {proposal.autoDeliveryLoads === 1 ? "" : "s"} added automatically
-            from material loads. The Delivery tile adds extras on top.
+            from material loads and assembly takeoffs. The Delivery tile adds
+            extras on top.
           </p>
         )}
 
-        <Settings settings={settings} />
+        {proposal.syntheticCount > 0 && (
+          <p className="text-xs text-[#f59e0b] mb-6">
+            {proposal.syntheticCount} line
+            {proposal.syntheticCount === 1 ? " is" : "s are"} priced from a
+            placeholder rather than a catalog row — the lighting allowance and
+            the generic machine days still need Ryan&apos;s real numbers.
+          </p>
+        )}
+
+        <Settings settings={settings} estimate={estimate} />
 
         <p className="mt-6 text-[0.65rem] text-muted">
           Catalog snapshot {CATALOG_SYNCED_AT} · regenerate with{" "}
@@ -105,35 +191,22 @@ export default function ProposalPage() {
 
       {!empty && (
         <footer className="shrink-0 border-t border-edge px-4 py-3 bg-surface">
-          <Line label="Subtotal (cost)" value={formatMoney(proposal.subtotal)} />
           <div className="flex items-center justify-between py-1">
-            <label
-              htmlFor="markup"
-              className="text-sm text-muted flex items-center gap-2"
-            >
-              Markup
-              <input
-                id="markup"
-                type="number"
-                min={0}
-                max={200}
-                step={1}
-                value={settings.markupPercent}
-                onChange={(e) =>
-                  updateSettings({
-                    markupPercent: clamp(Number(e.target.value), 0, 200),
-                  })
-                }
-                className="w-16 bg-surface2 rounded-lg px-2 py-1 text-ink text-sm tabular-nums outline-none"
-              />
-              %
-            </label>
+            <span className="text-sm text-muted">Cost</span>
+            <span className="text-sm tabular-nums text-muted">
+              {formatMoney(proposal.subtotalCost)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between py-1">
+            <span className="text-sm text-muted">
+              Markup {settings.markupPercent}%
+            </span>
             <span className="text-sm tabular-nums text-muted">
               {formatMoney(proposal.markup)}
             </span>
           </div>
           <div className="flex items-center justify-between pt-2 mt-1 border-t border-edge">
-            <span className="text-base font-bold text-ink">Total</span>
+            <span className="text-base font-bold text-ink">Sell</span>
             <span className="text-2xl font-bold tabular-nums text-ink">
               {formatMoney(proposal.total)}
             </span>
@@ -144,8 +217,32 @@ export default function ProposalPage() {
   );
 }
 
-function Row({ line }: { line: LineItem }) {
-  const { item, taps, autoLoads, quantity, total } = line;
+function SyncBanner({ state }: { state: string }) {
+  const queued = typeof window === "undefined" ? 0 : readQueue().length;
+  if (state === "idle" || state === "synced") return null;
+
+  const text =
+    state === "unconfigured"
+      ? `${queued} estimate${queued === 1 ? "" : "s"} held locally — no Supabase write path configured yet (see README).`
+      : state === "syncing"
+        ? "Syncing…"
+        : `${queued} estimate${queued === 1 ? "" : "s"} queued — will push when back in coverage.`;
+
+  return (
+    <p className="shrink-0 px-4 py-2 text-xs bg-surface2 text-muted border-b border-edge">
+      {text}
+    </p>
+  );
+}
+
+function Row({
+  line,
+  markupPercent,
+}: {
+  line: LineItem;
+  markupPercent: number;
+}) {
+  const { item, label, taps, autoLoads, fromAssemblies, quantity, sell } = line;
   return (
     <li className="flex items-center gap-3 px-3 py-2.5 bg-surface border-b border-edge last:border-b-0">
       <span
@@ -159,22 +256,30 @@ function Row({ line }: { line: LineItem }) {
 
       <span className="flex-1 min-w-0">
         <span className="block text-sm font-semibold text-ink truncate">
-          {item.name}
+          {label}
+          {item.synthetic && (
+            <span className="ml-2 text-[0.6rem] font-bold text-[#f59e0b]">
+              PLACEHOLDER
+            </span>
+          )}
         </span>
         <span className="block text-xs text-muted tabular-nums">
           {formatQuantity(quantity)} {unitLabel(item.unit)} ×{" "}
-          {formatUnitCost(item.costPerUnit)}
+          {formatUnitCost(sellFor(item.costPerUnit, markupPercent))}
           {autoLoads > 0 && ` · ${autoLoads} with materials`}
+          {fromAssemblies > 0 &&
+            ` · ${formatQuantity(fromAssemblies)} from assemblies`}
         </span>
       </span>
 
-      {/* Correcting a mis-tap is a tap count, not a quantity: the increment is
-          what Ryan buys, so the proposal edits in the same units the grid does. */}
+      {/* Correcting a mis-tap is a tap count, not a quantity: the proposal
+          edits in the same increments the grid does. Assembly-derived
+          quantities are changed by editing the assembly, not here. */}
       <span className="flex items-center gap-1 shrink-0">
         <Step
-          label={`Remove one ${item.name}`}
+          label={`Remove one ${label}`}
           disabled={taps === 0}
-          onClick={() => setTaps(item.id, taps - 1)}
+          onClick={() => setTaps(line.key, taps - 1)}
         >
           −
         </Step>
@@ -182,15 +287,15 @@ function Row({ line }: { line: LineItem }) {
           {taps}
         </span>
         <Step
-          label={`Add one ${item.name}`}
-          onClick={() => setTaps(item.id, taps + 1)}
+          label={`Add one ${label}`}
+          onClick={() => setTaps(line.key, taps + 1)}
         >
           +
         </Step>
       </span>
 
       <span className="w-20 text-right text-sm font-bold tabular-nums text-ink shrink-0">
-        {formatMoney(total)}
+        {formatMoney(sell)}
       </span>
     </li>
   );
@@ -219,10 +324,16 @@ function Step({
   );
 }
 
+/** Preset buttons throughout: nothing in this app asks for a typed number. */
+const MARKUP_PRESETS = [0, 10, 15, 20, 25, 30, 35, 40, 50];
+const DELAY_PRESETS = [2, 3, 5, 8];
+
 function Settings({
   settings,
+  estimate,
 }: {
-  settings: ReturnType<typeof useEstimate>["settings"];
+  settings: EstimatorSettings;
+  estimate: ReturnType<typeof useEstimate>["estimate"];
 }) {
   return (
     <details className="rounded-2xl border border-edge overflow-hidden">
@@ -230,12 +341,52 @@ function Settings({
         Settings
       </summary>
 
-      <div className="px-4 pb-4 flex flex-col gap-4">
+      <div className="px-4 pb-4 flex flex-col gap-5">
         <fieldset>
           <legend className="text-xs text-muted mb-2">
-            Leaving a folder after a selection
+            Markup — applied to every price shown
           </legend>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {MARKUP_PRESETS.map((m) => (
+              <button
+                key={m}
+                onClick={() => updateSettings({ markupPercent: m })}
+                className={`px-3 py-2 rounded-xl text-sm font-bold tabular-nums ${
+                  settings.markupPercent === m
+                    ? "bg-accent text-black"
+                    : "bg-surface2 text-muted"
+                }`}
+              >
+                {m}%
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-xs text-muted">
+            Show prices on tiles
+            <span className="block text-[0.65rem]">
+              Counts always stay visible — the grid is a checklist.
+            </span>
+          </span>
+          <button
+            onClick={() => updateSettings({ showPrices: !settings.showPrices })}
+            className={`px-4 py-2 rounded-xl text-sm font-bold ${
+              settings.showPrices
+                ? "bg-accent text-black"
+                : "bg-surface2 text-muted"
+            }`}
+          >
+            {settings.showPrices ? "Shown" : "Hidden"}
+          </button>
+        </label>
+
+        <fieldset>
+          <legend className="text-xs text-muted mb-2">
+            Leaving a drill-down after a selection
+          </legend>
+          <div className="flex flex-wrap gap-2">
             {(
               [
                 { key: "auto", label: "Auto, after a pause" },
@@ -255,28 +406,26 @@ function Settings({
               </button>
             ))}
           </div>
+          {settings.folderReturn === "auto" && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {DELAY_PRESETS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() =>
+                    updateSettings({ folderReturnDelayMs: s * 1000 })
+                  }
+                  className={`px-3 py-2 rounded-xl text-sm font-bold tabular-nums ${
+                    settings.folderReturnDelayMs === s * 1000
+                      ? "bg-accent text-black"
+                      : "bg-surface2 text-muted"
+                  }`}
+                >
+                  {s}s
+                </button>
+              ))}
+            </div>
+          )}
         </fieldset>
-
-        {settings.folderReturn === "auto" && (
-          <label className="text-xs text-muted flex items-center gap-2">
-            Pause before backing out
-            <input
-              type="number"
-              min={1}
-              max={15}
-              step={1}
-              value={Math.round(settings.folderReturnDelayMs / 1000)}
-              onChange={(e) =>
-                updateSettings({
-                  folderReturnDelayMs:
-                    clamp(Number(e.target.value), 1, 15) * 1000,
-                })
-              }
-              className="w-16 bg-surface2 rounded-lg px-2 py-1 text-ink text-sm tabular-nums outline-none"
-            />
-            seconds
-          </label>
-        )}
 
         <label className="text-xs text-muted flex flex-col gap-2">
           Automatic material delivery priced as
@@ -294,21 +443,38 @@ function Settings({
             ))}
           </select>
         </label>
+
+        <div className="text-xs text-muted flex flex-col gap-2">
+          <span>
+            Deal
+            <span className="block text-[0.65rem]">
+              An estimate can be tapped out first and attached to a deal later.
+              Deals cannot be listed here yet — reading `Sales Board` from the
+              browser needs a Supabase read path.
+            </span>
+          </span>
+          <div className="flex items-center gap-2">
+            <span className="px-3 py-2 rounded-lg bg-surface2 text-ink text-sm tabular-nums">
+              {estimate.dealId ?? "unattached draft"}
+            </span>
+            {estimate.dealId !== null && (
+              <button
+                onClick={() => attachDeal(null, null)}
+                className="px-3 py-2 rounded-xl bg-surface2 text-sm font-semibold text-muted"
+              >
+                Detach
+              </button>
+            )}
+          </div>
+        </div>
+
+        <p className="text-[0.65rem] text-muted">
+          Estimate id <code>{estimate.clientId.slice(0, 8)}</code> ·{" "}
+          {transportConfigured()
+            ? "Supabase write path configured."
+            : "No Supabase write path configured — saves are held locally."}
+        </p>
       </div>
     </details>
   );
-}
-
-function Line({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between py-1">
-      <span className="text-sm text-muted">{label}</span>
-      <span className="text-sm tabular-nums text-muted">{value}</span>
-    </div>
-  );
-}
-
-function clamp(n: number, min: number, max: number): number {
-  if (!Number.isFinite(n)) return min;
-  return Math.min(max, Math.max(min, n));
 }

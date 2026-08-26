@@ -117,6 +117,127 @@ const services = SERVICE_ITEMS.map((spec) => {
   };
 });
 
+const applications = (
+  await rest(
+    "applications?select=id,material_id,application,display_name,standalone," +
+      "coverage_rate,coverage_unit,coverage_method,round_to&order=material_id",
+  )
+).map((r) => ({
+  id: r.id,
+  materialId: r.material_id,
+  application: r.application,
+  displayName: r.display_name ?? "",
+  standalone: Boolean(r.standalone),
+  coverageRate: num(r.coverage_rate),
+  coverageUnit: r.coverage_unit ?? "",
+  coverageMethod: r.coverage_method,
+  roundTo: num(r.round_to),
+}));
+
+const assemblies = (
+  await rest(
+    "assemblies?select=id,name,operation_stage,unit_of_work,equipment_required," +
+      "sort_order&order=sort_order",
+  )
+).map((r) => ({
+  id: r.id,
+  name: r.name,
+  operationStage: r.operation_stage,
+  unitOfWork: r.unit_of_work,
+  equipmentRequired: Boolean(r.equipment_required),
+}));
+
+const assemblyRoles = (
+  await rest(
+    "assembly_roles?select=assembly_id,role_key,application_id,required," +
+      "sort_order&order=assembly_id,sort_order",
+  )
+).map((r) => ({
+  assemblyId: r.assembly_id,
+  roleKey: r.role_key,
+  applicationId: r.application_id,
+  required: Boolean(r.required),
+}));
+
+const assemblyEquipment = (
+  await rest(
+    "assembly_equipment?select=assembly_id,equipment_id,sort_order" +
+      "&order=assembly_id,sort_order",
+  )
+).map((r) => ({ assemblyId: r.assembly_id, equipmentId: r.equipment_id }));
+
+// --- plants ---------------------------------------------------------------
+// 962 rows, far too many for the bundle: these go to public/catalog/plants.json
+// and are fetched only when someone drills to the third level.
+
+/** A shade tree is one big enough to sit under; 25 ft is the trade's line. */
+const SHADE_MIN_IN = 300;
+const QUOTES = "'\u2018\u2019\"\u201c\u201d";
+
+const normName = (v) =>
+  (v ?? "")
+    .trim()
+    .replace(new RegExp(`^[${QUOTES} \\-\u2013]+|[${QUOTES} ]+$`, "g"), "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const cultivarOf = (botanical) => {
+  const m = /['\u2018\u2019]([^'\u2018\u2019]+)['\u2018\u2019]/.exec(botanical ?? "");
+  return m ? normName(m[1]) : null;
+};
+
+const plants = (
+  await rest(
+    "plants?select=id,type,common,botanical,image,evergreen,height_in" +
+      "&order=type,common",
+  )
+)
+  .map((r) => {
+    const common = normName(r.common);
+    const botanical = normName(r.botanical);
+    const cv = cultivarOf(r.botanical);
+
+    // Some `common` values are size codes ("-3gal", "STD") rather than names,
+    // and three different Yews all read as "Yew" without their cultivar —
+    // which is exactly the distinction someone drilled this far to make.
+    let name;
+    if (!common || (common === common.toUpperCase() && common.length <= 3)) {
+      name = botanical || common;
+    } else if (cv && !common.toLowerCase().includes(cv.toLowerCase())) {
+      name = `${common} ${cv}`;
+    } else {
+      name = common;
+    }
+    name = normName(name);
+    if (!/^[A-Za-z]/.test(name)) name = botanical;
+
+    const group =
+      r.type === "tree"
+        ? r.evergreen
+          ? "evergreen_tree"
+          : (r.height_in ?? 0) >= SHADE_MIN_IN
+            ? "shade_tree"
+            : "ornamental_tree"
+        : { shrub: "shrub", groundcover: "ground_cover", perennial: "perennial", bulb: "perennial" }[
+            r.type
+          ] ?? "other";
+
+    return {
+      id: r.id,
+      type: r.type ?? "other",
+      group,
+      name,
+      botanical: botanical || null,
+      image: r.image || null,
+    };
+  })
+  .filter((p) => p.name && /^[A-Za-z]/.test(p.name))
+  .sort((a, b) =>
+    a.group === b.group
+      ? a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+      : a.group.localeCompare(b.group),
+  );
+
 if (materials.length === 0 || equipment.length === 0) {
   throw new Error(
     "materials or equipment came back empty — the key is probably the " +
@@ -140,6 +261,13 @@ const MAT_KEYS = [
 ];
 const EQ_KEYS = ["id", "name", "category", "unit", "costPerUnit"];
 const SVC_KEYS = [...EQ_KEYS, "aspireName"];
+const APP_KEYS = [
+  "id", "materialId", "application", "displayName", "standalone",
+  "coverageRate", "coverageUnit", "coverageMethod", "roundTo",
+];
+const ASM_KEYS = ["id", "name", "operationStage", "unitOfWork", "equipmentRequired"];
+const ROLE_KEYS = ["assemblyId", "roleKey", "applicationId", "required"];
+const AEQ_KEYS = ["assemblyId", "equipmentId"];
 
 const header = `// GENERATED FILE — do not edit by hand.
 // Regenerate with: node scripts/sync-catalog.mjs
@@ -194,6 +322,41 @@ export interface ServiceRow {
   /** The \`aspire_catalog.item_name\` this was taken from. */
   aspireName: string;
 }
+
+/** A material used in a particular context, with the coverage rate for it. */
+export interface ApplicationRow {
+  id: string;
+  materialId: string;
+  application: string;
+  displayName: string;
+  /** False = only meaningful inside an assembly, never tappable on its own. */
+  standalone: boolean;
+  coverageRate: number | null;
+  coverageUnit: string;
+  /** "divide": area / rate. "multiply": length * rate. */
+  coverageMethod: string;
+  roundTo: number | null;
+}
+
+export interface AssemblyRow {
+  id: string;
+  name: string;
+  operationStage: string;
+  unitOfWork: string;
+  equipmentRequired: boolean;
+}
+
+export interface AssemblyRoleRow {
+  assemblyId: string;
+  roleKey: string;
+  applicationId: string | null;
+  required: boolean;
+}
+
+export interface AssemblyEquipmentRow {
+  assemblyId: string;
+  equipmentId: string;
+}
 `;
 
 const body = `
@@ -212,6 +375,22 @@ ${equipment.map((e) => row(e, EQ_KEYS)).join("\n")}
 export const SERVICES: ServiceRow[] = [
 ${services.map((s) => row(s, SVC_KEYS)).join("\n")}
 ];
+
+export const APPLICATIONS: ApplicationRow[] = [
+${applications.map((a) => row(a, APP_KEYS)).join("\n")}
+];
+
+export const ASSEMBLIES: AssemblyRow[] = [
+${assemblies.map((a) => row(a, ASM_KEYS)).join("\n")}
+];
+
+export const ASSEMBLY_ROLES: AssemblyRoleRow[] = [
+${assemblyRoles.map((r) => row(r, ROLE_KEYS)).join("\n")}
+];
+
+export const ASSEMBLY_EQUIPMENT: AssemblyEquipmentRow[] = [
+${assemblyEquipment.map((e) => row(e, AEQ_KEYS)).join("\n")}
+];
 `;
 
 const out = join(
@@ -223,7 +402,20 @@ const out = join(
 );
 await writeFile(out, header + types + body);
 
+const plantsOut = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "public",
+  "catalog",
+  "plants.json",
+);
+await writeFile(plantsOut, JSON.stringify(plants));
+
 console.log(
   `Wrote ${materials.length} materials, ${equipment.length} equipment, ` +
-    `${services.length} services to lib/estimator/catalog-data.ts`,
+    `${services.length} services, ${applications.length} applications, ` +
+    `${assemblies.length} assemblies (${assemblyRoles.length} roles, ` +
+    `${assemblyEquipment.length} equipment links) to ` +
+    `lib/estimator/catalog-data.ts`,
 );
+console.log(`Wrote ${plants.length} plants to public/catalog/plants.json`);

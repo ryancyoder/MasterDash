@@ -2,13 +2,19 @@
 
 import {
   DEFAULT_ESTIMATOR_SETTINGS,
+  selectionKey,
   type Estimate,
   type EstimatorSettings,
+  type TileCommit,
 } from "./types";
 
-// Same shape as the MasterDash store, and separate from it on purpose: an
-// estimate in progress and a time log have nothing to say to each other, and
-// clearing one must never touch the other.
+// localStorage, same as the MasterDash store and separate from it on purpose:
+// an estimate in progress and a time log have nothing to say to each other,
+// and clearing one must never touch the other.
+//
+// Synchronous reads also matter more here than capacity. A tap has to light
+// its tile with no await in between, and the whole estimate is a few hundred
+// bytes.
 
 const ESTIMATE_KEY = "qe-estimate";
 const SETTINGS_KEY = "qe-settings";
@@ -34,16 +40,39 @@ export interface EstimatorSnapshot {
   hydrated: boolean;
 }
 
-function emptyEstimate(): Estimate {
-  return { jobName: "", taps: {}, updatedAt: new Date().toISOString() };
+function newId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `qe-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+}
+
+export function emptyEstimate(): Estimate {
+  return {
+    // Minted here, before the row has ever seen the network, so a write that
+    // is queued offline and retried twice still lands on one row.
+    clientId: newId(),
+    jobName: "",
+    dealId: null,
+    propertyId: null,
+    taps: {},
+    labels: {},
+    assemblyBuckets: {},
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 let snapshot: EstimatorSnapshot | null = null;
 
 const SERVER_SNAPSHOT: EstimatorSnapshot = Object.freeze({
   estimate: Object.freeze({
+    clientId: "",
     jobName: "",
+    dealId: null,
+    propertyId: null,
     taps: {},
+    labels: {},
+    assemblyBuckets: {},
     updatedAt: "",
   }) as Estimate,
   settings: DEFAULT_ESTIMATOR_SETTINGS,
@@ -72,33 +101,47 @@ export function invalidate() {
 
 // --- Reads ----------------------------------------------------------------
 
+function countMap(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object") return {};
+  const out: Record<string, number> = {};
+  for (const [k, n] of Object.entries(value as Record<string, unknown>)) {
+    // Drop anything non-positive on the way in, so a corrupt or hand-edited
+    // record can never put a zero-quantity line on a proposal.
+    if (typeof n === "number" && Number.isFinite(n) && n > 0) {
+      out[k] = Math.floor(n);
+    }
+  }
+  return out;
+}
+
+function stringMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === "string") out[k] = v;
+  }
+  return out;
+}
+
 function loadEstimate(): Estimate {
   if (typeof window === "undefined") return emptyEstimate();
   try {
     const raw = window.localStorage.getItem(ESTIMATE_KEY);
     if (!raw) return emptyEstimate();
-    const parsed = JSON.parse(raw) as Partial<Estimate>;
+    const p = JSON.parse(raw) as Partial<Estimate>;
     return {
-      jobName: typeof parsed.jobName === "string" ? parsed.jobName : "",
-      // Drop anything non-positive on the way in, so a corrupt or hand-edited
-      // record can never put a zero-quantity line on a proposal.
-      taps: sanitiseTaps(parsed.taps),
-      updatedAt: parsed.updatedAt ?? new Date().toISOString(),
+      clientId: typeof p.clientId === "string" && p.clientId ? p.clientId : newId(),
+      jobName: typeof p.jobName === "string" ? p.jobName : "",
+      dealId: typeof p.dealId === "number" ? p.dealId : null,
+      propertyId: typeof p.propertyId === "number" ? p.propertyId : null,
+      taps: countMap(p.taps),
+      labels: stringMap(p.labels),
+      assemblyBuckets: countMap(p.assemblyBuckets),
+      updatedAt: p.updatedAt ?? new Date().toISOString(),
     };
   } catch {
     return emptyEstimate();
   }
-}
-
-function sanitiseTaps(taps: unknown): Record<string, number> {
-  if (!taps || typeof taps !== "object") return {};
-  const out: Record<string, number> = {};
-  for (const [id, n] of Object.entries(taps as Record<string, unknown>)) {
-    if (typeof n === "number" && Number.isFinite(n) && n > 0) {
-      out[id] = Math.floor(n);
-    }
-  }
-  return out;
 }
 
 function loadSettings(): EstimatorSettings {
@@ -127,44 +170,72 @@ function persist(estimate: Estimate) {
   emit();
 }
 
-function mutate(fn: (taps: Record<string, number>) => void) {
+function mutate(fn: (draft: Estimate) => void) {
   const current = getSnapshot().estimate;
-  const taps = { ...current.taps };
-  fn(taps);
-  persist({ ...current, taps, updatedAt: new Date().toISOString() });
+  const draft: Estimate = {
+    ...current,
+    taps: { ...current.taps },
+    labels: { ...current.labels },
+    assemblyBuckets: { ...current.assemblyBuckets },
+    updatedAt: new Date().toISOString(),
+  };
+  fn(draft);
+  persist(draft);
 }
 
-/** One tap: one purchase increment. */
-export function tap(itemId: string) {
-  mutate((taps) => {
-    taps[itemId] = (taps[itemId] ?? 0) + 1;
+/** One tap: one purchase increment of whatever the tile commits. */
+export function tap(commit: TileCommit) {
+  const key = selectionKey(commit);
+  mutate((d) => {
+    d.taps[key] = (d.taps[key] ?? 0) + 1;
+    // The label travels with the tap so the proposal never has to load the
+    // 962-row plant list to render, which also means it renders offline.
+    if (commit.variantLabel) d.labels[key] = commit.variantLabel;
   });
 }
 
-/**
- * Back off one increment. The correction gesture, not a second meaning for the
- * tap — a mis-tap in the field needs a way back that isn't the proposal screen.
- */
-export function untap(itemId: string) {
-  mutate((taps) => {
-    const next = (taps[itemId] ?? 0) - 1;
-    if (next > 0) taps[itemId] = next;
-    else delete taps[itemId];
+export function untap(key: string) {
+  mutate((d) => {
+    const next = (d.taps[key] ?? 0) - 1;
+    if (next > 0) d.taps[key] = next;
+    else {
+      delete d.taps[key];
+      delete d.labels[key];
+    }
   });
 }
 
-export function setTaps(itemId: string, n: number) {
-  mutate((taps) => {
-    if (n > 0) taps[itemId] = Math.floor(n);
-    else delete taps[itemId];
+export function setTaps(key: string, n: number) {
+  mutate((d) => {
+    if (n > 0) d.taps[key] = Math.floor(n);
+    else {
+      delete d.taps[key];
+      delete d.labels[key];
+    }
+  });
+}
+
+export function setAssemblyBuckets(assemblyId: string, buckets: number) {
+  mutate((d) => {
+    if (buckets > 0) d.assemblyBuckets[assemblyId] = Math.floor(buckets);
+    else delete d.assemblyBuckets[assemblyId];
   });
 }
 
 export function setJobName(jobName: string) {
-  const current = getSnapshot().estimate;
-  persist({ ...current, jobName, updatedAt: new Date().toISOString() });
+  mutate((d) => {
+    d.jobName = jobName;
+  });
 }
 
+export function attachDeal(dealId: number | null, propertyId: number | null) {
+  mutate((d) => {
+    d.dealId = dealId;
+    d.propertyId = propertyId;
+  });
+}
+
+/** Start a fresh estimate. The old one is only gone once it has synced. */
 export function clearEstimate() {
   persist(emptyEstimate());
 }

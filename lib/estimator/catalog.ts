@@ -222,11 +222,99 @@ function fromService(row: ServiceRow): CatalogItem {
   };
 }
 
+/**
+ * Stand-ins with no catalog row of their own.
+ *
+ * Each exists because the spec asks for a tile the catalog cannot price yet.
+ * They are flagged `synthetic` so the proposal can mark them, and every price
+ * here is a placeholder awaiting Ryan's real number — see README.
+ */
+const SYNTHETIC: CatalogItem[] = [
+  {
+    // The Lighting tile's tap. There is no lighting allowance in `materials`,
+    // only individual fixtures, so the $500 increment has nothing to derive
+    // from. (The plant allowance, by contrast, is real: $5/sq ft x 100.)
+    id: "syn:lighting_allowance",
+    source: "synthetic",
+    name: "Lighting Allowance",
+    tileName: "Lighting",
+    category: "lighting",
+    unit: "allowance",
+    costPerUnit: 500,
+    increment: 1,
+    soldByLoad: false,
+    autoDelivery: false,
+    roundTo: null,
+    glyph: "💡",
+    color: "#f59e0b",
+    allowance: true,
+    synthetic: true,
+  },
+  {
+    // Large equipment: a machine-day before anyone says which machine. $800 is
+    // the mode of the large fleet (track loader and mini excavator both).
+    id: "syn:machine_day",
+    source: "synthetic",
+    name: "Machine Day (generic)",
+    tileName: "Equipment",
+    category: "large_equipment",
+    unit: "day",
+    costPerUnit: 800,
+    increment: 1,
+    soldByLoad: false,
+    autoDelivery: false,
+    roundTo: null,
+    glyph: "🚜",
+    color: "#a855f7",
+    synthetic: true,
+  },
+  {
+    // Small equipment: $255 is the median of the small fleet.
+    id: "syn:small_equipment_day",
+    source: "synthetic",
+    name: "Small Equipment Day (generic)",
+    tileName: "Small Equip",
+    category: "small_equipment",
+    unit: "day",
+    costPerUnit: 255,
+    increment: 1,
+    soldByLoad: false,
+    autoDelivery: false,
+    roundTo: null,
+    glyph: "⚙️",
+    color: "#a855f7",
+    synthetic: true,
+  },
+];
+
+/**
+ * Tiles whose tap increment is not the catalog's load size.
+ *
+ * The plant allowance is priced per square foot, but Ryan sells it in $500
+ * steps — and $5/sq ft x 100 sq ft is exactly $500, so the increment is real
+ * arithmetic rather than a made-up number.
+ */
+const INCREMENT_OVERRIDES: Record<string, number> = {
+  "mat:plant_allowance": 100,
+};
+
+/** Flags that belong to how a tile behaves rather than to the catalog row. */
+const FLAGS: Record<string, Partial<CatalogItem>> = {
+  "mat:plant_allowance": { allowance: true, tileName: "Plants" },
+  // Debris is a flat charge per tap, not a load multiple.
+  "svc:debris": { flat: true },
+};
+
 export const ITEMS: CatalogItem[] = [
   ...MATERIALS.map(fromMaterial),
   ...EQUIPMENT.map(fromEquipment),
   ...SERVICES.map(fromService),
-];
+  ...SYNTHETIC,
+].map((item) => ({
+  ...item,
+  increment: INCREMENT_OVERRIDES[item.id] ?? item.increment,
+  ...FLAGS[item.id],
+}));
 
 const BY_ID = new Map(ITEMS.map((i) => [i.id, i]));
 
@@ -285,6 +373,14 @@ export function formatMoney(amount: number): string {
     currency: "USD",
     maximumFractionDigits: 0,
   });
+}
+
+/**
+ * Cost with markup applied. Tiles and the proposal show this; only the
+ * proposal's subtotal line shows raw cost, so nobody quotes cost by accident.
+ */
+export function sellFor(cost: number, markupPercent: number): number {
+  return cost * (1 + markupPercent / 100);
 }
 
 /**
