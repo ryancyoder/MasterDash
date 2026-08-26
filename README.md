@@ -246,6 +246,23 @@ large fleet) and the generic small-equipment day ($255, the median). Markup
 defaults to **0%**, so "sell" equals cost until it is set — nothing is silently
 marked up.
 
+### Tile photography
+
+Tiles prefer a real photo and fall back to their glyph, which is also what
+happens offline since the images are remote.
+
+- **Materials** — cover photos come from `master_photos`
+  (`entity_type = 'material'`, `is_cover`), keyed by `materials.id`. Four exist
+  today: mulch, mirimichi, slotted drain tile, solid drain pipe. Any photo added
+  there appears on the next sync; no code change needed.
+- **Plants** — 734 of the 962 carry one. Most rows hold a full public URL, but
+  a couple of dozen hold only the object name; the sync normalises those against
+  the `plant-images` bucket, since relative they resolve against the page.
+
+The `catalog-photos` bucket holds one equipment image whose key
+(`custom-heavy_equipment-…`) matches no row in `equipment`, so nothing is
+wired to it.
+
 ### Catalog data
 
 Prices come from Supabase but are **committed as a snapshot** in

@@ -31,6 +31,8 @@ export interface CatalogItem {
 
   glyph: string;
   color: string;
+  /** Catalog photo, when one exists. The glyph stays the offline fallback. */
+  image?: string | null;
 
   /** Crew tiles carry their hours, so a crew-day reads as a duration. */
   hoursPerUnit?: number;

@@ -251,3 +251,24 @@ export const ASSEMBLY_EQUIPMENT: AssemblyEquipmentRow[] = [
   { assemblyId: "patio_standard", equipmentId: "brick_saw" },
   { assemblyId: "patio_standard", equipmentId: "compactor_large" },
 ];
+
+// --- Catalog photography --------------------------------------------------
+// Real photos beat emoji on a tile meant to be read at arm's length, and the
+// spec asks for image-led tiles. Only a handful of materials have one so far;
+// the rest fall back to their glyph, and each new photo added to
+// `master_photos` shows up on the next sync.
+
+export const STORAGE_BASE =
+  "https://ktgpjizfntdfpghalukx.supabase.co/storage/v1/object/public";
+
+/**
+ * Cover photos from `master_photos` (entity_type = 'material', is_cover), keyed
+ * by `materials.id`. The bucket is public, so these are plain URLs — but they
+ * are remote, so a tile still needs its glyph fallback for the field.
+ */
+export const MATERIAL_PHOTOS: Record<string, string> = {
+  mulch: `${STORAGE_BASE}/master-photos/material/mulch/1786626559779-d7ca5966-bb71-4639-a23f-48916d7afcfd.png`,
+  mirimichi: `${STORAGE_BASE}/master-photos/material/mirimichi/1786626814631-3f8ede2a-c79b-4dbc-8260-3f9f2da5fe51.png`,
+  slotted_drain_tile: `${STORAGE_BASE}/master-photos/material/slotted_drain_tile/1786626317500-463cf2c2-f42a-4737-9897-86a9307120f5.png`,
+  solid_drain_pipe: `${STORAGE_BASE}/master-photos/material/solid_drain_pipe/1786625645636-11862c71-5dcb-47d9-9732-bc7a86dafb40.png`,
+};

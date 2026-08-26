@@ -186,6 +186,19 @@ const cultivarOf = (botanical) => {
   return m ? normName(m[1]) : null;
 };
 
+const STORAGE_BASE = `${url}/storage/v1/object/public`;
+
+// Cover photos for catalog entities. `master_photos` is a generic
+// entity_type/entity_id link; only materials matter to the tile grid so far.
+const materialPhotos = Object.fromEntries(
+  (
+    await rest(
+      "master_photos?select=entity_type,entity_id,storage_path,is_cover" +
+        "&entity_type=eq.material&is_cover=is.true",
+    )
+  ).map((r) => [r.entity_id, `${STORAGE_BASE}/master-photos/${r.storage_path}`]),
+);
+
 const plants = (
   await rest(
     "plants?select=id,type,common,botanical,image,evergreen,height_in" +
@@ -228,7 +241,13 @@ const plants = (
       group,
       name,
       botanical: botanical || null,
-      image: r.image || null,
+      // Most rows hold the full public URL, but a couple of dozen hold only
+      // the object name; relative, those resolve against the page and 404.
+      image: r.image
+        ? r.image.startsWith("http")
+          ? r.image
+          : `${STORAGE_BASE}/plant-images/${r.image}`
+        : null,
     };
   })
   .filter((p) => p.name && /^[A-Za-z]/.test(p.name))
@@ -391,6 +410,18 @@ ${assemblyRoles.map((r) => row(r, ROLE_KEYS)).join("\n")}
 export const ASSEMBLY_EQUIPMENT: AssemblyEquipmentRow[] = [
 ${assemblyEquipment.map((e) => row(e, AEQ_KEYS)).join("\n")}
 ];
+
+export const STORAGE_BASE = ${JSON.stringify(STORAGE_BASE)};
+
+/**
+ * Cover photos from \`master_photos\` (entity_type = 'material', is_cover),
+ * keyed by \`materials.id\`. Remote, so a tile still needs its glyph fallback.
+ */
+export const MATERIAL_PHOTOS: Record<string, string> = {
+${Object.entries(materialPhotos)
+  .map(([k, v]) => `  ${JSON.stringify(k)}: ${JSON.stringify(v)},`)
+  .join("\n")}
+};
 `;
 
 const out = join(
@@ -418,4 +449,10 @@ console.log(
     `${assemblyEquipment.length} equipment links) to ` +
     `lib/estimator/catalog-data.ts`,
 );
-console.log(`Wrote ${plants.length} plants to public/catalog/plants.json`);
+console.log(
+  `Wrote ${plants.length} plants (${plants.filter((p) => p.image).length} with ` +
+    `photos) to public/catalog/plants.json`,
+);
+console.log(
+  `Wrote ${Object.keys(materialPhotos).length} material cover photos`,
+);
