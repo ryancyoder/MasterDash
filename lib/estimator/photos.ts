@@ -311,6 +311,11 @@ async function upload(photo: LocalPhoto): Promise<void> {
   if (!row.ok) throw new Error(`master_photos ${row.status}`);
 }
 
+/** Photos still waiting to reach Supabase, for the UI to report. */
+export async function pendingUploadCount(): Promise<number> {
+  return (await pendingUploads()).length;
+}
+
 let flushing = false;
 
 /** Push any photo that has not synced. No-ops when offline or unconfigured. */
@@ -333,4 +338,20 @@ export async function flushPhotos(): Promise<void> {
     flushing = false;
     emit();
   }
+}
+
+/**
+ * Keep trying, for the life of the app.
+ *
+ * A photo taken in a dead zone has to reach Supabase on its own later — the
+ * whole point is that the iPad is the way the catalog gets its pictures. So
+ * the queue is drained on boot and again whenever the device comes back into
+ * coverage, not only at the moment a photo is picked.
+ */
+export function startPhotoAutoFlush(): () => void {
+  if (typeof window === "undefined") return () => {};
+  const onOnline = () => void flushPhotos();
+  window.addEventListener("online", onOnline);
+  void loadPhotos().then(() => flushPhotos());
+  return () => window.removeEventListener("online", onOnline);
 }

@@ -2,12 +2,13 @@
 
 import { useEffect } from "react";
 import { publicUrl } from "@/lib/estimator/basePath";
+import { startPhotoAutoFlush } from "@/lib/estimator/photos";
 import { startAutoFlush } from "@/lib/estimator/sync";
 
 /**
- * Boots the two things the estimator needs running whichever screen you land
- * on: the offline cache, and the queue that pushes saved estimates once the
- * device is back in coverage.
+ * Boots what the estimator needs running whichever screen you land on: the
+ * offline cache, and the two queues that push saved estimates and tile photos
+ * once the device is back in coverage.
  */
 export default function EstimatorLayout({
   children,
@@ -22,7 +23,12 @@ export default function EstimatorLayout({
         // localStorage still holds the estimate.
         .catch(() => undefined);
     }
-    return startAutoFlush();
+    const stopEstimates = startAutoFlush();
+    const stopPhotos = startPhotoAutoFlush();
+    return () => {
+      stopEstimates();
+      stopPhotos();
+    };
   }, []);
 
   return <>{children}</>;
