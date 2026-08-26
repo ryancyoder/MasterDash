@@ -198,17 +198,13 @@ export function imageFromTransfer(
 }
 
 // --- Upload ---------------------------------------------------------------
-// Same transport switch as the estimate sync: an Edge Function if one is
-// configured, otherwise PostgREST/Storage directly, otherwise nothing and the
-// photo simply stays on the device.
+// The browser has no write credentials — every storage policy on the project
+// is SELECT-only, and the service role key can never ship to a client — so an
+// upload is posted to this app's own server route, which performs it with
+// server credentials. Same origin by default; the env var is there for
+// pointing at a Supabase Edge Function instead.
 
-const UPLOAD_URL = process.env.NEXT_PUBLIC_QE_PHOTO_UPLOAD_URL;
-const SB_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SB_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-export function photoUploadConfigured(): boolean {
-  return Boolean(UPLOAD_URL || (SB_URL && SB_KEY));
-}
+const UPLOAD_URL = process.env.NEXT_PUBLIC_QE_PHOTO_UPLOAD_URL ?? "/api/photos";
 
 export interface PhotoTarget {
   /** What the photo is of, so a server can route it to the right table. */
@@ -253,62 +249,18 @@ function toBase64(blob: Blob): Promise<string> {
 }
 
 async function upload(photo: LocalPhoto): Promise<void> {
-  const target = photoTarget(photo.key);
-
-  if (UPLOAD_URL) {
-    const res = await fetch(UPLOAD_URL, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        key: photo.key,
-        ...target,
-        contentType: photo.blob.type || "image/jpeg",
-        addedAt: photo.addedAt,
-        dataBase64: await toBase64(photo.blob),
-      }),
-    });
-    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-    return;
-  }
-
-  if (!SB_URL || !SB_KEY) throw new Error("no photo transport configured");
-
-  // Direct to Storage. This needs an INSERT policy on storage.objects, which
-  // the project does not have today — every policy there is SELECT-only — so
-  // expect a 403 until that is granted or an Edge Function is pointed at.
-  const path = `${target.kind}/${target.targetId}/${Date.now()}.jpg`;
-  const res = await fetch(
-    `${SB_URL}/storage/v1/object/master-photos/${path}`,
-    {
-      method: "POST",
-      headers: {
-        apikey: SB_KEY,
-        authorization: `Bearer ${SB_KEY}`,
-        "content-type": photo.blob.type || "image/jpeg",
-        "x-upsert": "true",
-      },
-      body: photo.blob,
-    },
-  );
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-
-  // The row that makes the object findable. Without it the file is orphaned.
-  const row = await fetch(`${SB_URL}/rest/v1/master_photos`, {
+  const res = await fetch(UPLOAD_URL, {
     method: "POST",
-    headers: {
-      apikey: SB_KEY,
-      authorization: `Bearer ${SB_KEY}`,
-      "content-type": "application/json",
-      prefer: "return=minimal",
-    },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      entity_type: target.kind,
-      entity_id: target.targetId,
-      storage_path: path,
-      is_cover: true,
+      key: photo.key,
+      ...photoTarget(photo.key),
+      contentType: photo.blob.type || "image/jpeg",
+      addedAt: photo.addedAt,
+      dataBase64: await toBase64(photo.blob),
     }),
   });
-  if (!row.ok) throw new Error(`master_photos ${row.status}`);
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
 }
 
 /** Photos still waiting to reach Supabase, for the UI to report. */
@@ -320,7 +272,7 @@ let flushing = false;
 
 /** Push any photo that has not synced. No-ops when offline or unconfigured. */
 export async function flushPhotos(): Promise<void> {
-  if (flushing || !photoUploadConfigured()) return;
+  if (flushing) return;
   if (typeof navigator !== "undefined" && navigator.onLine === false) return;
 
   flushing = true;

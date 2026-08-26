@@ -4,8 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   flushPhotos,
   imageFromTransfer,
+  pendingUploadCount,
   photoTarget,
-  photoUploadConfigured,
   removePhoto,
   setPhoto,
 } from "@/lib/estimator/photos";
@@ -35,6 +35,12 @@ export default function TileOptionsSheet({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dropping, setDropping] = useState(false);
+  const [waiting, setWaiting] = useState(0);
+
+  // Refreshed after each change so the sheet can say what has not landed yet.
+  useEffect(() => {
+    void pendingUploadCount().then(setWaiting);
+  }, [photoUrl, busy]);
   const fileInput = useRef<HTMLInputElement | null>(null);
 
   const accept = useCallback(
@@ -202,10 +208,14 @@ export default function TileOptionsSheet({
 
           <p className="mt-4 text-[0.68rem] text-muted leading-relaxed">
             The photo is saved on this iPad and shows on the tile straight away,
-            with or without signal.{" "}
-            {photoUploadConfigured()
-              ? "It uploads to Supabase in the background."
-              : "It will stay on this device until a Supabase upload path is configured — the project has no INSERT policy on storage today, so the browser cannot write images yet."}
+            with or without signal. It uploads to Supabase in the background and
+            becomes the catalog photo for this item.{" "}
+            {waiting > 0 && (
+              <span className="text-[#f59e0b]">
+                {waiting} photo{waiting === 1 ? "" : "s"} still waiting to
+                upload — they will go when there is coverage.
+              </span>
+            )}
           </p>
         </div>
       </div>

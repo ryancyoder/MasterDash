@@ -16,11 +16,11 @@ import type { Proposal } from "./proposal";
 
 const QUEUE_KEY = "qe-queue";
 
-/** Set to a Supabase Edge Function URL to keep the service key server-side. */
-const SAVE_URL = process.env.NEXT_PUBLIC_QE_SAVE_URL;
-/** Or talk to PostgREST directly, which needs a policy on quick_estimates. */
-const SB_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SB_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+/**
+ * This app's own server route, which holds the service key. The env var exists
+ * for pointing at something else — a Supabase Edge Function, say.
+ */
+const SAVE_URL = process.env.NEXT_PUBLIC_QE_SAVE_URL ?? "/api/estimates";
 
 export type SyncState = "idle" | "queued" | "syncing" | "synced" | "unconfigured";
 
@@ -47,12 +47,7 @@ function emit() {
   listeners.forEach((fn) => fn());
 }
 
-export function transportConfigured(): boolean {
-  return Boolean(SAVE_URL || (SB_URL && SB_KEY));
-}
-
 export function getSyncState(): SyncState {
-  if (!transportConfigured() && readQueue().length > 0) return "unconfigured";
   return state;
 }
 
@@ -131,32 +126,11 @@ export function queueSave(estimate: Estimate, proposal: Proposal) {
 }
 
 async function push(write: QueuedWrite): Promise<void> {
-  if (SAVE_URL) {
-    const res = await fetch(SAVE_URL, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(write.payload),
-    });
-    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-    return;
-  }
-
-  if (!SB_URL || !SB_KEY) throw new Error("no transport configured");
-
-  // on_conflict=client_id turns a retry into an update of the same row.
-  const res = await fetch(
-    `${SB_URL}/rest/v1/quick_estimates?on_conflict=client_id`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        apikey: SB_KEY,
-        authorization: `Bearer ${SB_KEY}`,
-        prefer: "resolution=merge-duplicates,return=minimal",
-      },
-      body: JSON.stringify(write.payload),
-    },
-  );
+  const res = await fetch(SAVE_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(write.payload),
+  });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
 }
 
@@ -166,11 +140,6 @@ let flushing = false;
 export async function flush(): Promise<void> {
   if (flushing) return;
   if (typeof navigator !== "undefined" && navigator.onLine === false) return;
-  if (!transportConfigured()) {
-    state = "unconfigured";
-    emit();
-    return;
-  }
 
   const queue = readQueue();
   if (queue.length === 0) {

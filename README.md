@@ -173,15 +173,21 @@ an image in, or press ⌘V to paste a screenshot. It is resized to a 1024 px JPE
 tile immediately — with or without signal. A device photo wins over the catalog
 one.
 
-**Uploads are queued, not immediate.** Every storage policy on this project is
-SELECT-only; there is no INSERT policy on `storage.objects` at all, so the
-browser can read catalog images but cannot write one. Photos therefore stay on
-the device until a write path exists, and the sheet says so. Point
-`NEXT_PUBLIC_QE_PHOTO_UPLOAD_URL` at an Edge Function (recommended — it keeps
-the service key server-side and can route by kind) and the queue drains on its
-own. The payload carries what the photo is *of* — `material`, `equipment`,
-`plant` — so a named cultivar's photo goes to `plants` rather than to the
-generic shrub tile it was priced from.
+**Uploads are queued, then land in Supabase.** The photo is stored on the
+device first and pushed afterwards — on reconnect, and again on every app
+start — so taking one where there is no coverage works exactly like taking one
+where there is. Nothing in the tapping flow waits on a request.
+
+The upload goes to this app's own `/api/photos` route, which holds the service
+role key. It has to: every storage policy on the project is SELECT-only, so a
+browser holding the publishable key can read catalog images but cannot write
+one, and the service key can never ship to a client.
+
+What arrives becomes the catalog photo. A material's is uploaded to the
+`master-photos` bucket and recorded in `master_photos` as the cover, demoting
+whatever was cover before; a plant's goes to `plant-images` and updates
+`plants.image`. So a photo taken on the iPad shows up for everything else
+reading that catalog, not just on this grid.
 
 ### One tap is a load, not a unit
 
@@ -334,25 +340,56 @@ npm run build    # static export to ./out
 npx eslint .
 ```
 
-`npm start` does not work — this is a static export. To preview the build:
+To run the production build locally, including the API routes:
 
 ```bash
-npx serve out
+SUPABASE_URL=https://<ref>.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=<key> \
+npm start
 ```
+
+Without those two the app still runs; `/api/photos` and `/api/estimates` answer
+`503` and photos stay queued on the device.
 
 ## Deployment
 
-Pushing to `main` builds and publishes to GitHub Pages via
-`.github/workflows/deploy.yml`. The workflow injects the basePath automatically,
-so the app works from `/MasterDash/` rather than the domain root.
+Vercel builds every push. `main` is production; a pull request gets a preview.
 
-**One-time setup:** in the repo's Settings → Pages, set **Source** to
-**GitHub Actions**. Without that the workflow builds but never publishes.
+The app used to be a static export on GitHub Pages. It needs a server now —
+photo uploads and estimate saves go through route handlers holding credentials
+that cannot ship to a browser — so `.github/workflows/ci.yml` only runs lint,
+typecheck and build, and Vercel does the deploying.
+
+Two environment variables, both **server-side only** (no `NEXT_PUBLIC_` prefix,
+so Next will not inline them into the client bundle):
+
+| Variable | Value |
+|---|---|
+| `SUPABASE_URL` | `https://ktgpjizfntdfpghalukx.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | the project's service role key |
+
+Without them the routes answer `503` with a clear message and the app keeps
+queueing locally — which is also what happens on a preview deployment that has
+not been given the secrets.
+
+Everything else is unchanged: every page still prerenders, the service worker
+still precaches the shell and the plant list, and the app is still fully usable
+with no signal. Only `/api/photos` and `/api/estimates` are server-rendered.
+
+### A note on access
+
+Those two routes are public. They validate hard — a fixed set of kinds, a 6 MB
+cap, a real image signature, a character allowlist on ids, and an existence
+check against the catalog, so a bad request cannot create an orphaned photo or
+escape its storage path. But anyone who finds the URL can still replace a
+catalog photo. That is bounded and reversible, and fine for an internal tool on
+an unadvertised domain; put the deployment behind Vercel's password protection
+or Supabase Auth if it needs to be more than that.
 
 ## Stack
 
-Next.js 16 (static export, Turbopack) · React 19 · TypeScript · Tailwind v4 ·
-no backend.
+Next.js 16 (Turbopack) on Vercel · React 19 · TypeScript · Tailwind v4 ·
+Supabase behind two server routes.
 
 See [SPEC.md](./SPEC.md) for the full design, data model, and what's
 deliberately out of scope for v1.

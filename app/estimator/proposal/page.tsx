@@ -26,7 +26,6 @@ import {
   readQueue,
   startAutoFlush,
   subscribeSync,
-  transportConfigured,
 } from "@/lib/estimator/sync";
 import { useEstimate } from "@/lib/estimator/useEstimate";
 import type { EstimatorSettings, LineItem } from "@/lib/estimator/types";
@@ -222,11 +221,9 @@ function SyncBanner({ state }: { state: string }) {
   if (state === "idle" || state === "synced") return null;
 
   const text =
-    state === "unconfigured"
-      ? `${queued} estimate${queued === 1 ? "" : "s"} held locally — no Supabase write path configured yet (see README).`
-      : state === "syncing"
-        ? "Syncing…"
-        : `${queued} estimate${queued === 1 ? "" : "s"} queued — will push when back in coverage.`;
+    state === "syncing"
+      ? "Syncing…"
+      : `${queued} estimate${queued === 1 ? "" : "s"} queued — will push when back in coverage.`;
 
   return (
     <p className="shrink-0 px-4 py-2 text-xs bg-surface2 text-muted border-b border-edge">
@@ -469,10 +466,8 @@ function Settings({
         </div>
 
         <p className="text-[0.65rem] text-muted">
-          Estimate id <code>{estimate.clientId.slice(0, 8)}</code> ·{" "}
-          {transportConfigured()
-            ? "Supabase write path configured."
-            : "No Supabase write path configured — saves are held locally."}
+          Estimate id <code>{estimate.clientId.slice(0, 8)}</code> · saves to
+          Supabase through this app&apos;s server, queued while offline.
         </p>
       </div>
     </details>

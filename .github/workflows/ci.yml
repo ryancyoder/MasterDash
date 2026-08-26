@@ -1,0 +1,38 @@
+# Deployment is Vercel's job now — it builds every push and every pull request.
+# This workflow only guards the branch: the same checks, before review.
+#
+# The app used to be a static export published to GitHub Pages. It needs a
+# server now: the browser has no Supabase write credentials, so photo uploads
+# and estimate saves go through the app's own route handlers, and a static
+# export has nowhere to run those.
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npx eslint .
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
