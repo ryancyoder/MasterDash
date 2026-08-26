@@ -12,9 +12,16 @@ export type IconName =
   | "trash"
   | "check"
   | "scissors"
-  | "table";
+  | "table"
+  | "calculator";
 
 const PATHS: Record<IconName, React.ReactNode> = {
+  calculator: (
+    <>
+      <rect x="4" y="2" width="16" height="20" rx="2.5" />
+      <path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M16 15v4M8 19h4" />
+    </>
+  ),
   grid: (
     <>
       <rect x="3" y="3" width="7" height="7" rx="1.5" />

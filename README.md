@@ -8,16 +8,18 @@ one glance and one tap.
 
 ---
 
-## The three views
+## The views
 
 | View | What it is |
 |---|---|
 | **Board** | The tile grid. Tap to log, long-press to correct. |
 | **Calendar** | Day and week timeline of what you logged, laid out proportionally. |
 | **Log** | The raw table — filter, edit, export CSV. |
+| **Estimator** | The tile grid for pricing a job. See below. |
 
-All three read the same two entities: an **Activity** (a tile) and an **Entry**
-(one logged span against it).
+The first three read the same two entities: an **Activity** (a tile) and an
+**Entry** (one logged span against it). The Estimator is a separate surface with
+its own model and its own storage — clearing an estimate never touches the log.
 
 ## How logging works
 
@@ -91,8 +93,13 @@ no browser UI.
 
 ## Data and backup
 
-Everything is stored **in your browser only**. No account, no server, no sync.
-The app works with no signal, which is the normal condition on a job site.
+The Board, Calendar and Log are stored **in your browser only** — no account,
+no server, no sync. The app works with no signal, which is the normal condition
+on a job site.
+
+The Estimator is the one exception: it also works fully offline, but saved
+estimates queue locally and push to Supabase once there is coverage. See
+[Quick Estimator](#quick-estimator).
 
 Two consequences worth taking seriously:
 
@@ -105,6 +112,158 @@ reads mean zero delay between a tap and the visual confirmation, which matters
 more than capacity at this stage. The practical ceiling is roughly 4–5 years of
 20 entries a day. All access is behind `lib/store.ts`, so moving the entry log
 to IndexedDB later touches one file.
+
+## Quick Estimator
+
+A second surface at **/estimator**, for pricing a job on site. Same instrument,
+different work: the Board logs time, the Estimator builds a proposal.
+
+### Two gestures, all the way down
+
+**TAP commits. LONG PRESS refines.** Recursively, at every level:
+
+| | Tap | Long press |
+|---|---|---|
+| **Plants** | $500 allowance | shade tree, shrub, perennial… → 962 named plants |
+| **Lighting** | $500 allowance | path, spot, well, step, deck, transformer, wire |
+| **Equipment** | a machine-day | the actual machine |
+| **Clean 8** | 5 ton + delivery | French Drain stone, or paver base |
+| **Mulch** | 8 cy + delivery | *(nothing to refine — backs off one instead)* |
+
+Every level is a valid stopping point, so drilling down is never required and
+stopping early is never wrong. Refining changes what the proposal *says*, not
+what it costs: a named cultivar prices exactly as its generic parent, which is
+what makes it safe to stop at any depth.
+
+Tiles with something behind them carry a slightly darker drop shadow — the only
+depth cue, no chevrons. Where there is nothing to refine, a long press backs off
+one increment instead; that is the one way to fix a mis-tap without leaving the
+grid, and it is why depthless tiles need the shadow to tell them apart. Tiles
+that *do* have depth keep an undo in the header of the level they open.
+
+Only **Drainage** and **Assemblies** navigate without committing. Navigate-only
+folders are the exception in v2, not the rule.
+
+### One tap is a load, not a unit
+
+A tap adds one **purchase increment** — the amount Ricci's actually buys, from
+`materials.units_per_load`:
+
+| Tile | One tap adds |
+|---|---|
+| Mulch | 8 cy + delivery |
+| Decorative Stone / Clean 8 | 5 ton + delivery |
+| Topsoil / Compost | 5 cy + delivery |
+| Sod Installation | 4 pallets (no delivery) |
+| 4-Man Crew | 1 crew-day = 44 h |
+| Debris | one flat charge |
+
+There is no quantity entry anywhere — not on the grid, not on the proposal,
+not in settings, where markup and the backout delay are preset buttons too.
+Odd quantities get corrected downstream on the proposal document.
+
+**Deliveries are derived, never stored.** Any material with `delivery_fee` books
+a delivery when tapped and gives it back when untapped, so the count cannot
+drift. The same arithmetic covers assembly takeoffs, which is why the Delivery
+tile can only ever mean an *extra* run.
+
+### The grid is a checklist
+
+Tiles stay dim until tapped and parents roll up what is inside them, so a
+category still dim reads as a question nobody answered — a proposal with no
+labour or no equipment is visible from across the truck. Prices can be hidden
+in settings; **counts never hide**, because that is the part doing the
+checklist work.
+
+### Assemblies: a bucket is a load
+
+The Assemblies tile opens a takeoff path that coexists with plain tapping —
+Ryan often eyeballs the loads himself. Picking "520–1,040 sq ft" looks like
+picking an area, but **each bucket is exactly one more load of the material that
+runs out first**, computed from the coverage rates already in Supabase:
+
+```
+divide   (area / rate):    work per load = units_per_load × coverage_rate
+multiply (length × rate):  work per load = units_per_load ÷ coverage_rate
+```
+
+taking the smallest across the assembly's roles. Mulch beds step in 520 sq ft,
+patios in 100, French drains in 166 ln ft. The driving material is named on
+screen so the step size is checkable rather than magic, and the size is
+*floored* — the French drain's true step is 166.67 ln ft, and rounding up tips
+it past 5 tons and silently buys a second load.
+
+Both paths land in the same lines: tapping four loads of mulch and running a
+1,040 sq ft mulch-bed assembly produce one Mulch line, not two, with the
+assembly's share still labelled. Patio and hardscape items live here rather
+than on the home screen. Anything priced but belonging to no assembly (wall
+grid, HF Grand Ledge, generic steps, metal edging — there is no wall assembly
+in the catalog yet) surfaces under **Hardscape & extras**, computed rather than
+listed so a newly synced row can never become invisible.
+
+### Offline, and saving
+
+Supabase is the source of truth, but the network is never in the way:
+
+- The catalog is **cached locally** — the small tables ride in the bundle, and
+  the 962-row plant list is fetched on demand and precached by the service
+  worker.
+- Saves go to a **local queue** first and drain when the device is back in
+  coverage. Nothing in the tapping flow awaits a request.
+- Each estimate carries a `client_id` minted on the iPad before the row ever
+  sees the network, and `quick_estimates` has a unique index on it, so a write
+  retried after a dropped connection updates one row instead of leaving three
+  copies of a job.
+
+Estimates save to **`quick_estimates`** — a new table, never the legacy
+`estimates` (which a different estimator uses, and whose `deal_id` carries a
+UNIQUE constraint). `deal_id` here is nullable and non-unique, so a deal can
+hold several estimates and an estimate can be tapped out first and attached
+later.
+
+**The write path still needs turning on.** This project has no auth users and
+one RLS policy across 76 tables, so the browser currently reaches nothing. Set
+one of:
+
+```bash
+# Preferred: an Edge Function holding the service role key server-side.
+NEXT_PUBLIC_QE_SAVE_URL=https://<ref>.functions.supabase.co/quick-estimate-save
+
+# Or PostgREST directly, which needs select/insert/update policies on
+# quick_estimates for the anon role.
+NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<publishable key>
+```
+
+Until then saves are held locally and the proposal screen says so.
+
+### Prices that still need Ryan's numbers
+
+Three tiles are priced from placeholders and are flagged **PLACEHOLDER** on the
+proposal: the lighting allowance ($500 — there is no lighting allowance in
+`materials`, only fixtures), the generic machine-day ($800, the mode of the
+large fleet) and the generic small-equipment day ($255, the median). Markup
+defaults to **0%**, so "sell" equals cost until it is set — nothing is silently
+marked up.
+
+### Catalog data
+
+Prices come from Supabase but are **committed as a snapshot** in
+`lib/estimator/catalog-data.ts` plus `public/catalog/plants.json`. Those tables
+have RLS on with no policies, so a browser holding the publishable key reads
+zero rows — and the field requirement points the same way. Re-run after a price
+change:
+
+```bash
+SUPABASE_URL=https://<ref>.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=<key> \
+node scripts/sync-catalog.mjs
+```
+
+Tile placement in `lib/estimator/tree.ts` is deliberate and per-item — which
+materials deserve a home tile is a judgement about how Ryan sells, and it is
+meant to be argued with.
+
 
 ## Development
 
