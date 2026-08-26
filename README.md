@@ -144,34 +144,34 @@ that *do* have depth keep an undo in the header of the level they open.
 Only **Drainage** and **Assemblies** navigate without committing. Navigate-only
 folders are the exception in v2, not the rule.
 
-### Arrange mode
-
-Tiles can be dragged into whatever order suits the way a job gets quoted, iOS
-home-screen style: tiles wiggle, drag to reorder, **Done** to finish, **Reset**
-to restore the shipped order for that level.
-
-Getting in is the one place this cannot copy iOS. Long-pressing a tile already
-means *refine*, and taking that gesture would cost the drill-downs — so arrange
-mode is entered by **long-pressing empty space**, or from the **Arrange** button
-in the header. While arranging, tile gestures are off, so a drag can never
-commit a load or open a level by accident.
-
-Order is saved per level and survives a reload. It is stored as a list of tile
-ids, so a tile added by a later catalog sync joins the end of the grid rather
-than vanishing because it was missing from a saved list. Generated levels — the
-962-row plant lists — are deliberately not arrangeable.
-
 ### Edit mode
 
-Arrange moves tiles; **Edit** changes what is on them. Tap **Edit** in the
-header and a single tap opens that tile's options instead of adding a load —
-tiles carry a dashed outline and a ✎ so that is visible before the tap, and the
-refine gesture is off so a press never means two things.
+One mode does both jobs, the way the iOS home screen does. Tap **Edit** in the
+header and tiles wiggle; from there:
 
-The first option is the tile's **photo**: choose or take one, drag an image in,
-or press ⌘V to paste a screenshot. It is resized to a 1024 px JPEG (an 800×600
-PNG lands at about 13 KB), stored in IndexedDB, and appears on the tile
-immediately — with or without signal.
+- **Drag** a tile to reorder it.
+- **Tap** a tile to open its options.
+- **Done** finishes, **Reset** restores the shipped order for that level.
+
+What separates the two is simply whether the finger moved — 10 px, generous
+because a gloved tap on a moving truck is never perfectly still. Nothing in
+this mode can add a load, and the refine gesture is off, so a press never means
+two things.
+
+Getting in is the one place this cannot copy iOS: long-pressing a tile already
+means *refine*, and taking that gesture would cost the drill-downs. So edit
+mode is entered by **long-pressing empty space**, or from the **Edit** button.
+
+**Order** is saved per level and survives a reload. It is stored as a list of
+tile ids, so a tile added by a later catalog sync joins the end of the grid
+rather than vanishing because it was missing from a saved list. Generated
+levels — the 962-row plant lists — are deliberately not editable.
+
+**The tile photo** is the first option in the sheet: choose or take one, drag
+an image in, or press ⌘V to paste a screenshot. It is resized to a 1024 px JPEG
+(an 800×600 PNG lands at about 13 KB), stored in IndexedDB, and appears on the
+tile immediately — with or without signal. A device photo wins over the catalog
+one.
 
 **Uploads are queued, not immediate.** Every storage policy on this project is
 SELECT-only; there is no INSERT policy on `storage.objects` at all, so the

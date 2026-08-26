@@ -25,10 +25,8 @@ interface EstimateTileProps {
   showPrices: boolean;
   markupPercent: number;
   /**
-   * "normal" commits and refines. "arrange" hands every gesture to the grid so
-   * a drag cannot add a load. "options" turns a single tap into "open this
-   * tile's settings" and drops the refine gesture, since a long press there
-   * would be two meanings for one press.
+   * "normal" commits and refines. "edit" turns every gesture over to the grid,
+   * so a drag reorders and a tap opens options — neither can add a load.
    */
   mode?: TileMode;
   /** Device photo, which wins over the catalog one. */
@@ -81,12 +79,11 @@ export default function EstimateTile({
     : undefined;
 
   const handleDown = (e: React.PointerEvent<HTMLButtonElement>) => {
-    if (mode === "arrange") return;
+    if (mode === "edit") return;
     origin.current = { x: e.clientX, y: e.clientY };
     longFired.current = false;
     clearTimer();
     // Nothing to refine and nothing to back off: skip the timer entirely.
-    if (mode === "options") return;
     if (!hasDepth && count === 0) return;
     timer.current = window.setTimeout(() => {
       longFired.current = true;
@@ -106,7 +103,7 @@ export default function EstimateTile({
   };
 
   const handleUp = () => {
-    if (mode === "arrange") return;
+    if (mode === "edit") return;
     clearTimer();
     // The long press already acted; its release must not also commit.
     if (longFired.current) {
@@ -230,13 +227,13 @@ export default function EstimateTile({
         {subLabel(node, item, count, navigateOnly, showPrices, markupPercent)}
       </span>
 
-      {/* Options mode says so on the tile: a tap here opens settings rather
-          than adding a load, and that has to be visible before the tap. */}
-      {mode === "options" && (
-        <span className="absolute inset-0 rounded-3xl border-2 border-dashed border-accent/70 pointer-events-none" />
-      )}
-      {mode === "options" && (
-        <span className="absolute bottom-2.5 left-2.5 text-[0.8rem]" aria-hidden="true">
+      {/* In edit mode the wiggle already says the tile is loose; the pencil
+          says the other half — that a tap opens options rather than adding. */}
+      {mode === "edit" && (
+        <span
+          className="absolute bottom-2.5 left-2.5 text-[0.8rem]"
+          aria-hidden="true"
+        >
           ✎
         </span>
       )}

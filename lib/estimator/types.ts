@@ -71,8 +71,14 @@ export interface TileNode {
  * "Clean 8 (French Drain)" and a named cultivar both price as their generic
  * parent, which is exactly why stopping early is safe.
  */
-/** How a tile behaves right now. See EstimateTile for what each one does. */
-export type TileMode = "normal" | "arrange" | "options";
+/**
+ * How a tile behaves right now.
+ *
+ * "normal" commits on tap and refines on long press. "edit" hands every
+ * gesture to the grid, which decides between a drag (reorder) and a tap
+ * (open the tile's options) by whether the finger moved.
+ */
+export type TileMode = "normal" | "edit";
 
 export interface TileCommit {
   itemId: string;

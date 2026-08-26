@@ -11,6 +11,14 @@ import type {
 
 /** Long enough not to fire on a firm tap through a work glove. */
 const LONG_PRESS_MS = 500;
+/**
+ * How far the finger travels before a press becomes a drag rather than a tap.
+ *
+ * This is what lets one mode do both jobs: hold still and release and you have
+ * opened the tile's options; move and you are reordering. Generous, because a
+ * gloved tap on a moving truck is never perfectly still.
+ */
+const DRAG_THRESHOLD_PX = 10;
 
 interface Point {
   x: number;
@@ -19,10 +27,11 @@ interface Point {
 
 interface TileGridProps {
   nodes: TileNode[];
-  /** Arrange mode: tiles wiggle and drag instead of committing. */
-  arranging: boolean;
-  /** Edit mode: a single tap opens the tile's options instead of committing. */
-  optionsMode: boolean;
+  /**
+   * Edit mode: tiles wiggle, a drag reorders them and a tap opens that tile's
+   * options. Nothing in this mode can add a load.
+   */
+  editing: boolean;
   arrangeable: boolean;
   /** Device photos by selection key; these win over the catalog image. */
   photos: Record<string, string>;
@@ -34,8 +43,10 @@ interface TileGridProps {
   onTap: (node: TileNode) => void;
   onLongPress: (node: TileNode) => void;
   onReorder: (ids: string[]) => void;
-  /** Long press on empty space, the way iOS enters its own arrange mode. */
-  onEnterArrange: () => void;
+  /** A tap on a tile in edit mode, as opposed to a drag. */
+  onOpenOptions: (node: TileNode) => void;
+  /** Long press on empty space, the way iOS enters its own edit mode. */
+  onEnterEdit: () => void;
 }
 
 /**
@@ -46,13 +57,12 @@ interface TileGridProps {
  * drill-downs. So it is entered by long-pressing empty space, or from the
  * Arrange button in the header.
  *
- * While arranging, tiles wiggle and their own gestures are off, so a drag can
+ * While editing, tiles wiggle and their own gestures are off, so a drag can
  * never commit a load or open a level by accident.
  */
 export default function TileGrid({
   nodes,
-  arranging,
-  optionsMode,
+  editing,
   arrangeable,
   photos,
   settings,
@@ -63,7 +73,8 @@ export default function TileGrid({
   onTap,
   onLongPress,
   onReorder,
-  onEnterArrange,
+  onOpenOptions,
+  onEnterEdit,
 }: TileGridProps) {
   const gridRef = useRef<HTMLDivElement | null>(null);
   const cellRefs = useRef(new Map<string, HTMLDivElement>());
@@ -87,6 +98,8 @@ export default function TileGrid({
   const slots = useRef<Point[]>([]);
   const grabOffset = useRef<Point>({ x: 0, y: 0 });
   const pressTimer = useRef<number | null>(null);
+  /** A press in progress that has not yet decided whether it is a drag. */
+  const press = useRef<{ id: string; x: number; y: number } | null>(null);
 
   // Drop the live order as soon as props carry a different one — either the
   // reorder round-tripped through settings, or the level changed. Adjusting
@@ -157,15 +170,52 @@ export default function TileGrid({
     return best;
   };
 
-  const startDrag = (e: React.PointerEvent<HTMLDivElement>, id: string) => {
+  const beginPress = (e: React.PointerEvent<HTMLDivElement>, id: string) => {
+    press.current = { id, x: e.clientX, y: e.clientY };
+    // Capture so the gesture keeps reporting once the finger leaves this tile,
+    // which it must — the whole point is to land on another one.
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const beginDrag = (id: string, from: Point) => {
     measureSlots();
     const index = order.findIndex((n) => n.id === id);
     const centre = slots.current[index];
-    if (!centre) return;
-    grabOffset.current = { x: e.clientX - centre.x, y: e.clientY - centre.y };
+    if (!centre) return false;
+    grabOffset.current = { x: from.x - centre.x, y: from.y - centre.y };
     setDragId(id);
     setDragShift({ x: 0, y: 0 });
-    e.currentTarget.setPointerCapture(e.pointerId);
+    return true;
+  };
+
+  const handleCellMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!editing) return;
+    if (!dragId) {
+      const start = press.current;
+      if (!start) return;
+      const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+      if (moved < DRAG_THRESHOLD_PX) return;
+      // Grab from where the finger first landed, so the tile does not jump
+      // by the threshold distance the moment the drag starts.
+      if (!beginDrag(start.id, { x: start.x, y: start.y })) return;
+    }
+    moveDrag(e);
+  };
+
+  const handleCellUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!editing) return;
+    const start = press.current;
+    press.current = null;
+    if (dragId) {
+      endDrag();
+      return;
+    }
+    // Released without travelling: a tap, so open this tile's options.
+    if (start) {
+      const node = order.find((n) => n.id === start.id);
+      if (node) onOpenOptions(node);
+    }
+    e.stopPropagation();
   };
 
   const moveDrag = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -198,12 +248,12 @@ export default function TileGrid({
 
   // Long press on the grid background, not on a tile.
   const handleGridDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (arranging || !arrangeable) return;
+    if (editing || !arrangeable) return;
     if (e.target !== e.currentTarget) return;
     clearPress();
     pressTimer.current = window.setTimeout(() => {
       navigator.vibrate?.(12);
-      onEnterArrange();
+      onEnterEdit();
     }, LONG_PRESS_MS);
   };
 
@@ -213,7 +263,7 @@ export default function TileGrid({
       onPointerDown={handleGridDown}
       onPointerUp={clearPress}
       onPointerCancel={clearPress}
-      onPointerMove={dragId ? moveDrag : undefined}
+      onPointerMove={editing ? handleCellMove : undefined}
       className="grid gap-3"
       style={{
         gridTemplateColumns:
@@ -235,9 +285,17 @@ export default function TileGrid({
               if (el) cellRefs.current.set(node.id, el);
               else cellRefs.current.delete(node.id);
             }}
-            onPointerDown={arranging ? (e) => startDrag(e, node.id) : undefined}
-            onPointerUp={arranging ? endDrag : undefined}
-            onPointerCancel={arranging ? endDrag : undefined}
+            onPointerDown={editing ? (e) => beginPress(e, node.id) : undefined}
+            onPointerMove={editing ? handleCellMove : undefined}
+            onPointerUp={editing ? handleCellUp : undefined}
+            onPointerCancel={
+              editing
+                ? () => {
+                    press.current = null;
+                    endDrag();
+                  }
+                : undefined
+            }
             style={
               dragging
                 ? {
@@ -248,7 +306,7 @@ export default function TileGrid({
                     filter: "drop-shadow(0 12px 24px rgba(0,0,0,0.75))",
                     touchAction: "none",
                   }
-                : arranging
+                : editing
                   ? { touchAction: "none" }
                   : undefined
             }
@@ -256,9 +314,9 @@ export default function TileGrid({
             {/* The wiggle lives on an inner element so it cannot fight the
                 FLIP and drag transforms on the cell itself. */}
             <div
-              className={arranging && !dragging ? "qe-wiggle" : undefined}
+              className={editing && !dragging ? "qe-wiggle" : undefined}
               style={
-                arranging && !dragging
+                editing && !dragging
                   ? { animationDelay: `${(hash(node.id) % 7) * 30}ms` }
                   : undefined
               }
@@ -271,9 +329,7 @@ export default function TileGrid({
                 navigateOnly={navigateOnlyOf(node)}
                 showPrices={settings.showPrices}
                 markupPercent={settings.markupPercent}
-                mode={
-                  arranging ? "arrange" : optionsMode ? "options" : "normal"
-                }
+                mode={editing ? "edit" : "normal"}
                 imageOverride={photoFor(node, photos)}
                 onTap={onTap}
                 onLongPress={onLongPress}
