@@ -71,6 +71,9 @@ export interface TileNode {
  * "Clean 8 (French Drain)" and a named cultivar both price as their generic
  * parent, which is exactly why stopping early is safe.
  */
+/** How a tile behaves right now. See EstimateTile for what each one does. */
+export type TileMode = "normal" | "arrange" | "options";
+
 export interface TileCommit {
   itemId: string;
   variantId?: string;

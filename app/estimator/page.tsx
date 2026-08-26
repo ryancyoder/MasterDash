@@ -15,6 +15,8 @@ import { tap, untap, updateSettings } from "@/lib/estimator/store";
 import { applyOrder, isArrangeable, levelKey } from "@/lib/estimator/tileOrder";
 import { HOME_TILES, hasDepth, isNavigateOnly, subtreeItemIds } from "@/lib/estimator/tree";
 import { useEstimate } from "@/lib/estimator/useEstimate";
+import { usePhotos } from "@/lib/estimator/usePhotos";
+import TileOptionsSheet from "@/components/estimator/TileOptionsSheet";
 import { selectionKey, type TileNode } from "@/lib/estimator/types";
 
 /**
@@ -35,6 +37,7 @@ import { selectionKey, type TileNode } from "@/lib/estimator/types";
  */
 export default function EstimatorPage() {
   const { estimate, settings } = useEstimate();
+  const photos = usePhotos();
 
   /** Drill path. Empty = home. */
   const [stack, setStack] = useState<TileNode[]>([]);
@@ -44,7 +47,11 @@ export default function EstimatorPage() {
   const [visitTaps, setVisitTaps] = useState(0);
   const [lastTapAt, setLastTapAt] = useState(0);
   /** Arrange mode: tiles wiggle and drag instead of committing. */
-  const [editing, setEditing] = useState(false);
+  const [arranging, setArranging] = useState(false);
+  /** Edit mode: a single tap opens a tile's options instead of committing. */
+  const [optionsMode, setOptionsMode] = useState(false);
+  /** The tile whose options sheet is open, if any. */
+  const [optionsNode, setOptionsNode] = useState<TileNode | null>(null);
 
   const current = stack.length ? stack[stack.length - 1] : null;
 
@@ -64,12 +71,18 @@ export default function EstimatorPage() {
     }
   }, [current, plants]);
 
+  const exitModes = useCallback(() => {
+    setArranging(false);
+    setOptionsMode(false);
+    setOptionsNode(null);
+  }, []);
+
   const goHome = useCallback(() => {
     setStack([]);
     setOpenAssembly(null);
     setVisitTaps(0);
-    setEditing(false);
-  }, []);
+    exitModes();
+  }, [exitModes]);
 
   const goBack = useCallback(() => {
     if (openAssembly) {
@@ -78,8 +91,8 @@ export default function EstimatorPage() {
     }
     setStack((s) => s.slice(0, -1));
     setVisitTaps(0);
-    setEditing(false);
-  }, [openAssembly]);
+    exitModes();
+  }, [openAssembly, exitModes]);
 
   // Auto-backout. The timer only starts once something has been selected, so
   // opening a level to look around never bounces you out mid-thought, and it
@@ -88,7 +101,7 @@ export default function EstimatorPage() {
     current !== null &&
     settings.folderReturn === "auto" &&
     visitTaps > 0 &&
-    !editing;
+    !arranging;
 
   useEffect(() => {
     if (!autoBackout) return;
@@ -102,14 +115,21 @@ export default function EstimatorPage() {
     setLastTapAt(Date.now());
   }, [stack.length]);
 
-  const drillInto = useCallback((node: TileNode) => {
-    setStack((s) => [...s, node]);
-    setVisitTaps(0);
-    setEditing(false);
-  }, []);
+  const drillInto = useCallback(
+    (node: TileNode) => {
+      setStack((s) => [...s, node]);
+      setVisitTaps(0);
+      exitModes();
+    },
+    [exitModes],
+  );
 
   /** TAP: commit, or open when the tile only navigates. */
   const handleTap = (node: TileNode) => {
+    if (optionsMode) {
+      setOptionsNode(node);
+      return;
+    }
     if (node.commit) {
       tap(node.commit);
       registerActivity();
@@ -188,7 +208,22 @@ export default function EstimatorPage() {
   return (
     <main className="md-safe relative h-dvh w-full flex flex-col bg-bg overflow-hidden">
       <header className="shrink-0 flex items-center justify-between gap-3 px-4 pt-3 pb-1 h-11">
-        {editing ? (
+        {optionsMode ? (
+          <>
+            <span className="text-sm font-semibold text-ink">
+              Editing
+              <span className="ml-2 font-medium text-muted">
+                tap a tile for its options
+              </span>
+            </span>
+            <button
+              onClick={exitModes}
+              className="px-4 py-1.5 rounded-full bg-accent text-black text-sm font-bold"
+            >
+              Done
+            </button>
+          </>
+        ) : arranging ? (
           <>
             <span className="text-sm font-semibold text-ink">
               Arranging
@@ -204,7 +239,7 @@ export default function EstimatorPage() {
                 Reset
               </button>
               <button
-                onClick={() => setEditing(false)}
+                onClick={() => exitModes()}
                 className="px-4 py-1.5 rounded-full bg-accent text-black text-sm font-bold"
               >
                 Done
@@ -270,10 +305,26 @@ export default function EstimatorPage() {
                   any arrangeable level, but nothing on screen says so. */}
               {arrangeable && (
                 <button
-                  onClick={() => setEditing(true)}
+                  onClick={() => {
+                    setOptionsMode(false);
+                    setArranging(true);
+                  }}
                   className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
                 >
                   Arrange
+                </button>
+              )}
+              {/* Edit is the other half: Arrange moves tiles, Edit changes
+                  what is on them. Kept apart so a tap never means both. */}
+              {arrangeable && (
+                <button
+                  onClick={() => {
+                    setArranging(false);
+                    setOptionsMode(true);
+                  }}
+                  className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
+                >
+                  Edit
                 </button>
               )}
               <span className="text-xs font-semibold text-muted tracking-wide">
@@ -302,8 +353,10 @@ export default function EstimatorPage() {
         ) : (
           <TileGrid
             nodes={orderedNodes}
-            editing={editing}
+            arranging={arranging}
+            optionsMode={optionsMode}
             arrangeable={arrangeable}
+            photos={photos}
             settings={settings}
             countFor={countFor}
             itemFor={(node) =>
@@ -314,10 +367,32 @@ export default function EstimatorPage() {
             onTap={handleTap}
             onLongPress={handleLongPress}
             onReorder={saveOrder}
-            onEnterArrange={() => setEditing(true)}
+            onEnterArrange={() => {
+              setOptionsMode(false);
+              setArranging(true);
+            }}
           />
         )}
       </div>
+
+      {optionsNode && (
+        <TileOptionsSheet
+          node={optionsNode}
+          item={
+            optionsNode.commit
+              ? (getItem(optionsNode.commit.itemId) ?? null)
+              : null
+          }
+          photoUrl={
+            (optionsNode.commit
+              ? photos[selectionKey(optionsNode.commit)]
+              : photos[optionsNode.id]) ??
+            optionsNode.image ??
+            null
+          }
+          onClose={() => setOptionsNode(null)}
+        />
+      )}
 
       {/* The whole of the totals UI on this screen. Everything else is on the
           proposal, behind this pill. */}

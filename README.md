@@ -161,6 +161,28 @@ ids, so a tile added by a later catalog sync joins the end of the grid rather
 than vanishing because it was missing from a saved list. Generated levels — the
 962-row plant lists — are deliberately not arrangeable.
 
+### Edit mode
+
+Arrange moves tiles; **Edit** changes what is on them. Tap **Edit** in the
+header and a single tap opens that tile's options instead of adding a load —
+tiles carry a dashed outline and a ✎ so that is visible before the tap, and the
+refine gesture is off so a press never means two things.
+
+The first option is the tile's **photo**: choose or take one, drag an image in,
+or press ⌘V to paste a screenshot. It is resized to a 1024 px JPEG (an 800×600
+PNG lands at about 13 KB), stored in IndexedDB, and appears on the tile
+immediately — with or without signal.
+
+**Uploads are queued, not immediate.** Every storage policy on this project is
+SELECT-only; there is no INSERT policy on `storage.objects` at all, so the
+browser can read catalog images but cannot write one. Photos therefore stay on
+the device until a write path exists, and the sheet says so. Point
+`NEXT_PUBLIC_QE_PHOTO_UPLOAD_URL` at an Edge Function (recommended — it keeps
+the service key server-side and can route by kind) and the queue drains on its
+own. The payload carries what the photo is *of* — `material`, `equipment`,
+`plant` — so a named cultivar's photo goes to `plants` rather than to the
+generic shrub tile it was priced from.
+
 ### One tap is a load, not a unit
 
 A tap adds one **purchase increment** — the amount Ricci's actually buys, from

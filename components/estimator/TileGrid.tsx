@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import EstimateTile from "./EstimateTile";
-import type { CatalogItem, EstimatorSettings, TileNode } from "@/lib/estimator/types";
+import { selectionKey } from "@/lib/estimator/types";
+import type {
+  CatalogItem,
+  EstimatorSettings,
+  TileNode,
+} from "@/lib/estimator/types";
 
 /** Long enough not to fire on a firm tap through a work glove. */
 const LONG_PRESS_MS = 500;
@@ -14,8 +19,13 @@ interface Point {
 
 interface TileGridProps {
   nodes: TileNode[];
-  editing: boolean;
+  /** Arrange mode: tiles wiggle and drag instead of committing. */
+  arranging: boolean;
+  /** Edit mode: a single tap opens the tile's options instead of committing. */
+  optionsMode: boolean;
   arrangeable: boolean;
+  /** Device photos by selection key; these win over the catalog image. */
+  photos: Record<string, string>;
   settings: EstimatorSettings;
   countFor: (node: TileNode) => number;
   itemFor: (node: TileNode) => CatalogItem | null;
@@ -41,8 +51,10 @@ interface TileGridProps {
  */
 export default function TileGrid({
   nodes,
-  editing,
+  arranging,
+  optionsMode,
   arrangeable,
+  photos,
   settings,
   countFor,
   itemFor,
@@ -186,7 +198,7 @@ export default function TileGrid({
 
   // Long press on the grid background, not on a tile.
   const handleGridDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (editing || !arrangeable) return;
+    if (arranging || !arrangeable) return;
     if (e.target !== e.currentTarget) return;
     clearPress();
     pressTimer.current = window.setTimeout(() => {
@@ -223,9 +235,9 @@ export default function TileGrid({
               if (el) cellRefs.current.set(node.id, el);
               else cellRefs.current.delete(node.id);
             }}
-            onPointerDown={editing ? (e) => startDrag(e, node.id) : undefined}
-            onPointerUp={editing ? endDrag : undefined}
-            onPointerCancel={editing ? endDrag : undefined}
+            onPointerDown={arranging ? (e) => startDrag(e, node.id) : undefined}
+            onPointerUp={arranging ? endDrag : undefined}
+            onPointerCancel={arranging ? endDrag : undefined}
             style={
               dragging
                 ? {
@@ -236,7 +248,7 @@ export default function TileGrid({
                     filter: "drop-shadow(0 12px 24px rgba(0,0,0,0.75))",
                     touchAction: "none",
                   }
-                : editing
+                : arranging
                   ? { touchAction: "none" }
                   : undefined
             }
@@ -244,9 +256,9 @@ export default function TileGrid({
             {/* The wiggle lives on an inner element so it cannot fight the
                 FLIP and drag transforms on the cell itself. */}
             <div
-              className={editing && !dragging ? "qe-wiggle" : undefined}
+              className={arranging && !dragging ? "qe-wiggle" : undefined}
               style={
-                editing && !dragging
+                arranging && !dragging
                   ? { animationDelay: `${(hash(node.id) % 7) * 30}ms` }
                   : undefined
               }
@@ -259,7 +271,10 @@ export default function TileGrid({
                 navigateOnly={navigateOnlyOf(node)}
                 showPrices={settings.showPrices}
                 markupPercent={settings.markupPercent}
-                editing={editing}
+                mode={
+                  arranging ? "arrange" : optionsMode ? "options" : "normal"
+                }
+                imageOverride={photoFor(node, photos)}
                 onTap={onTap}
                 onLongPress={onLongPress}
               />
@@ -269,6 +284,15 @@ export default function TileGrid({
       })}
     </div>
   );
+}
+
+/** A tile shows its device photo if it has one, else whatever the catalog has. */
+function photoFor(
+  node: TileNode,
+  photos: Record<string, string>,
+): string | null {
+  const key = node.commit ? selectionKey(node.commit) : node.id;
+  return photos[key] ?? null;
 }
 
 /** Staggers the wiggle so the grid does not pulse in lockstep. */

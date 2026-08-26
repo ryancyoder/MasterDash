@@ -8,7 +8,7 @@ import {
   sellFor,
   unitLabel,
 } from "@/lib/estimator/catalog";
-import type { CatalogItem, TileNode } from "@/lib/estimator/types";
+import type { CatalogItem, TileMode, TileNode } from "@/lib/estimator/types";
 
 /** Long enough not to fire on a firm tap through a work glove. */
 const LONG_PRESS_MS = 500;
@@ -24,8 +24,15 @@ interface EstimateTileProps {
   navigateOnly: boolean;
   showPrices: boolean;
   markupPercent: number;
-  /** Arrange mode: the tile is being dragged, so its own gestures are off. */
-  editing?: boolean;
+  /**
+   * "normal" commits and refines. "arrange" hands every gesture to the grid so
+   * a drag cannot add a load. "options" turns a single tap into "open this
+   * tile's settings" and drops the refine gesture, since a long press there
+   * would be two meanings for one press.
+   */
+  mode?: TileMode;
+  /** Device photo, which wins over the catalog one. */
+  imageOverride?: string | null;
   /** TAP: commit, or open when the tile only navigates. */
   onTap: (node: TileNode) => void;
   /** LONG PRESS: refine, or back one off where there is nothing to refine. */
@@ -40,7 +47,8 @@ export default function EstimateTile({
   navigateOnly,
   showPrices,
   markupPercent,
-  editing = false,
+  mode = "normal",
+  imageOverride,
   onTap,
   onLongPress,
 }: EstimateTileProps) {
@@ -73,11 +81,12 @@ export default function EstimateTile({
     : undefined;
 
   const handleDown = (e: React.PointerEvent<HTMLButtonElement>) => {
-    if (editing) return;
+    if (mode === "arrange") return;
     origin.current = { x: e.clientX, y: e.clientY };
     longFired.current = false;
     clearTimer();
     // Nothing to refine and nothing to back off: skip the timer entirely.
+    if (mode === "options") return;
     if (!hasDepth && count === 0) return;
     timer.current = window.setTimeout(() => {
       longFired.current = true;
@@ -97,7 +106,7 @@ export default function EstimateTile({
   };
 
   const handleUp = () => {
-    if (editing) return;
+    if (mode === "arrange") return;
     clearTimer();
     // The long press already acted; its release must not also commit.
     if (longFired.current) {
@@ -118,7 +127,8 @@ export default function EstimateTile({
     longFired.current = false;
   };
 
-  const showImage = Boolean(node.image) && !imgBroken;
+  const image = imageOverride ?? node.image;
+  const showImage = Boolean(image) && !imgBroken;
 
   // Over a photo the label needs its own contrast, so it stops following the
   // selected/unselected text colours and rides the scrim instead.
@@ -156,7 +166,7 @@ export default function EstimateTile({
           {/* Full-bleed: the photo is the tile. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={node.image ?? ""}
+            src={image ?? ""}
             alt=""
             draggable={false}
             loading="lazy"
@@ -219,6 +229,17 @@ export default function EstimateTile({
       >
         {subLabel(node, item, count, navigateOnly, showPrices, markupPercent)}
       </span>
+
+      {/* Options mode says so on the tile: a tap here opens settings rather
+          than adding a load, and that has to be visible before the tap. */}
+      {mode === "options" && (
+        <span className="absolute inset-0 rounded-3xl border-2 border-dashed border-accent/70 pointer-events-none" />
+      )}
+      {mode === "options" && (
+        <span className="absolute bottom-2.5 left-2.5 text-[0.8rem]" aria-hidden="true">
+          ✎
+        </span>
+      )}
 
       {/* Counts survive the hide-prices toggle: the grid's checklist job
           depends on them, so only money is ever hidden. */}
