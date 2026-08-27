@@ -160,7 +160,9 @@ two things.
 
 Getting in is the one place this cannot copy iOS: long-pressing a tile already
 means *refine*, and taking that gesture would cost the drill-downs. So edit
-mode is entered by **long-pressing empty space**, or from the **Edit** button.
+mode is entered by **long-pressing empty space**, or from the **Edit** button —
+which sits on every arrangeable level, not just the home screen, so Drainage
+and Equipment can be reordered where you are rather than only from the top.
 
 **Order** is saved per level and survives a reload. It is stored as a list of
 tile ids, so a tile added by a later catalog sync joins the end of the grid

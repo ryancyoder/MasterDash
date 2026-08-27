@@ -256,12 +256,21 @@ export default function EstimatorPage() {
       <header className="shrink-0 flex items-center justify-between gap-3 px-4 pt-3 pb-1 h-11">
         {editing ? (
           <>
-            <span className="text-sm font-semibold text-ink">
-              Editing
-              <span className="ml-2 font-medium text-muted">
-                drag to reorder · tap a tile for its options
+            {/* Inside a level the back arrow stays reachable, so leaving is
+                one press rather than Done and then back. */}
+            <button
+              onClick={current ? goBack : undefined}
+              className="flex items-center gap-2 text-sm font-semibold text-ink min-w-0"
+            >
+              {current && <span aria-hidden="true">‹</span>}
+              <span className="truncate">
+                Editing
+                {current && ` · ${current.label}`}
+                <span className="ml-2 font-medium text-muted">
+                  drag to reorder · tap a tile for its options
+                </span>
               </span>
-            </span>
+            </button>
             <div className="flex items-center gap-2">
               <button
                 onClick={resetOrder}
@@ -288,6 +297,18 @@ export default function EstimatorPage() {
             </button>
 
             <div className="flex items-center gap-2">
+              {/* Every arrangeable level gets the button, not just home. Long
+                  press on empty space works here too, but a gesture nothing
+                  advertises is a gesture nobody finds. */}
+              {arrangeable && (
+                <button
+                  onClick={() => setEditing(true)}
+                  className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
+                >
+                  Edit
+                </button>
+              )}
+
               {/* A refinable parent keeps its undo here, since its own long
                   press is spent opening this level. */}
               {parentTaps > 0 && (
