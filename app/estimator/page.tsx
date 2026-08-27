@@ -25,6 +25,7 @@ import {
 import { useEstimate } from "@/lib/estimator/useEstimate";
 import { usePhotos } from "@/lib/estimator/usePhotos";
 import { useCatalogPhotos } from "@/lib/estimator/catalogPhotos";
+import { useCatalogPrices } from "@/lib/estimator/catalogPrices";
 import { photoTarget } from "@/lib/estimator/photos";
 import TileOptionsSheet from "@/components/estimator/TileOptionsSheet";
 import {
@@ -71,6 +72,9 @@ export default function EstimatorPage() {
   const { estimate, settings } = useEstimate();
   const photos = usePhotos();
   const catalogPhotos = useCatalogPhotos();
+  // Prices are applied to the catalog items in place, which React cannot see.
+  // Subscribing is what makes a rate change repaint the grid.
+  const priceVersion = useCatalogPrices();
 
   /** Drill path. Empty = home. */
   const [stack, setStack] = useState<TileNode[]>([]);
@@ -105,10 +109,12 @@ export default function EstimatorPage() {
 
   const current = stack.length ? stack[stack.length - 1] : null;
 
-  const proposal = useMemo(
-    () => buildProposal(estimate, settings),
-    [estimate, settings],
-  );
+  const proposal = useMemo(() => {
+    // Read, not ignored: prices are applied to the catalog items in place, so
+    // this counter is the only thing React can see change when a rate moves.
+    void priceVersion;
+    return buildProposal(estimate, settings);
+  }, [estimate, settings, priceVersion]);
 
   /**
    * What the assemblies already commit, per item. Bulk tiles add this to their
