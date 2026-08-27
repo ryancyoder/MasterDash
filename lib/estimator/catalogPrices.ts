@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { publicUrl } from "./basePath";
 import { ITEMS, getItem } from "./catalog";
+import { applyTiles, loadCachedTiles, type TileRow } from "./tileTree";
 
 // Live prices laid over the committed snapshot.
 //
@@ -137,7 +138,11 @@ async function refresh(): Promise<void> {
     const body = (await res.json()) as {
       ok?: boolean;
       prices?: Record<string, PriceEntry>;
+      tiles?: TileRow[];
     };
+    // The tree travels with the prices: one request, and a tile renamed or
+    // moved in Supabase lands at the same moment its price does.
+    applyTiles(body.tiles);
     // An unconfigured deployment answers with an empty map. Applying it would
     // wipe good cached prices back to the snapshot for no reason.
     if (!body.ok || !body.prices || Object.keys(body.prices).length === 0) return;
@@ -161,6 +166,7 @@ export function startCatalogPriceRefresh(): () => void {
     const cached = readCache();
     if (cached) apply(cached);
   }
+  loadCachedTiles();
 
   const onFocus = () => void refresh();
   window.addEventListener("focus", onFocus);

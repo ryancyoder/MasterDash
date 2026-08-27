@@ -15,7 +15,6 @@ import {
 import { tap, untap, updateSettings } from "@/lib/estimator/store";
 import { applyOrder, isArrangeable, levelKey } from "@/lib/estimator/tileOrder";
 import {
-  HOME_TILES,
   canExpandInline,
   hasDepth,
   isNavigateOnly,
@@ -26,6 +25,7 @@ import { useEstimate } from "@/lib/estimator/useEstimate";
 import { usePhotos } from "@/lib/estimator/usePhotos";
 import { useCatalogPhotos } from "@/lib/estimator/catalogPhotos";
 import { useCatalogPrices } from "@/lib/estimator/catalogPrices";
+import { useHomeTiles } from "@/lib/estimator/tileTree";
 import { photoTarget } from "@/lib/estimator/photos";
 import TileOptionsSheet from "@/components/estimator/TileOptionsSheet";
 import {
@@ -75,6 +75,9 @@ export default function EstimatorPage() {
   // Prices are applied to the catalog items in place, which React cannot see.
   // Subscribing is what makes a rate change repaint the grid.
   const priceVersion = useCatalogPrices();
+  // The grid comes from Supabase when it has been reached, and from the
+  // committed tree until then. Both shapes are the same; only the source moves.
+  const homeTiles = useHomeTiles();
 
   /** Drill path. Empty = home. */
   const [stack, setStack] = useState<TileNode[]>([]);
@@ -135,7 +138,7 @@ export default function EstimatorPage() {
         alive = false;
       };
     }
-  }, [current, plants]);
+  }, [current, plants, homeTiles]);
 
   const collapse = useCallback(() => {
     setExpandedIds(new Set());
@@ -330,7 +333,7 @@ export default function EstimatorPage() {
 
   // What this level shows.
   const levelNodes: TileNode[] = useMemo(() => {
-    if (!current) return HOME_TILES;
+    if (!current) return homeTiles;
     if (current.childSource) {
       if (!plants) return [];
       const parent = getItem(current.childSource.itemId);
@@ -360,7 +363,7 @@ export default function EstimatorPage() {
       return [generic, ...named];
     }
     return current.children ?? [];
-  }, [current, plants]);
+  }, [current, plants, homeTiles]);
 
   const key = levelKey(current);
   const arrangeable = isArrangeable(current);
