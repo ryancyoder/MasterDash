@@ -187,6 +187,42 @@ export const HOME_TILES: TileNode[] = [
   },
 ];
 
+/**
+ * How many children a tile can show inline before a page is the better answer.
+ *
+ * Every group on the grid is between two and nine, so in practice only the
+ * generated plant levels page — and those run to hundreds, where inserting
+ * them into the grid would bury everything else rather than reveal anything.
+ */
+export const INLINE_MAX = 12;
+
+/**
+ * True when a long press should unfold this tile in place rather than replace
+ * the screen. Keeping the grid on screen keeps the checklist readable: you can
+ * still see what else is dim while you pick a machine.
+ */
+export function canExpandInline(node: TileNode): boolean {
+  if (node.page || node.childSource) return false;
+  const count = node.children?.length ?? 0;
+  return count > 0 && count <= INLINE_MAX;
+}
+
+/**
+ * Children unfolded directly after their parent, pushing the rest of the grid
+ * along. Returns the list unchanged when nothing is expanded.
+ */
+export function withExpansion(
+  nodes: TileNode[],
+  expandedId: string | null,
+): TileNode[] {
+  if (!expandedId) return nodes;
+  const at = nodes.findIndex((n) => n.id === expandedId);
+  if (at === -1) return nodes;
+  const children = nodes[at].children ?? [];
+  if (children.length === 0) return nodes;
+  return [...nodes.slice(0, at + 1), ...children, ...nodes.slice(at + 1)];
+}
+
 /** A tile has depth when a long press would open something. */
 export function hasDepth(node: TileNode): boolean {
   return Boolean(node.children?.length || node.childSource || node.page);

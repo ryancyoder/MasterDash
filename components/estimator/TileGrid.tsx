@@ -38,6 +38,12 @@ interface TileGridProps {
   photos: Record<string, string>;
   /** Catalog photos read live from Supabase, keyed `entityType:entityId`. */
   catalogPhotos: Record<string, string>;
+  /** The tile currently unfolded, drawn as the head of the run. */
+  inlineParentId: string | null;
+  /** Tiles unfolded from a parent, drawn as a run that belongs to it. */
+  inlineChildIds: Set<string>;
+  /** The parent's colour, which ties the run together. */
+  inlineColor: string | null;
   settings: EstimatorSettings;
   countFor: (node: TileNode) => number;
   /** How much of a tile's count an assembly already committed. */
@@ -71,6 +77,9 @@ export default function TileGrid({
   arrangeable,
   photos,
   catalogPhotos,
+  inlineParentId,
+  inlineChildIds,
+  inlineColor,
   settings,
   countFor,
   lockedFor,
@@ -264,6 +273,18 @@ export default function TileGrid({
     }, LONG_PRESS_MS);
   };
 
+  /**
+   * The halo that ties an unfolded run together. The parent wears a solid ring
+   * and its children a faint one, so a run that wraps onto the next row still
+   * reads as belonging to the tile it came out of.
+   */
+  const runOutline = (id: string): string | null => {
+    if (!inlineColor) return null;
+    if (id === inlineParentId) return `2px solid ${inlineColor}`;
+    if (inlineChildIds.has(id)) return `2px solid ${inlineColor}44`;
+    return null;
+  };
+
   return (
     <div
       ref={gridRef}
@@ -304,7 +325,19 @@ export default function TileGrid({
                 : undefined
             }
             style={
-              dragging
+              runOutline(node.id) && !dragging
+                ? {
+                    // The run reads as one thing: a halo in the parent's
+                    // colour rather than a box that would fight the tiles.
+                    // The parent's is solid and the children's is faint, so
+                    // the eye finds the tile the run came out of even when it
+                    // wraps onto the next row.
+                    outline: runOutline(node.id)!,
+                    outlineOffset: "3px",
+                    borderRadius: "1.5rem",
+                    touchAction: editing ? "none" : undefined,
+                  }
+                : dragging
                 ? {
                     transform: `translate(${dragShift.x}px, ${dragShift.y}px) scale(1.08)`,
                     zIndex: 40,

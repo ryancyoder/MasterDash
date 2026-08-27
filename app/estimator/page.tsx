@@ -14,7 +14,14 @@ import {
 } from "@/lib/estimator/proposal";
 import { tap, untap, updateSettings } from "@/lib/estimator/store";
 import { applyOrder, isArrangeable, levelKey } from "@/lib/estimator/tileOrder";
-import { HOME_TILES, hasDepth, isNavigateOnly, subtreeItemIds } from "@/lib/estimator/tree";
+import {
+  HOME_TILES,
+  canExpandInline,
+  hasDepth,
+  isNavigateOnly,
+  subtreeItemIds,
+  withExpansion,
+} from "@/lib/estimator/tree";
 import { useEstimate } from "@/lib/estimator/useEstimate";
 import { usePhotos } from "@/lib/estimator/usePhotos";
 import { useCatalogPhotos } from "@/lib/estimator/catalogPhotos";
@@ -61,6 +68,11 @@ export default function EstimatorPage() {
   const [stack, setStack] = useState<TileNode[]>([]);
   const [openAssembly, setOpenAssembly] = useState<string | null>(null);
   const [plants, setPlants] = useState<PlantRow[] | null>(null);
+  /**
+   * The tile currently unfolded in place. Only one at a time — two open runs
+   * and the grid stops reading as a single list.
+   */
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   /** Selections made during this visit to this level. */
   const [visitTaps, setVisitTaps] = useState(0);
   const [lastTapAt, setLastTapAt] = useState(0);
@@ -100,6 +112,11 @@ export default function EstimatorPage() {
     }
   }, [current, plants]);
 
+  const collapse = useCallback(() => {
+    setExpandedId(null);
+    setVisitTaps(0);
+  }, []);
+
   const exitEditing = useCallback(() => {
     setEditing(false);
     setOptionsNode(null);
@@ -109,6 +126,7 @@ export default function EstimatorPage() {
     setStack([]);
     setOpenAssembly(null);
     setVisitTaps(0);
+    setExpandedId(null);
     exitEditing();
   }, [exitEditing]);
 
@@ -119,6 +137,7 @@ export default function EstimatorPage() {
     }
     setStack((s) => s.slice(0, -1));
     setVisitTaps(0);
+    setExpandedId(null);
     exitEditing();
   }, [openAssembly, exitEditing]);
 
@@ -131,6 +150,23 @@ export default function EstimatorPage() {
     visitTaps > 0 &&
     !editing;
 
+  /**
+   * An unfolded run closes on the same pause a page does, and for the same
+   * reason: the timer only starts once something has been picked, so opening a
+   * tile to look never snaps shut mid-thought.
+   */
+  const autoCollapse =
+    expandedId !== null &&
+    settings.folderReturn === "auto" &&
+    visitTaps > 0 &&
+    !editing;
+
+  useEffect(() => {
+    if (!autoCollapse) return;
+    const id = window.setTimeout(collapse, settings.folderReturnDelayMs);
+    return () => window.clearTimeout(id);
+  }, [autoCollapse, lastTapAt, settings.folderReturnDelayMs, collapse]);
+
   useEffect(() => {
     if (!autoBackout) return;
     const id = window.setTimeout(goHome, settings.folderReturnDelayMs);
@@ -138,15 +174,16 @@ export default function EstimatorPage() {
   }, [autoBackout, lastTapAt, settings.folderReturnDelayMs, goHome]);
 
   const registerActivity = useCallback(() => {
-    if (stack.length === 0) return;
+    if (stack.length === 0 && expandedId === null) return;
     setVisitTaps((n) => n + 1);
     setLastTapAt(Date.now());
-  }, [stack.length]);
+  }, [stack.length, expandedId]);
 
   const drillInto = useCallback(
     (node: TileNode) => {
       setStack((s) => [...s, node]);
       setVisitTaps(0);
+      setExpandedId(null);
       exitEditing();
     },
     [exitEditing],
@@ -171,6 +208,13 @@ export default function EstimatorPage() {
    * tells the two apart before you press.
    */
   const handleLongPress = (node: TileNode) => {
+    // Small groups unfold where they are, so the rest of the grid stays
+    // readable — you can see what is still dim while picking a machine.
+    if (canExpandInline(node)) {
+      setExpandedId((open) => (open === node.id ? null : node.id));
+      setVisitTaps(0);
+      return;
+    }
     if (hasDepth(node)) {
       drillInto(node);
       return;
@@ -234,8 +278,17 @@ export default function EstimatorPage() {
   const key = levelKey(current);
   const arrangeable = isArrangeable(current);
   const orderedNodes = useMemo(
-    () => applyOrder(levelNodes, settings.tileOrder[key]),
-    [levelNodes, settings.tileOrder, key],
+    () => withExpansion(applyOrder(levelNodes, settings.tileOrder[key]), expandedId),
+    [levelNodes, settings.tileOrder, key, expandedId],
+  );
+
+  /** Which tiles belong to the unfolded run, and the colour that groups them. */
+  const expandedNode = expandedId
+    ? levelNodes.find((n) => n.id === expandedId)
+    : undefined;
+  const inlineChildIds = useMemo(
+    () => new Set((expandedNode?.children ?? []).map((c) => c.id)),
+    [expandedNode],
   );
 
   const saveOrder = (ids: string[]) =>
@@ -403,6 +456,9 @@ export default function EstimatorPage() {
             navigateOnlyOf={isNavigateOnly}
             onTap={handleTap}
             onLongPress={handleLongPress}
+            inlineParentId={expandedId}
+            inlineChildIds={inlineChildIds}
+            inlineColor={expandedNode?.color ?? null}
             onReorder={saveOrder}
             onOpenOptions={setOptionsNode}
             onEnterEdit={() => setEditing(true)}
