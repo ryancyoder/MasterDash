@@ -44,10 +44,14 @@ export async function POST(request: Request) {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    return NextResponse.json(
-      { ok: false, error: await res.text() },
-      { status: 502 },
+    // Logged as well as returned. A bare 502 in the Vercel logs says a save
+    // failed and nothing about why, which is how an upsert that could never
+    // have worked went unnoticed through every save the app had ever made.
+    const detail = await res.text();
+    console.error(
+      `quick_estimates upsert failed: ${res.status} ${detail}`,
     );
+    return NextResponse.json({ ok: false, error: detail }, { status: 502 });
   }
   return NextResponse.json({ ok: true });
 }

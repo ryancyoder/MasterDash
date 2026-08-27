@@ -22,7 +22,13 @@ const QUEUE_KEY = "qe-queue";
  */
 const SAVE_URL = process.env.NEXT_PUBLIC_QE_SAVE_URL ?? "/api/estimates";
 
-export type SyncState = "idle" | "queued" | "syncing" | "synced" | "unconfigured";
+export type SyncState =
+  | "idle"
+  | "queued"
+  | "syncing"
+  | "synced"
+  | "rejected"
+  | "unconfigured";
 
 export interface QueuedWrite {
   clientId: string;
@@ -30,6 +36,12 @@ export interface QueuedWrite {
   queuedAt: string;
   attempts: number;
   lastError?: string;
+  /**
+   * True when the server answered and refused, rather than the request never
+   * arriving. The two need telling apart: one is a tunnel and clears itself,
+   * the other is a bug and never will.
+   */
+  refused?: boolean;
 }
 
 type Listener = () => void;
@@ -43,12 +55,18 @@ export function subscribeSync(fn: Listener): () => void {
 }
 
 let state: SyncState = "idle";
+let lastError: string | null = null;
 function emit() {
   listeners.forEach((fn) => fn());
 }
 
 export function getSyncState(): SyncState {
   return state;
+}
+
+/** What the server said when it refused, for a banner that can be acted on. */
+export function getLastError(): string | null {
+  return lastError;
 }
 
 export function getServerSyncState(): SyncState {
@@ -125,13 +143,18 @@ export function queueSave(estimate: Estimate, proposal: Proposal) {
   void flush();
 }
 
+/** A save the server answered and refused, as opposed to one that never got there. */
+class Refused extends Error {
+  readonly refused = true;
+}
+
 async function push(write: QueuedWrite): Promise<void> {
   const res = await fetch(SAVE_URL, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(write.payload),
   });
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Refused(`${res.status} ${await res.text()}`);
 }
 
 let flushing = false;
@@ -161,13 +184,20 @@ export async function flush(): Promise<void> {
         ...write,
         attempts: write.attempts + 1,
         lastError: err instanceof Error ? err.message : String(err),
+        refused: err instanceof Refused,
       });
     }
   }
 
   flushing = false;
   writeQueue(remaining);
-  state = remaining.length === 0 ? "synced" : "queued";
+  const refused = remaining.find((w) => w.refused);
+  lastError = remaining[0]?.lastError ?? null;
+  // A refusal is not a coverage problem and must not be reported as one. The
+  // work is still safe in the queue either way; what differs is whether
+  // waiting will ever fix it.
+  state =
+    remaining.length === 0 ? "synced" : refused ? "rejected" : "queued";
   emit();
 }
 

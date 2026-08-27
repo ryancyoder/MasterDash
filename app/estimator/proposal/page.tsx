@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import {
   formatMoney,
   formatQuantity,
@@ -21,6 +21,7 @@ import {
 } from "@/lib/estimator/store";
 import {
   getServerSyncState,
+  getLastError,
   getSyncState,
   queueSave,
   readQueue,
@@ -44,7 +45,6 @@ export default function ProposalPage() {
     () => buildProposal(estimate, settings),
     [estimate, settings],
   );
-  const [saved, setSaved] = useState(false);
 
   const syncState = useSyncExternalStore(
     subscribeSync,
@@ -52,15 +52,32 @@ export default function ProposalPage() {
     getServerSyncState,
   );
 
+  const lastError = useSyncExternalStore(
+    subscribeSync,
+    getLastError,
+    () => null,
+  );
+
   useEffect(() => startAutoFlush(), []);
 
   const empty = proposal.lines.length === 0;
 
-  const save = () => {
-    queueSave(estimate, proposal);
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 2500);
-  };
+  // No optimistic "Saved". The button says what actually happened, because a
+  // save that says it worked and did not is worse than one that says nothing:
+  // the whole point of the queue is that the estimate is safe, and that
+  // promise is only worth anything if the screen is honest about the rest.
+  const save = () => queueSave(estimate, proposal);
+
+  const saveLabel =
+    syncState === "syncing"
+      ? "Saving…"
+      : syncState === "synced"
+        ? "Saved"
+        : syncState === "rejected"
+          ? "Retry"
+          : syncState === "queued"
+            ? "Queued"
+            : "Save";
 
   return (
     <main className="md-safe min-h-dvh w-full bg-bg flex flex-col">
@@ -79,7 +96,7 @@ export default function ProposalPage() {
           disabled={empty}
           className="px-4 py-1.5 rounded-full bg-accent text-black text-xs font-bold disabled:opacity-40"
         >
-          {saved ? "Saved" : "Save"}
+          {saveLabel}
         </button>
         <button
           onClick={() => {
@@ -94,7 +111,7 @@ export default function ProposalPage() {
         </button>
       </header>
 
-      <SyncBanner state={syncState} />
+      <SyncBanner state={syncState} error={lastError} />
 
       <div className="flex-1 md-scroll overflow-y-auto px-4 py-4">
         {empty ? (
@@ -216,9 +233,21 @@ export default function ProposalPage() {
   );
 }
 
-function SyncBanner({ state }: { state: string }) {
+function SyncBanner({ state, error }: { state: string; error: string | null }) {
   const queued = typeof window === "undefined" ? 0 : readQueue().length;
   if (state === "idle" || state === "synced") return null;
+
+  // A refusal used to be reported as "will push when back in coverage", which
+  // blamed the tunnel for a server that had answered. The estimate is held
+  // safely either way; only one of the two ever clears itself.
+  if (state === "rejected") {
+    return (
+      <p className="shrink-0 px-4 py-2 text-xs bg-surface2 text-ink border-b border-edge">
+        Held on this device — the server refused the save.
+        {error && <span className="block text-muted mt-0.5">{error}</span>}
+      </p>
+    );
+  }
 
   const text =
     state === "syncing"
