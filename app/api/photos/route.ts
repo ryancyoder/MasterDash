@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  configReport,
   publicObjectUrl,
   rest,
   serverConfig,
@@ -19,6 +20,18 @@ import {
 // Vercel's protection or Supabase Auth if that is not acceptable.
 
 export const runtime = "nodejs";
+
+/**
+ * Configuration check.
+ *
+ * A 503 from the POST below is almost always a variable named something other
+ * than what the code reads, and that is miserable to diagnose blind. This
+ * reports which names were found — names only, never values — so the answer
+ * takes one request instead of a round of guessing.
+ */
+export async function GET() {
+  return NextResponse.json(configReport());
+}
 
 /** Comfortably above a 1024 px JPEG, far below anything worth storing. */
 const MAX_BYTES = 6 * 1024 * 1024;
@@ -52,9 +65,17 @@ function bad(message: string, status = 400) {
 export async function POST(request: Request) {
   const cfg = serverConfig();
   if (!cfg) {
-    return bad(
-      "This deployment has no SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY set.",
-      503,
+    const report = configReport();
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "This deployment has no Supabase credentials. Set the project URL " +
+          "and a service key, then redeploy — Vercel captures env vars per " +
+          "deployment, so changing one does not affect builds already live.",
+        ...report,
+      },
+      { status: 503 },
     );
   }
 

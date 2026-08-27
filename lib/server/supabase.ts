@@ -1,24 +1,80 @@
 // Server-side Supabase access.
 //
-// These credentials never reach the browser: they are read from unprefixed env
-// vars, so Next will not inline them into the client bundle. This module must
-// only ever be imported from a route handler.
+// Credentials are read from unprefixed env vars so Next never inlines them
+// into the client bundle. This module must only ever be imported from a route
+// handler.
+//
+// Several names are accepted because Supabase itself has renamed these keys
+// over time — `service_role` in the old dashboard, `sb_secret_...` in the new
+// one — and projects end up with whichever was current when they were set up.
+// Refusing to start over a name is a bad trade when the value is right there.
 
-const URL_ENV = process.env.SUPABASE_URL;
-const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+/** Names checked for the project URL, in order. */
+const URL_NAMES = [
+  "SUPABASE_URL",
+  "SUPABASE_PROJECT_URL",
+  // Not a secret, so the public variant is a fine source for the URL alone.
+  "NEXT_PUBLIC_SUPABASE_URL",
+];
+
+/** Names checked for the service key, in order. */
+const KEY_NAMES = [
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "SUPABASE_SERVICE_KEY",
+  "SUPABASE_SECRET_KEY",
+  "SUPABASE_KEY",
+];
+
+function firstPresent(names: string[]): { name: string; value: string } | null {
+  for (const name of names) {
+    // Indexed access rather than a literal, so nothing here can be statically
+    // replaced at build time — these must resolve at runtime.
+    const value = process.env[name];
+    if (typeof value === "string" && value.trim()) {
+      return { name, value: value.trim() };
+    }
+  }
+  return null;
+}
 
 export interface ServerConfig {
   url: string;
   key: string;
+  /** Which env var each value came from. Names only — never the values. */
+  urlFrom: string;
+  keyFrom: string;
 }
 
 /**
- * Null when the deployment has not been given credentials yet, which is a
- * configuration problem worth reporting clearly rather than a 500.
+ * Null when the deployment has no credentials, which is a configuration
+ * problem worth reporting precisely rather than a 500.
  */
 export function serverConfig(): ServerConfig | null {
-  if (!URL_ENV || !SERVICE_KEY) return null;
-  return { url: URL_ENV, key: SERVICE_KEY };
+  const url = firstPresent(URL_NAMES);
+  const key = firstPresent(KEY_NAMES);
+  if (!url || !key) return null;
+  return { url: url.value, key: key.value, urlFrom: url.name, keyFrom: key.name };
+}
+
+/**
+ * What the deployment can see, for diagnosing a 503 without shipping secrets.
+ * Reports variable NAMES and nothing else.
+ */
+export function configReport() {
+  const url = firstPresent(URL_NAMES);
+  const key = firstPresent(KEY_NAMES);
+  return {
+    configured: Boolean(url && key),
+    urlFrom: url?.name ?? null,
+    keyFrom: key?.name ?? null,
+    lookedForUrl: URL_NAMES,
+    lookedForKey: KEY_NAMES,
+    // A service key behind a NEXT_PUBLIC_ name would be readable by every
+    // visitor, so it is called out rather than quietly used.
+    publicKeyMisconfiguration: Object.keys(process.env).some(
+      (n) => n.startsWith("NEXT_PUBLIC_") && /SERVICE|SECRET/i.test(n),
+    ),
+  };
 }
 
 export function publicObjectUrl(
