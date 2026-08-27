@@ -78,7 +78,7 @@ export default function ProposalPage() {
   return (
     <main className="md-safe min-h-dvh w-full bg-bg flex flex-col">
       <header className="shrink-0 flex items-center gap-3 px-4 py-3 border-b border-edge">
-        <Link href="/estimator" className="text-sm font-semibold text-ink">
+        <Link href="/" className="text-sm font-semibold text-ink">
           <span aria-hidden="true">‹</span> Grid
         </Link>
         <input

@@ -9,18 +9,20 @@ import { startSync } from "@/lib/estimator/sync";
 import Autosave from "@/components/estimator/Autosave";
 
 /**
- * Boots what the estimator needs running whichever screen you land on: the
+ * Boots what the estimator needs running whichever screen you land on.
+ *
+ * Rendered by the root layout rather than wrapping the pages, so a tap on the
+ * grid and a quantity edited on the proposal are saved by the same path, and
+ * the sync loop survives moving between them.
+ *
+ * What it starts: the
  * offline cache, the sync loop that pulls what the server holds and pushes
  * what this device owes, the photo queue, and the pull of catalog photography
  * added anywhere else — the app is not the only way a photo reaches the
  * catalog — and the live prices, so a rate changed in Supabase reaches the
  * field without a redeploy.
  */
-export default function EstimatorLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function Boot() {
   useEffect(() => {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker
@@ -41,10 +43,5 @@ export default function EstimatorLayout({
     };
   }, []);
 
-  return (
-    <>
-      <Autosave />
-      {children}
-    </>
-  );
+  return <Autosave />;
 }
