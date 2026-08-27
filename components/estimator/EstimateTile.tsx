@@ -34,6 +34,8 @@ interface EstimateTileProps {
    * it is wearing outright.
    */
   summarySell: number | null;
+  /** What a tap on this folder does right now; null on tiles that buy. */
+  tapHint: string | null;
   showPrices: boolean;
   markupPercent: number;
   /**
@@ -57,6 +59,7 @@ export default function EstimateTile({
   hasDepth,
   navigateOnly,
   summarySell,
+  tapHint,
   showPrices,
   markupPercent,
   mode = "normal",
@@ -180,6 +183,7 @@ export default function EstimateTile({
         navigateOnly,
         lockedCount,
         summarySell,
+        tapHint,
       )}
       aria-pressed={navigateOnly ? undefined : selected}
       aria-haspopup={hasDepth ? "menu" : undefined}
@@ -387,10 +391,11 @@ function ariaLabel(
   navigateOnly: boolean,
   lockedCount: number,
   summarySell: number | null,
+  tapHint: string | null,
 ): string {
   if (navigateOnly || !item) {
     const sub = summarySell !== null ? `, ${formatMoney(summarySell)}` : "";
-    return `${node.label}, ${count} selected${sub}, tap to open`;
+    return `${node.label}, ${count} selected${sub}, ${tapHint ?? "tap to open"}`;
   }
   const depth = hasDepth ? ", long press to open the rest" : "";
   if (count > 0) {

@@ -10,6 +10,9 @@
 // a folder holding one pick still shows it — a tile that says "Mini Excavator"
 // and buys a mini excavator is not the ambiguity that was worth killing.
 //
+// So the two gestures split by what they are about rather than by depth: a tap
+// concerns what a tile already holds, a long press what it could hold.
+//
 // Placement is per-item and deliberate. Which materials deserve a home tile is
 // a judgement about how Ryan sells, not a property of a category, so this file
 // is meant to be argued with.

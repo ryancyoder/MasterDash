@@ -39,10 +39,12 @@ import { selectionKey, type TileNode } from "@/lib/estimator/types";
  * page fast.
  *
  * A leaf buys one increment on TAP and gives it back on LONG PRESS. A folder
- * opens on either, and holds nothing it does not name: its generic is a tile
- * inside it, so stopping early is still one tap and nothing gets bought by a
- * slow thumb. Give a folder one pick and it shows that pick outright, which is
- * the same bargain — the tile names what a tap buys.
+ * holds nothing it does not name — its generic is a tile inside it, so nothing
+ * gets bought by a slow thumb — and spends the two gestures on its two
+ * questions: TAP is about what it already has, folding its picks away or
+ * bringing them back, and LONG PRESS opens everything it holds. Give a folder
+ * one pick and it shows that pick outright and takes a leaf's gestures, which
+ * is the same bargain: the tile names what a tap buys.
  *
  * The grid is also a checklist. Tiles stay dim until tapped and folders roll up
  * what is inside them, so a category still dim reads as a question nobody
@@ -76,6 +78,12 @@ export default function EstimatorPage() {
    * and the grid stops reading as a single list.
    */
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  /**
+   * Folders whose picks have been folded back to the subtotal. Picks show by
+   * default — seeing what is on the job without pressing anything is most of
+   * what the grid is for — so this holds the exceptions, not the rule.
+   */
+  const [foldedIds, setFoldedIds] = useState<Set<string>>(new Set());
   /** Selections made during this visit to this level. */
   const [visitTaps, setVisitTaps] = useState(0);
   const [lastTapAt, setLastTapAt] = useState(0);
@@ -206,6 +214,14 @@ export default function EstimatorPage() {
    */
   const openFolder = useCallback(
     (node: TileNode) => {
+      // Whatever gets picked in here should be on the grid when it closes, so
+      // opening a folder undoes any earlier decision to fold its picks away.
+      setFoldedIds((set) => {
+        if (!set.has(node.id)) return set;
+        const next = new Set(set);
+        next.delete(node.id);
+        return next;
+      });
       if (canExpandInline(node)) {
         setExpandedId((open) => (open === node.id ? null : node.id));
         setVisitTaps(0);
@@ -216,22 +232,39 @@ export default function EstimatorPage() {
     [drillInto],
   );
 
-  /** TAP: buy one, or open the folder. */
+  /**
+   * TAP.
+   *
+   * On anything that names what it buys — a leaf, or a folder wearing its one
+   * pick — it buys one. On a folder it is about the folder's own picks: fold
+   * them away when they are out, bring them back when they are not. A folder
+   * with nothing picked has no picks to argue about, so a tap there opens it,
+   * which is the only thing it could usefully mean.
+   */
   const handleTap = (node: TileNode) => {
     if (node.commit) {
       tap(node.commit);
       registerActivity();
       return;
     }
-    openFolder(node);
+    if (pickedChildren(node).length === 0) {
+      openFolder(node);
+      return;
+    }
+    setFoldedIds((set) => {
+      const next = new Set(set);
+      if (!next.delete(node.id)) next.add(node.id);
+      return next;
+    });
+    setExpandedId(null);
   };
 
   /**
-   * LONG PRESS: take one back.
+   * LONG PRESS: open the whole folder, or on a leaf take one back.
    *
-   * A folder holds nothing to take back, so both gestures open it. That is the
-   * point of folders holding nothing: there is no second meaning to guess at,
-   * and no way to buy something by pressing a category.
+   * The long press is always the way to everything a folder holds, however its
+   * picks happen to be sitting — otherwise picking a second machine would mean
+   * first tidying away the first.
    */
   const handleLongPress = (node: TileNode) => {
     if (hasDepth(node)) {
@@ -337,7 +370,9 @@ export default function EstimatorPage() {
    * nothing to summarise and no sense in spending two tiles on it, so the
    * folder wears that pick outright and nothing else comes out. Past one it
    * goes back to being a folder with a subtotal on it, and the picks stand
-   * beside it as their own tiles.
+   * beside it as their own tiles — until a tap folds them back under that
+   * subtotal, which is the only thing a tap on a folder with picks in it can
+   * mean.
    *
    * Edit mode draws the level plainly. Arranging is about where the real tiles
    * live, and dragging a tile that is only on screen because of a tap would
@@ -368,13 +403,21 @@ export default function EstimatorPage() {
       // its own tile beside its parent instead.
       const worn =
         !open && picked.length === 1 && !hasDepth(picked[0]) ? picked[0] : null;
-      const run = open ? children : worn ? [] : picked;
+      const run = open
+        ? children
+        : worn || foldedIds.has(node.id)
+          ? []
+          : picked;
 
       if (run.length) {
         runs.set(node.id, run);
         run.forEach((c) => colors.set(c.id, node.color));
-        summaries.add(node.id);
       }
+      // The subtotal is what a folder says instead of what it holds, so it
+      // stands whether the contents are beside it, open below it, or folded
+      // away — and whether they were tapped in or came from an assembly. A
+      // folder is never bought, so it must never render as a bought tile.
+      if (!worn) summaries.add(node.id);
       return worn ? wearChild(node, worn) : node;
     });
     return {
@@ -382,7 +425,7 @@ export default function EstimatorPage() {
       runChildColors: colors,
       summaryIds: summaries,
     };
-  }, [baseNodes, editing, expandedId, pickedChildren]);
+  }, [baseNodes, editing, expandedId, foldedIds, pickedChildren]);
 
   /**
    * What a folder's contents come to, for the subtotal it wears while they are
@@ -396,6 +439,15 @@ export default function EstimatorPage() {
     }
     return m;
   }, [proposal]);
+
+  /** What a tap on a folder does right now, for the label a reader hears. */
+  const tapHintFor = (node: TileNode): string | null => {
+    if (node.commit || !hasDepth(node)) return null;
+    if (pickedChildren(node).length === 0) return "tap to open";
+    return foldedIds.has(node.id)
+      ? "tap to show its picks, long press to open all"
+      : "tap to fold its picks away, long press to open all";
+  };
 
   const summaryFor = (node: TileNode): number | null => {
     if (!summaryIds.has(node.id) || countFor(node) === 0) return null;
@@ -556,6 +608,7 @@ export default function EstimatorPage() {
             hasDepthOf={hasDepth}
             navigateOnlyOf={isNavigateOnly}
             summaryFor={summaryFor}
+            tapHintFor={tapHintFor}
             onTap={handleTap}
             onLongPress={handleLongPress}
             inlineParentId={expandedId}
