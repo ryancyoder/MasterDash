@@ -20,6 +20,12 @@ interface EstimateTileProps {
   item: CatalogItem | null;
   /** Taps on this tile, or the rollup of everything beneath it. */
   count: number;
+  /**
+   * How much of `count` an assembly already committed. That part cannot be
+   * backed off here: the assembly needs the material, and removing it on the
+   * tile would disagree with the takeoff rather than change it.
+   */
+  lockedCount?: number;
   hasDepth: boolean;
   navigateOnly: boolean;
   showPrices: boolean;
@@ -41,6 +47,7 @@ export default function EstimateTile({
   node,
   item,
   count,
+  lockedCount = 0,
   hasDepth,
   navigateOnly,
   showPrices,
@@ -66,6 +73,8 @@ export default function EstimateTile({
   useEffect(() => () => clearTimer(), [clearTimer]);
 
   const selected = count > 0;
+  /** Only the hand-tapped part can be given back. */
+  const canDecrement = count - lockedCount > 0;
 
   // A tile with depth badges from the first selection inside it, because the
   // brightness alone cannot say how many are down there. A plain leaf is
@@ -83,10 +92,16 @@ export default function EstimateTile({
     origin.current = { x: e.clientX, y: e.clientY };
     longFired.current = false;
     clearTimer();
-    // Nothing to refine and nothing to back off: skip the timer entirely.
+    // An empty tile with nothing beneath it has no meaning for a hold, so the
+    // press is left to fall through and count as a tap — forgiving, and it
+    // cannot get anything wrong.
     if (!hasDepth && count === 0) return;
     timer.current = window.setTimeout(() => {
+      // Marked fired either way, so the release is swallowed. At an assembly's
+      // floor there is nothing to give back, and a hold that quietly ADDED a
+      // load would be the exact opposite of what the press was reaching for.
       longFired.current = true;
+      if (!hasDepth && !canDecrement) return;
       navigator.vibrate?.(12);
       onLongPress(node);
     }, LONG_PRESS_MS);
@@ -143,7 +158,7 @@ export default function EstimateTile({
       onPointerUp={handleUp}
       onPointerCancel={handleCancel}
       onContextMenu={(e) => e.preventDefault()}
-      aria-label={ariaLabel(node, item, count, hasDepth, navigateOnly)}
+      aria-label={ariaLabel(node, item, count, hasDepth, navigateOnly, lockedCount)}
       aria-pressed={navigateOnly ? undefined : selected}
       aria-haspopup={hasDepth ? "menu" : undefined}
       className={`relative w-full aspect-square rounded-3xl flex flex-col overflow-hidden touch-none select-none transition-opacity ${
@@ -246,6 +261,19 @@ export default function EstimateTile({
         </span>
       )}
 
+      {/* Says where the floor came from: this much is the assembly's, and a
+          long press will not take it back. */}
+      {lockedCount > 0 && mode !== "edit" && (
+        <span
+          className={`absolute bottom-2.5 left-2.5 text-[0.7rem] ${
+            textOnPhoto ? "" : selected ? "text-black/55" : "text-muted"
+          }`}
+          aria-hidden="true"
+        >
+          📐
+        </span>
+      )}
+
       {/* Materials that book their own delivery say so, so the Delivery tile
           never gets tapped "just in case". */}
       {item?.autoDelivery && (
@@ -314,6 +342,7 @@ function ariaLabel(
   count: number,
   hasDepth: boolean,
   navigateOnly: boolean,
+  lockedCount = 0,
 ): string {
   const depth = hasDepth ? ", long press to refine" : "";
   if (navigateOnly || !item) {
@@ -321,9 +350,15 @@ function ariaLabel(
   }
   if (count > 0) {
     const qty = formatQuantity(quantityFor(item, count));
-    return `${node.label}, ${count} taps, ${qty} ${unitLabel(item.unit)}${depth}${
-      hasDepth ? "" : ". Long press to remove one."
-    }`;
+    const floor =
+      lockedCount > 0
+        ? `, ${formatQuantity(lockedCount)} of them required by an assembly`
+        : "";
+    const undo =
+      hasDepth || count - lockedCount <= 0
+        ? ""
+        : ". Long press to remove one.";
+    return `${node.label}, ${count} taps, ${qty} ${unitLabel(item.unit)}${floor}${depth}${undo}`;
   }
   return `${node.label}, not selected. Tap adds ${formatQuantity(item.increment)} ${unitLabel(item.unit)}${depth}`;
 }

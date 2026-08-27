@@ -254,6 +254,14 @@ screen so the step size is checkable rather than magic, and the size is
 *floored* — the French drain's true step is 166.67 ln ft, and rounding up tips
 it past 5 tons and silently buys a second load.
 
+**The bulk tiles follow the assemblies.** Run three mulch-bed assemblies and
+the Mulch tile reads 24 cy with a badge of 3 and a 📐 marking where it came
+from — the grid shows what the job needs, not just what was tapped by hand.
+Extra one-off loads go on top with a tap, and a long press gives those back,
+but the assembly's share is a floor: it cannot be taken off the tile, because
+doing so would disagree with the takeoff rather than change it. Edit the
+assembly instead.
+
 Both paths land in the same lines: tapping four loads of mulch and running a
 1,040 sq ft mulch-bed assembly produce one Mulch line, not two, with the
 assembly's share still labelled. Patio and hardscape items live here rather

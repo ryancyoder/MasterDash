@@ -40,6 +40,8 @@ interface TileGridProps {
   catalogPhotos: Record<string, string>;
   settings: EstimatorSettings;
   countFor: (node: TileNode) => number;
+  /** How much of a tile's count an assembly already committed. */
+  lockedFor: (node: TileNode) => number;
   itemFor: (node: TileNode) => CatalogItem | null;
   hasDepthOf: (node: TileNode) => boolean;
   navigateOnlyOf: (node: TileNode) => boolean;
@@ -71,6 +73,7 @@ export default function TileGrid({
   catalogPhotos,
   settings,
   countFor,
+  lockedFor,
   itemFor,
   hasDepthOf,
   navigateOnlyOf,
@@ -329,6 +332,7 @@ export default function TileGrid({
                 node={node}
                 item={itemFor(node)}
                 count={countFor(node)}
+                lockedCount={lockedFor(node)}
                 hasDepth={hasDepthOf(node)}
                 navigateOnly={navigateOnlyOf(node)}
                 showPrices={settings.showPrices}

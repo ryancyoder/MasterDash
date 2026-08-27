@@ -8,6 +8,7 @@ import { formatMoneyShort, getItem } from "@/lib/estimator/catalog";
 import { loadPlants, plantsInGroup, type PlantRow } from "@/lib/estimator/plants";
 import {
   assemblyCount,
+  assemblyIncrements,
   buildProposal,
   rollupCount,
 } from "@/lib/estimator/proposal";
@@ -76,6 +77,16 @@ export default function EstimatorPage() {
   const proposal = useMemo(
     () => buildProposal(estimate, settings),
     [estimate, settings],
+  );
+
+  /**
+   * What the assemblies already commit, per item. Bulk tiles add this to their
+   * own taps so the grid shows what the job actually needs, and it is the
+   * floor those tiles cannot be taken below.
+   */
+  const derived = useMemo(
+    () => assemblyIncrements(estimate),
+    [estimate],
   );
 
   // Only fetched once someone actually drills to a plant level.
@@ -165,15 +176,37 @@ export default function EstimatorPage() {
       return;
     }
     if (node.commit) {
+      // The assembly's share is not the tile's to give back. Backing it off
+      // here would disagree with the takeoff rather than change it — the
+      // assembly is edited on its own tile.
+      if ((estimate.taps[selectionKey(node.commit)] ?? 0) === 0) return;
       untap(selectionKey(node.commit));
       registerActivity();
     }
   };
 
+  /** Assembly-derived loads at or below a node. */
+  const lockedFor = (node: TileNode): number => {
+    if (node.page === "assemblies") return 0;
+    if (hasDepth(node)) {
+      return subtreeItemIds(node).reduce((sum, id) => sum + (derived[id] ?? 0), 0);
+    }
+    // A refined tap — a named plant, say — is never something an assembly
+    // produced, so only the generic tile carries a floor.
+    if (!node.commit || node.commit.variantId) return 0;
+    return derived[node.commit.itemId] ?? 0;
+  };
+
   const countFor = (node: TileNode): number => {
     if (node.page === "assemblies") return assemblyCount(estimate);
-    if (hasDepth(node)) return rollupCount(estimate, subtreeItemIds(node));
-    return node.commit ? (estimate.taps[selectionKey(node.commit)] ?? 0) : 0;
+    const locked = lockedFor(node);
+    if (hasDepth(node)) {
+      return rollupCount(estimate, subtreeItemIds(node)) + locked;
+    }
+    const tapped = node.commit
+      ? (estimate.taps[selectionKey(node.commit)] ?? 0)
+      : 0;
+    return tapped + locked;
   };
 
   // What this level shows.
@@ -341,6 +374,7 @@ export default function EstimatorPage() {
             catalogPhotos={catalogPhotos}
             settings={settings}
             countFor={countFor}
+            lockedFor={lockedFor}
             itemFor={(node) =>
               node.commit ? (getItem(node.commit.itemId) ?? null) : null
             }
