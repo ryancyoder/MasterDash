@@ -19,7 +19,6 @@ import {
   canExpandInline,
   hasDepth,
   isNavigateOnly,
-  spliceRuns,
   subtreeItemIds,
   wearChild,
 } from "@/lib/estimator/tree";
@@ -78,10 +77,14 @@ export default function EstimatorPage() {
   const [openAssembly, setOpenAssembly] = useState<string | null>(null);
   const [plants, setPlants] = useState<PlantRow[] | null>(null);
   /**
-   * The tile currently unfolded in place. Only one at a time — two open runs
-   * and the grid stops reading as a single list.
+   * Folders a long press has opened outright.
+   *
+   * A set rather than a single id, because folders nest: Clean 8 lives inside
+   * Bulk Materials, and opening it cannot mean closing the folder it is being
+   * read from. The pause closes all of them together, and how full the grid
+   * gets at rest is the reveal control's business, not this one's.
    */
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   /**
    * Folders a tap has moved off the grid-wide setting: opened to their picks
    * where the grid shows none, or closed where it shows them. Exceptions only,
@@ -129,13 +132,13 @@ export default function EstimatorPage() {
   }, [current, plants]);
 
   const collapse = useCallback(() => {
-    setExpandedId(null);
+    setExpandedIds(new Set());
     setVisitTaps(0);
   }, []);
 
   const enterEditing = useCallback(() => {
     // Arranging is about the real level, so any open run closes first.
-    setExpandedId(null);
+    setExpandedIds(new Set());
     setVisitTaps(0);
     setEditing(true);
   }, []);
@@ -149,7 +152,7 @@ export default function EstimatorPage() {
     setStack([]);
     setOpenAssembly(null);
     setVisitTaps(0);
-    setExpandedId(null);
+    setExpandedIds(new Set());
     exitEditing();
   }, [exitEditing]);
 
@@ -160,7 +163,7 @@ export default function EstimatorPage() {
     }
     setStack((s) => s.slice(0, -1));
     setVisitTaps(0);
-    setExpandedId(null);
+    setExpandedIds(new Set());
     exitEditing();
   }, [openAssembly, exitEditing]);
 
@@ -179,7 +182,7 @@ export default function EstimatorPage() {
    * tile to look never snaps shut mid-thought.
    */
   const autoCollapse =
-    expandedId !== null &&
+    expandedIds.size > 0 &&
     settings.folderReturn === "auto" &&
     visitTaps > 0 &&
     !editing;
@@ -197,16 +200,17 @@ export default function EstimatorPage() {
   }, [autoBackout, lastTapAt, settings.folderReturnDelayMs, goHome]);
 
   const registerActivity = useCallback(() => {
-    if (stack.length === 0 && expandedId === null) return;
+    if (stack.length === 0 && expandedIds.size === 0) return;
     setVisitTaps((n) => n + 1);
     setLastTapAt(Date.now());
-  }, [stack.length, expandedId]);
+  }, [stack.length, expandedIds]);
 
   const drillInto = useCallback(
     (node: TileNode) => {
       setStack((s) => [...s, node]);
       setVisitTaps(0);
-      setExpandedId(null);
+      setExpandedIds(new Set());
+      setFlippedIds(new Set());
       exitEditing();
     },
     [exitEditing],
@@ -225,7 +229,11 @@ export default function EstimatorPage() {
       // that quietly kept every folder it had ever been asked to open is the
       // thing the control exists to prevent.
       if (canExpandInline(node)) {
-        setExpandedId((open) => (open === node.id ? null : node.id));
+        setExpandedIds((open) => {
+          const next = new Set(open);
+          if (!next.delete(node.id)) next.add(node.id);
+          return next;
+        });
         setVisitTaps(0);
         return;
       }
@@ -258,7 +266,14 @@ export default function EstimatorPage() {
       if (!next.delete(node.id)) next.add(node.id);
       return next;
     });
-    setExpandedId(null);
+    // A tap is about this folder's picks, so it settles this folder: whatever
+    // a long press had opened here gives way to the answer.
+    setExpandedIds((open) => {
+      if (!open.has(node.id)) return open;
+      const next = new Set(open);
+      next.delete(node.id);
+      return next;
+    });
   };
 
   /**
@@ -349,14 +364,22 @@ export default function EstimatorPage() {
   );
 
   /**
-   * Children of a tile that carry taps. Counted by rollup rather than by the
-   * child's own key, so a category whose taps are all named plants — three
-   * 'Green Velvet' boxwood and no plain shrub — still reads as picked.
+   * Children of a tile that carry taps.
+   *
+   * A folder is counted by rollup, so a category whose taps are all named
+   * plants — three 'Green Velvet' boxwood and no plain shrub — still reads as
+   * picked. A leaf is counted by its own key and nothing else: Clean 8 holds
+   * three tiles that all price the same material, and a rollup there made a
+   * tap on the French Drain application light up the plain one beside it.
    */
   const pickedChildren = useCallback(
     (node: TileNode): TileNode[] =>
-      (node.children ?? []).filter(
-        (c) => rollupCount(estimate, subtreeItemIds(c)) > 0,
+      (node.children ?? []).filter((c) =>
+        hasDepth(c)
+          ? rollupCount(estimate, subtreeItemIds(c)) > 0
+          : c.commit
+            ? (estimate.taps[selectionKey(c.commit)] ?? 0) > 0
+            : false,
       ),
     [estimate],
   );
@@ -387,60 +410,71 @@ export default function EstimatorPage() {
     if (editing) {
       return { displayNodes: baseNodes, summaryIds: new Set<string>() };
     }
-    const runs = new Map<string, TileNode[]>();
     const summaries = new Set<string>();
-    const faced = baseNodes.map((node) => {
-      const children = node.children ?? [];
-      if (!children.length) return node;
 
-      // A long press opens one folder outright; otherwise the grid's setting
-      // decides, with a tap flipping this one folder off it.
-      const flipped = flippedIds.has(node.id);
-      const reveal =
-        node.id === expandedId
-          ? "all"
-          : settings.reveal === "none"
-            ? flipped
-              ? "picked"
-              : "none"
-            : flipped
-              ? "none"
-              : settings.reveal;
+    /**
+     * Lay a level out, then lay out whatever each folder is showing, in place.
+     *
+     * Recursive because a folder can hold a folder: Clean 8 lives inside Bulk
+     * Materials and holds its own applications, and opening it while it is
+     * itself only on screen because its parent is open has to work like
+     * opening anything else.
+     */
+    const layOut = (nodes: TileNode[]): TileNode[] => {
+      const out: TileNode[] = [];
+      for (const node of nodes) {
+        const children = node.children ?? [];
+        if (!children.length) {
+          out.push(node);
+          continue;
+        }
 
-      const picked = pickedChildren(node);
-      // Open, a folder shows everything it holds and stays a folder: wearing
-      // one child's face beside that same child is a tile drawn twice.
-      //
-      // Only a leaf is worn. A folder wearing another folder's face would be a
-      // tile called Shrub that opens the plant categories, and there would be
-      // no way back to the categories once it did — so a picked folder keeps
-      // its own tile beside its parent instead.
-      const worn =
-        reveal !== "all" && picked.length === 1 && !hasDepth(picked[0])
-          ? picked[0]
-          : null;
-      const run =
-        reveal === "all"
-          ? children
-          : worn || reveal === "none"
-            ? []
-            : picked;
+        // A long press opens one folder outright; otherwise the grid's setting
+        // decides, with a tap flipping this one folder off it.
+        const flipped = flippedIds.has(node.id);
+        const reveal =
+          expandedIds.has(node.id)
+            ? "all"
+            : settings.reveal === "none"
+              ? flipped
+                ? "picked"
+                : "none"
+              : flipped
+                ? "none"
+                : settings.reveal;
 
-      if (run.length) {
-        runs.set(node.id, run);
+        const picked = pickedChildren(node);
+        // Open, a folder shows everything it holds and stays a folder: wearing
+        // one child's face beside that same child is a tile drawn twice.
+        //
+        // Only a leaf is worn. A folder wearing another folder's face would be
+        // a tile called Shrub that opens the plant categories, and there would
+        // be no way back to the categories once it did — so a picked folder
+        // keeps its own tile beside its parent instead.
+        const worn =
+          reveal !== "all" && picked.length === 1 && !hasDepth(picked[0])
+            ? picked[0]
+            : null;
+        const run =
+          reveal === "all"
+            ? children
+            : worn || reveal === "none"
+              ? []
+              : picked;
+
+        // The subtotal is what a folder says instead of what it holds, so it
+        // stands whether the contents are beside it, open below it, or folded
+        // away — and whether they were tapped in or came from an assembly. A
+        // folder is never bought, so it must never render as a bought tile.
+        if (!worn) summaries.add(node.id);
+        out.push(worn ? wearChild(node, worn) : node);
+        if (run.length) out.push(...layOut(run));
       }
-      // The subtotal is what a folder says instead of what it holds, so it
-      // stands whether the contents are beside it, open below it, or folded
-      // away — and whether they were tapped in or came from an assembly. A
-      // folder is never bought, so it must never render as a bought tile.
-      if (!worn) summaries.add(node.id);
-      return worn ? wearChild(node, worn) : node;
-    });
-    return {
-      displayNodes: spliceRuns(faced, runs),
-      summaryIds: summaries,
+      return out;
     };
-  }, [baseNodes, editing, expandedId, flippedIds, settings.reveal, pickedChildren]);
+
+    return { displayNodes: layOut(baseNodes), summaryIds: summaries };
+  }, [baseNodes, editing, expandedIds, flippedIds, settings.reveal, pickedChildren]);
 
   /**
    * What a folder's contents come to, for the subtotal it wears while they are
@@ -483,7 +517,7 @@ export default function EstimatorPage() {
     // The exceptions go with it: a control that says collapse all has to mean
     // all of them, including the ones a tap had opened.
     setFlippedIds(new Set());
-    setExpandedId(null);
+    setExpandedIds(new Set());
     updateSettings({ reveal });
   };
 

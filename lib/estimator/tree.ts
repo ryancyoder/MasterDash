@@ -161,7 +161,23 @@ function equipmentNodes(category: string): TileNode[] {
 }
 
 export const HOME_TILES: TileNode[] = [
-  ...BULK_MATERIALS.map(bulkNode),
+  // Six tiles of dirt and stone filled the whole first row, which put the rest
+  // of the job below the fold on the screen it is estimated from. They are one
+  // folder now: what a landscaper buys by the load, in one place.
+  //
+  // No generic inside it. "Some bulk material" is not a thing anyone can
+  // price, so unlike Equipment or Lighting there is nothing for a placeholder
+  // to stand for — the folder opens onto the six real answers.
+  folderNode(
+    {
+      id: "group:bulk",
+      label: "Bulk Materials",
+      glyph: "⛰️",
+      color: getItem("mat:mulch")!.color,
+      children: BULK_MATERIALS.map(bulkNode),
+    },
+    null,
+  ),
 
   // Tap buys $500 of plants; long press names the category; long press again
   // names the actual plant. Price never changes as you go deeper — refining
@@ -289,25 +305,6 @@ export function canExpandInline(node: TileNode): boolean {
   if (node.page || node.childSource) return false;
   const count = node.children?.length ?? 0;
   return count > 0 && count <= INLINE_MAX;
-}
-
-/**
- * Children shown directly after their parent, pushing the rest of the grid
- * along. Covers both runs: the one currently unfolded, and the picks that stay
- * out on the grid after a run closes.
- */
-export function spliceRuns(
-  nodes: TileNode[],
-  runs: Map<string, TileNode[]>,
-): TileNode[] {
-  if (runs.size === 0) return nodes;
-  const out: TileNode[] = [];
-  for (const node of nodes) {
-    out.push(node);
-    const run = runs.get(node.id);
-    if (run?.length) out.push(...run);
-  }
-  return out;
 }
 
 /**
