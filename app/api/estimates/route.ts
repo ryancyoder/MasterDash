@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { rest, serverConfig } from "@/lib/server/supabase";
+import { configReport, rest, serverConfig } from "@/lib/server/supabase";
 
 // The estimate save path, server-side for the same reason as photos: the
 // browser has no write credentials, and the service role key cannot ship to it.
@@ -14,7 +14,12 @@ export async function POST(request: Request) {
   const cfg = serverConfig();
   if (!cfg) {
     return NextResponse.json(
-      { ok: false, error: "This deployment has no Supabase credentials set." },
+      {
+        ok: false,
+        error:
+          "This deployment has no Supabase credentials. Set them and redeploy.",
+        ...configReport(),
+      },
       { status: 503 },
     );
   }
