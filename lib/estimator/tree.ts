@@ -1,14 +1,14 @@
 // The tile tree.
 //
-// Every tile is one of two things and looks like it. A folder opens and holds
-// nothing; a leaf buys one increment on tap and gives it back on long press.
-// v2 let a tile be both — Equipment opened five machines AND bought a generic
-// machine day — and in the field that was a coin toss every time: nothing on
-// the tile said which a press would mean, and a category could quietly end up
-// on the proposal.
+// No tile holds a generic value it does not name. v2 let Equipment open five
+// machines AND buy a generic machine day, and in the field that was a coin
+// toss every time: nothing on the tile said which a press would mean, and a
+// category could quietly end up on the proposal.
 //
 // Nothing was dropped in straightening that out. Every generic is still here,
-// as the first tile inside its folder, where a tap on it means one thing.
+// as the first tile inside its folder, where a tap on it means one thing. And
+// a folder holding one pick still shows it — a tile that says "Mini Excavator"
+// and buys a mini excavator is not the ambiguity that was worth killing.
 //
 // Placement is per-item and deliberate. Which materials deserve a home tile is
 // a judgement about how Ryan sells, not a property of a category, so this file
@@ -305,6 +305,27 @@ export function spliceRuns(
     if (run?.length) out.push(...run);
   }
   return out;
+}
+
+/**
+ * A folder wearing the face of the one thing picked out of it.
+ *
+ * With a single pick there is nothing for a folder to summarise and no reason
+ * to spend two tiles saying it, so the folder shows that pick outright: its
+ * photo, its name, its count and its price, and a tap that buys another of it.
+ * It never buys anything generic — the tile says what it is, and that is what
+ * a tap gets you. The long press still opens the folder, so the other nine
+ * machines are one gesture away.
+ */
+export function wearChild(parent: TileNode, child: TileNode): TileNode {
+  return {
+    ...parent,
+    label: child.label,
+    glyph: child.glyph,
+    color: child.color,
+    image: child.image,
+    commit: child.commit,
+  };
 }
 
 /** A tile has depth when a long press would open something. */

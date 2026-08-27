@@ -51,6 +51,8 @@ interface TileGridProps {
   itemFor: (node: TileNode) => CatalogItem | null;
   hasDepthOf: (node: TileNode) => boolean;
   navigateOnlyOf: (node: TileNode) => boolean;
+  /** Money for a folder showing its picks beside it; null for every other tile. */
+  summaryFor: (node: TileNode) => number | null;
   onTap: (node: TileNode) => void;
   onLongPress: (node: TileNode) => void;
   onReorder: (ids: string[]) => void;
@@ -86,6 +88,7 @@ export default function TileGrid({
   itemFor,
   hasDepthOf,
   navigateOnlyOf,
+  summaryFor,
   onTap,
   onLongPress,
   onReorder,
@@ -368,6 +371,7 @@ export default function TileGrid({
                 lockedCount={lockedFor(node)}
                 hasDepth={hasDepthOf(node)}
                 navigateOnly={navigateOnlyOf(node)}
+                summarySell={summaryFor(node)}
                 showPrices={settings.showPrices}
                 markupPercent={settings.markupPercent}
                 mode={editing ? "edit" : "normal"}

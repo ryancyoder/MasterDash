@@ -21,6 +21,7 @@ import {
   isNavigateOnly,
   spliceRuns,
   subtreeItemIds,
+  wearChild,
 } from "@/lib/estimator/tree";
 import { useEstimate } from "@/lib/estimator/useEstimate";
 import { usePhotos } from "@/lib/estimator/usePhotos";
@@ -37,10 +38,11 @@ import { selectionKey, type TileNode } from "@/lib/estimator/types";
  * driving the estimate, and the job of this screen is to get the work on the
  * page fast.
  *
- * Every tile is one of two things. A leaf buys one increment on TAP and gives
- * it back on LONG PRESS. A folder opens, holds nothing, and cannot be bought
- * by accident — its generic is a tile inside it, so stopping early is still
- * one tap and still safe.
+ * A leaf buys one increment on TAP and gives it back on LONG PRESS. A folder
+ * opens on either, and holds nothing it does not name: its generic is a tile
+ * inside it, so stopping early is still one tap and nothing gets bought by a
+ * slow thumb. Give a folder one pick and it shows that pick outright, which is
+ * the same bargain — the tile names what a tap buys.
  *
  * The grid is also a checklist. Tiles stay dim until tapped and folders roll up
  * what is inside them, so a category still dim reads as a question nobody
@@ -246,27 +248,11 @@ export default function EstimatorPage() {
     }
   };
 
-  /**
-   * The item ids a tile still speaks for.
-   *
-   * A parent rolls up what is inside it so a whole category reads at a glance.
-   * The moment its picks are on the grid beside it, though, rolling them up
-   * again prices the same day twice and the row stops adding up — so a tile
-   * with a run showing counts only what the run does not. A placeholder with
-   * nothing generic on it goes dim, which is the truth: the days belong to the
-   * machines next to it, not to it.
-   */
-  function ownedIds(node: TileNode): string[] {
-    const shown = runItemIds.get(node.id);
-    const ids = subtreeItemIds(node);
-    return shown ? ids.filter((id) => !shown.has(id)) : ids;
-  }
-
   /** Assembly-derived loads at or below a node. */
   const lockedFor = (node: TileNode): number => {
     if (node.page === "assemblies") return 0;
     if (hasDepth(node)) {
-      return ownedIds(node).reduce((sum, id) => sum + (derived[id] ?? 0), 0);
+      return subtreeItemIds(node).reduce((sum, id) => sum + (derived[id] ?? 0), 0);
     }
     // A refined tap — a named plant, say — is never something an assembly
     // produced, so only the generic tile carries a floor.
@@ -278,7 +264,7 @@ export default function EstimatorPage() {
     if (node.page === "assemblies") return assemblyCount(estimate);
     const locked = lockedFor(node);
     if (hasDepth(node)) {
-      return rollupCount(estimate, ownedIds(node)) + locked;
+      return rollupCount(estimate, subtreeItemIds(node)) + locked;
     }
     const tapped = node.commit
       ? (estimate.taps[selectionKey(node.commit)] ?? 0)
@@ -345,41 +331,79 @@ export default function EstimatorPage() {
    *
    * A run does not simply vanish when it closes. Whatever was picked out of it
    * stays on the grid and only the untouched tiles fold away, because the
-   * picks are the answer and the rest were the question. Two machines on the
-   * job are two tiles on the job.
+   * picks are the answer and the rest were the question.
+   *
+   * One pick is the exception, and the reason folders exist at all. There is
+   * nothing to summarise and no sense in spending two tiles on it, so the
+   * folder wears that pick outright and nothing else comes out. Past one it
+   * goes back to being a folder with a subtotal on it, and the picks stand
+   * beside it as their own tiles.
    *
    * Edit mode draws the level plainly. Arranging is about where the real tiles
    * live, and dragging a tile that is only on screen because of a tap would
    * save an order that disappears the moment it is untapped.
    */
-  const { displayNodes, runChildColors, runItemIds } = useMemo(() => {
+  const { displayNodes, runChildColors, summaryIds } = useMemo(() => {
     if (editing) {
       return {
         displayNodes: baseNodes,
         runChildColors: new Map<string, string>(),
-        runItemIds: new Map<string, Set<string>>(),
+        summaryIds: new Set<string>(),
       };
     }
     const runs = new Map<string, TileNode[]>();
     const colors = new Map<string, string>();
-    const shown = new Map<string, Set<string>>();
-    for (const node of baseNodes) {
+    const summaries = new Set<string>();
+    const faced = baseNodes.map((node) => {
       const children = node.children ?? [];
-      if (!children.length) continue;
-      // Open, a folder shows everything it holds; closed, only what was taken
-      // out of it.
-      const run = node.id === expandedId ? children : pickedChildren(node);
-      if (!run.length) continue;
-      runs.set(node.id, run);
-      run.forEach((c) => colors.set(c.id, node.color));
-      shown.set(node.id, new Set(run.flatMap((c) => subtreeItemIds(c))));
-    }
+      if (!children.length) return node;
+
+      // Open, a folder shows everything it holds and stays a folder: wearing
+      // one child's face beside that same child is a tile drawn twice.
+      const open = node.id === expandedId;
+      const picked = pickedChildren(node);
+      // Only a leaf is worn. A folder wearing another folder's face would be a
+      // tile called Shrub that opens the plant categories, and there would be
+      // no way back to the categories once it did — so a picked folder keeps
+      // its own tile beside its parent instead.
+      const worn =
+        !open && picked.length === 1 && !hasDepth(picked[0]) ? picked[0] : null;
+      const run = open ? children : worn ? [] : picked;
+
+      if (run.length) {
+        runs.set(node.id, run);
+        run.forEach((c) => colors.set(c.id, node.color));
+        summaries.add(node.id);
+      }
+      return worn ? wearChild(node, worn) : node;
+    });
     return {
-      displayNodes: spliceRuns(baseNodes, runs),
+      displayNodes: spliceRuns(faced, runs),
       runChildColors: colors,
-      runItemIds: shown,
+      summaryIds: summaries,
     };
   }, [baseNodes, editing, expandedId, pickedChildren]);
+
+  /**
+   * What a folder's contents come to, for the subtotal it wears while they are
+   * on the grid beside it. Deliveries are not in it: they hang off the
+   * material, not off the folder the material lives in.
+   */
+  const sellByItem = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const line of proposal.lines) {
+      m.set(line.item.id, (m.get(line.item.id) ?? 0) + line.sell);
+    }
+    return m;
+  }, [proposal]);
+
+  const summaryFor = (node: TileNode): number | null => {
+    if (!summaryIds.has(node.id) || countFor(node) === 0) return null;
+    return subtreeItemIds(node).reduce(
+      (sum, id) => sum + (sellByItem.get(id) ?? 0),
+      0,
+    );
+  };
 
   const saveOrder = (ids: string[]) =>
     updateSettings({ tileOrder: { ...settings.tileOrder, [key]: ids } });
@@ -531,6 +555,7 @@ export default function EstimatorPage() {
             }
             hasDepthOf={hasDepth}
             navigateOnlyOf={isNavigateOnly}
+            summaryFor={summaryFor}
             onTap={handleTap}
             onLongPress={handleLongPress}
             inlineParentId={expandedId}

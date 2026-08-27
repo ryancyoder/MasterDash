@@ -28,6 +28,12 @@ interface EstimateTileProps {
   lockedCount?: number;
   hasDepth: boolean;
   navigateOnly: boolean;
+  /**
+   * Set on a folder that is showing its contents beside it: the money its
+   * picks come to. Null on everything else, including a folder whose one pick
+   * it is wearing outright.
+   */
+  summarySell: number | null;
   showPrices: boolean;
   markupPercent: number;
   /**
@@ -50,6 +56,7 @@ export default function EstimateTile({
   lockedCount = 0,
   hasDepth,
   navigateOnly,
+  summarySell,
   showPrices,
   markupPercent,
   mode = "normal",
@@ -73,6 +80,13 @@ export default function EstimateTile({
   useEffect(() => () => clearTimer(), [clearTimer]);
 
   const selected = count > 0;
+  /**
+   * A folder showing its picks beside it is a subtotal, not a line. It takes a
+   * ring in its own colour but never the filled body a bought tile gets, so a
+   * lit row never looks like it is charging twice for the same day.
+   */
+  const summary = summarySell !== null;
+  const filled = selected && !summary;
   /** Only the hand-tapped part can be given back. */
   const canDecrement = count - lockedCount > 0;
 
@@ -158,7 +172,15 @@ export default function EstimateTile({
       onPointerUp={handleUp}
       onPointerCancel={handleCancel}
       onContextMenu={(e) => e.preventDefault()}
-      aria-label={ariaLabel(node, item, count, navigateOnly, lockedCount)}
+      aria-label={ariaLabel(
+        node,
+        item,
+        count,
+        hasDepth,
+        navigateOnly,
+        lockedCount,
+        summarySell,
+      )}
       aria-pressed={navigateOnly ? undefined : selected}
       aria-haspopup={hasDepth ? "menu" : undefined}
       className={`relative w-full aspect-square rounded-3xl flex flex-col overflow-hidden touch-none select-none transition-opacity ${
@@ -167,10 +189,12 @@ export default function EstimateTile({
         selected ? "opacity-100" : showImage ? "opacity-[0.62]" : "opacity-40"
       }`}
       style={{
-        background: selected && !showImage ? node.color : "var(--md-surface-2)",
-        boxShadow: selected
+        background: filled && !showImage ? node.color : "var(--md-surface-2)",
+        boxShadow: filled
           ? `0 0 0 4px ${node.color}${showImage ? "" : "55"}${depthShadow ? `, ${depthShadow}` : ""}`
-          : depthShadow,
+          : summary
+            ? `inset 0 0 0 2px ${node.color}, ${depthShadow}`
+            : depthShadow,
       }}
     >
       {showImage && (
@@ -190,7 +214,7 @@ export default function EstimateTile({
           <span className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-black/5" />
           {/* Selected tiles still carry their identity colour, which the photo
               would otherwise cover completely. */}
-          {selected && (
+          {filled && (
             <span
               className="absolute inset-0 mix-blend-overlay"
               style={{ background: node.color, opacity: 0.45 }}
@@ -199,7 +223,7 @@ export default function EstimateTile({
         </>
       )}
 
-      {!selected && !showImage && (
+      {!filled && !showImage && (
         <span
           className="absolute inset-x-0 top-0 h-1.5"
           style={{ background: node.color }}
@@ -222,7 +246,7 @@ export default function EstimateTile({
         className={`relative ${showImage ? "px-2.5 text-left" : "mt-2 px-2 text-center"} font-semibold leading-tight text-[clamp(0.7rem,1.35vw,0.95rem)] ${
           textOnPhoto
             ? "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
-            : selected
+            : filled
               ? "text-black/85"
               : "text-ink"
         }`}
@@ -234,12 +258,20 @@ export default function EstimateTile({
         className={`relative ${showImage ? "px-2.5 pb-2.5 text-left" : "mt-1 px-2 text-center"} text-[clamp(0.6rem,1.1vw,0.78rem)] font-medium tabular-nums ${
           textOnPhoto
             ? "text-white/85 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
-            : selected
+            : filled
               ? "text-black/65"
               : "text-muted"
         }`}
       >
-        {subLabel(node, item, count, navigateOnly, showPrices, markupPercent)}
+        {subLabel(
+          node,
+          item,
+          count,
+          navigateOnly,
+          showPrices,
+          markupPercent,
+          summarySell,
+        )}
       </span>
 
       {/* In edit mode the wiggle already says the tile is loose; the pencil
@@ -266,7 +298,7 @@ export default function EstimateTile({
       {lockedCount > 0 && mode !== "edit" && (
         <span
           className={`absolute bottom-2.5 left-2.5 text-[0.7rem] ${
-            textOnPhoto ? "" : selected ? "text-black/55" : "text-muted"
+            textOnPhoto ? "" : filled ? "text-black/55" : "text-muted"
           }`}
           aria-hidden="true"
         >
@@ -279,7 +311,7 @@ export default function EstimateTile({
       {item?.autoDelivery && (
         <span
           className={`absolute ${showImage ? "top-2.5 left-2.5" : "bottom-2.5 right-2.5"} text-[0.7rem] ${
-            textOnPhoto ? "" : selected ? "text-black/55" : "text-muted"
+            textOnPhoto ? "" : filled ? "text-black/55" : "text-muted"
           }`}
           aria-hidden="true"
         >
@@ -298,9 +330,17 @@ function subLabel(
   navigateOnly: boolean,
   showPrices: boolean,
   markupPercent: number,
+  summarySell: number | null,
 ): string {
   if (navigateOnly || !item) {
     if (node.page === "assemblies") return count > 0 ? `${count} selected` : "takeoff";
+    // A folder with its picks beside it says what they come to. Two machines
+    // on the grid want one number over them, not a second count of tiles.
+    if (summarySell !== null) {
+      return showPrices
+        ? `${count} selected · ${formatMoney(summarySell)}`
+        : `${count} selected`;
+    }
     return count > 0 ? `${count} selected` : `${node.children?.length ?? 0} items`;
   }
 
@@ -336,19 +376,23 @@ function subLabel(
   return money ? `${per} · ${money}` : per;
 }
 
-// A tile either holds something or opens something, never both, so there is
-// no third case here: anything with depth is a folder and takes the first
-// branch.
+// Three shapes, and the label has to say which: an empty folder that only
+// opens, a folder wearing its one pick — which buys that pick on a tap and
+// opens on a hold — and a plain leaf, where the hold is the undo.
 function ariaLabel(
   node: TileNode,
   item: CatalogItem | null,
   count: number,
+  hasDepth: boolean,
   navigateOnly: boolean,
-  lockedCount = 0,
+  lockedCount: number,
+  summarySell: number | null,
 ): string {
   if (navigateOnly || !item) {
-    return `${node.label}, ${count} selected, tap to open`;
+    const sub = summarySell !== null ? `, ${formatMoney(summarySell)}` : "";
+    return `${node.label}, ${count} selected${sub}, tap to open`;
   }
+  const depth = hasDepth ? ", long press to open the rest" : "";
   if (count > 0) {
     const qty = formatQuantity(quantityFor(item, count));
     const floor =
@@ -356,8 +400,8 @@ function ariaLabel(
         ? `, ${formatQuantity(lockedCount)} of them required by an assembly`
         : "";
     const undo =
-      count - lockedCount <= 0 ? "" : ". Long press to remove one.";
-    return `${node.label}, ${count} taps, ${qty} ${unitLabel(item.unit)}${floor}${undo}`;
+      hasDepth || count - lockedCount <= 0 ? "" : ". Long press to remove one.";
+    return `${node.label}, ${count} taps, ${qty} ${unitLabel(item.unit)}${floor}${depth}${undo}`;
   }
-  return `${node.label}, not selected. Tap adds ${formatQuantity(item.increment)} ${unitLabel(item.unit)}`;
+  return `${node.label}, not selected. Tap adds ${formatQuantity(item.increment)} ${unitLabel(item.unit)}${depth}`;
 }
