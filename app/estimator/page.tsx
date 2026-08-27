@@ -28,7 +28,11 @@ import { usePhotos } from "@/lib/estimator/usePhotos";
 import { useCatalogPhotos } from "@/lib/estimator/catalogPhotos";
 import { photoTarget } from "@/lib/estimator/photos";
 import TileOptionsSheet from "@/components/estimator/TileOptionsSheet";
-import { selectionKey, type TileNode } from "@/lib/estimator/types";
+import {
+  selectionKey,
+  type Reveal,
+  type TileNode,
+} from "@/lib/estimator/types";
 
 /**
  * The tile grid.
@@ -79,11 +83,12 @@ export default function EstimatorPage() {
    */
   const [expandedId, setExpandedId] = useState<string | null>(null);
   /**
-   * Folders whose picks have been folded back to the subtotal. Picks show by
-   * default — seeing what is on the job without pressing anything is most of
-   * what the grid is for — so this holds the exceptions, not the rule.
+   * Folders a tap has moved off the grid-wide setting: opened to their picks
+   * where the grid shows none, or closed where it shows them. Exceptions only,
+   * and dropped whenever the setting itself changes — a control that says
+   * "collapse all" has to mean all of them.
    */
-  const [foldedIds, setFoldedIds] = useState<Set<string>>(new Set());
+  const [flippedIds, setFlippedIds] = useState<Set<string>>(new Set());
   /** Selections made during this visit to this level. */
   const [visitTaps, setVisitTaps] = useState(0);
   const [lastTapAt, setLastTapAt] = useState(0);
@@ -214,14 +219,11 @@ export default function EstimatorPage() {
    */
   const openFolder = useCallback(
     (node: TileNode) => {
-      // Whatever gets picked in here should be on the grid when it closes, so
-      // opening a folder undoes any earlier decision to fold its picks away.
-      setFoldedIds((set) => {
-        if (!set.has(node.id)) return set;
-        const next = new Set(set);
-        next.delete(node.id);
-        return next;
-      });
+      // Opening a folder does not change where it rests. Whatever gets picked
+      // in here folds back under the subtotal when the run closes, and the
+      // control at the top is the one place that decides otherwise — a grid
+      // that quietly kept every folder it had ever been asked to open is the
+      // thing the control exists to prevent.
       if (canExpandInline(node)) {
         setExpandedId((open) => (open === node.id ? null : node.id));
         setVisitTaps(0);
@@ -251,7 +253,7 @@ export default function EstimatorPage() {
       openFolder(node);
       return;
     }
-    setFoldedIds((set) => {
+    setFlippedIds((set) => {
       const next = new Set(set);
       if (!next.delete(node.id)) next.add(node.id);
       return next;
@@ -366,13 +368,16 @@ export default function EstimatorPage() {
    * stays on the grid and only the untouched tiles fold away, because the
    * picks are the answer and the rest were the question.
    *
-   * One pick is the exception, and the reason folders exist at all. There is
-   * nothing to summarise and no sense in spending two tiles on it, so the
-   * folder wears that pick outright and nothing else comes out. Past one it
-   * goes back to being a folder with a subtotal on it, and the picks stand
-   * beside it as their own tiles — until a tap folds them back under that
-   * subtotal, which is the only thing a tap on a folder with picks in it can
-   * mean.
+   * How much comes out is the grid's own setting, not the folder's: collapsed,
+   * picks, or everything. A tap flips one folder off that setting and a long
+   * press opens one outright, but the resting state of the whole grid is one
+   * control at the top, so the grid does not slowly fill up with runs nobody
+   * asked to keep.
+   *
+   * One pick is always the exception. There is nothing to summarise and no
+   * sense in spending two tiles on it, so the folder wears that pick outright
+   * whatever the setting says — collapsing a folder should shorten the grid,
+   * never hide the only thing in it.
    *
    * Edit mode draws the level plainly. Arranging is about where the real tiles
    * live, and dragging a tile that is only on screen because of a tap would
@@ -393,21 +398,38 @@ export default function EstimatorPage() {
       const children = node.children ?? [];
       if (!children.length) return node;
 
+      // A long press opens one folder outright; otherwise the grid's setting
+      // decides, with a tap flipping this one folder off it.
+      const flipped = flippedIds.has(node.id);
+      const reveal =
+        node.id === expandedId
+          ? "all"
+          : settings.reveal === "none"
+            ? flipped
+              ? "picked"
+              : "none"
+            : flipped
+              ? "none"
+              : settings.reveal;
+
+      const picked = pickedChildren(node);
       // Open, a folder shows everything it holds and stays a folder: wearing
       // one child's face beside that same child is a tile drawn twice.
-      const open = node.id === expandedId;
-      const picked = pickedChildren(node);
+      //
       // Only a leaf is worn. A folder wearing another folder's face would be a
       // tile called Shrub that opens the plant categories, and there would be
       // no way back to the categories once it did — so a picked folder keeps
       // its own tile beside its parent instead.
       const worn =
-        !open && picked.length === 1 && !hasDepth(picked[0]) ? picked[0] : null;
-      const run = open
-        ? children
-        : worn || foldedIds.has(node.id)
-          ? []
-          : picked;
+        reveal !== "all" && picked.length === 1 && !hasDepth(picked[0])
+          ? picked[0]
+          : null;
+      const run =
+        reveal === "all"
+          ? children
+          : worn || reveal === "none"
+            ? []
+            : picked;
 
       if (run.length) {
         runs.set(node.id, run);
@@ -425,7 +447,7 @@ export default function EstimatorPage() {
       runChildColors: colors,
       summaryIds: summaries,
     };
-  }, [baseNodes, editing, expandedId, foldedIds, pickedChildren]);
+  }, [baseNodes, editing, expandedId, flippedIds, settings.reveal, pickedChildren]);
 
   /**
    * What a folder's contents come to, for the subtotal it wears while they are
@@ -444,9 +466,13 @@ export default function EstimatorPage() {
   const tapHintFor = (node: TileNode): string | null => {
     if (node.commit || !hasDepth(node)) return null;
     if (pickedChildren(node).length === 0) return "tap to open";
-    return foldedIds.has(node.id)
-      ? "tap to show its picks, long press to open all"
-      : "tap to fold its picks away, long press to open all";
+    const showing =
+      settings.reveal === "none"
+        ? flippedIds.has(node.id)
+        : !flippedIds.has(node.id);
+    return showing
+      ? "tap to fold its picks away, long press to open all"
+      : "tap to show its picks, long press to open all";
   };
 
   const summaryFor = (node: TileNode): number | null => {
@@ -455,6 +481,17 @@ export default function EstimatorPage() {
       (sum, id) => sum + (sellByItem.get(id) ?? 0),
       0,
     );
+  };
+
+  /** Whether this level has anything for the reveal control to act on. */
+  const hasFolders = levelNodes.some((n) => (n.children?.length ?? 0) > 0);
+
+  const setReveal = (reveal: Reveal) => {
+    // The exceptions go with it: a control that says collapse all has to mean
+    // all of them, including the ones a tap had opened.
+    setFlippedIds(new Set());
+    setExpandedId(null);
+    updateSettings({ reveal });
   };
 
   const saveOrder = (ids: string[]) =>
@@ -514,6 +551,34 @@ export default function EstimatorPage() {
             </button>
 
             <div className="flex items-center gap-2">
+              {/* One control for the whole grid, so folders have a resting
+                  state rather than each keeping whatever was last done to it. */}
+              {hasFolders && (
+                <span className="flex items-center rounded-full bg-surface2 p-0.5">
+                  {(
+                    [
+                      ["none", "Collapsed", "collapse every folder"],
+                      ["picked", "Picks", "show what is picked in every folder"],
+                      ["all", "All", "open every folder"],
+                    ] as [Reveal, string, string][]
+                  ).map(([value, label, hint]) => (
+                    <button
+                      key={value}
+                      onClick={() => setReveal(value)}
+                      aria-pressed={settings.reveal === value}
+                      aria-label={hint}
+                      className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                        settings.reveal === value
+                          ? "bg-accent text-black"
+                          : "text-muted"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </span>
+              )}
+
               {/* Every arrangeable level gets the button, not just home. Long
                   press on empty space works here too, but a gesture nothing
                   advertises is a gesture nobody finds. */}
@@ -559,6 +624,34 @@ export default function EstimatorPage() {
               ‹ MasterDash
             </Link>
             <div className="flex items-center gap-3">
+              {/* One control for the whole grid, so folders have a resting
+                  state rather than each keeping whatever was last done to it. */}
+              {hasFolders && (
+                <span className="flex items-center rounded-full bg-surface2 p-0.5">
+                  {(
+                    [
+                      ["none", "Collapsed", "collapse every folder"],
+                      ["picked", "Picks", "show what is picked in every folder"],
+                      ["all", "All", "open every folder"],
+                    ] as [Reveal, string, string][]
+                  ).map(([value, label, hint]) => (
+                    <button
+                      key={value}
+                      onClick={() => setReveal(value)}
+                      aria-pressed={settings.reveal === value}
+                      aria-label={hint}
+                      className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                        settings.reveal === value
+                          ? "bg-accent text-black"
+                          : "text-muted"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </span>
+              )}
+
               {/* The discoverable way in. Long-pressing empty space works on
                   any arrangeable level, but nothing on screen says so. */}
               {arrangeable && (

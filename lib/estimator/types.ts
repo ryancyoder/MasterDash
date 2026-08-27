@@ -117,7 +117,19 @@ export interface Estimate {
 
 export type FolderReturn = "auto" | "done";
 
+/**
+ * How much of what a folder holds is drawn on the grid beside it.
+ *
+ * "none" is the resting state: a folder is one tile carrying a subtotal, and
+ * the grid stays the same length however much is on the estimate. "picked"
+ * lays every folder's choices out to read the job back; "all" opens everything
+ * for a fast sweep across categories.
+ */
+export type Reveal = "none" | "picked" | "all";
+
 export interface EstimatorSettings {
+  /** The grid-wide setting of how far folders are opened. */
+  reveal: Reveal;
   folderReturn: FolderReturn;
   folderReturnDelayMs: number;
   autoDeliveryItemId: string;
@@ -136,6 +148,7 @@ export interface EstimatorSettings {
 }
 
 export const DEFAULT_ESTIMATOR_SETTINGS: EstimatorSettings = {
+  reveal: "none",
   folderReturn: "auto",
   folderReturnDelayMs: 3000,
   autoDeliveryItemId: "svc:delivery_supplier",
