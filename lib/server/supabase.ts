@@ -31,7 +31,11 @@ function firstPresent(names: string[]): { name: string; value: string } | null {
     // replaced at build time — these must resolve at runtime.
     const value = process.env[name];
     if (typeof value === "string" && value.trim()) {
-      return { name, value: value.trim() };
+      // Trailing slashes are trimmed because every use appends an absolute
+      // path. A pasted "https://ref.supabase.co/" would otherwise build
+      // "…co//storage/v1/…", which Supabase happens to tolerate but which
+      // varies a request's identity — and so its cache key — for no reason.
+      return { name, value: value.trim().replace(/\/+$/, "") };
     }
   }
   return null;
