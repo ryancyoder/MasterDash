@@ -383,16 +383,11 @@ export default function EstimatorPage() {
    * live, and dragging a tile that is only on screen because of a tap would
    * save an order that disappears the moment it is untapped.
    */
-  const { displayNodes, runChildColors, summaryIds } = useMemo(() => {
+  const { displayNodes, summaryIds } = useMemo(() => {
     if (editing) {
-      return {
-        displayNodes: baseNodes,
-        runChildColors: new Map<string, string>(),
-        summaryIds: new Set<string>(),
-      };
+      return { displayNodes: baseNodes, summaryIds: new Set<string>() };
     }
     const runs = new Map<string, TileNode[]>();
-    const colors = new Map<string, string>();
     const summaries = new Set<string>();
     const faced = baseNodes.map((node) => {
       const children = node.children ?? [];
@@ -433,7 +428,6 @@ export default function EstimatorPage() {
 
       if (run.length) {
         runs.set(node.id, run);
-        run.forEach((c) => colors.set(c.id, node.color));
       }
       // The subtotal is what a folder says instead of what it holds, so it
       // stands whether the contents are beside it, open below it, or folded
@@ -444,7 +438,6 @@ export default function EstimatorPage() {
     });
     return {
       displayNodes: spliceRuns(faced, runs),
-      runChildColors: colors,
       summaryIds: summaries,
     };
   }, [baseNodes, editing, expandedId, flippedIds, settings.reveal, pickedChildren]);
@@ -704,12 +697,6 @@ export default function EstimatorPage() {
             tapHintFor={tapHintFor}
             onTap={handleTap}
             onLongPress={handleLongPress}
-            inlineParentId={expandedId}
-            runChildColors={runChildColors}
-            inlineColor={
-              (expandedId && levelNodes.find((n) => n.id === expandedId)?.color) ||
-              null
-            }
             onReorder={saveOrder}
             onOpenOptions={setOptionsNode}
             onEnterEdit={enterEditing}

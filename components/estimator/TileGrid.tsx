@@ -38,12 +38,6 @@ interface TileGridProps {
   photos: Record<string, string>;
   /** Catalog photos read live from Supabase, keyed `entityType:entityId`. */
   catalogPhotos: Record<string, string>;
-  /** The tile currently unfolded, drawn as the head of the run. */
-  inlineParentId: string | null;
-  /** Every tile shown as part of a run, mapped to its parent's colour. */
-  runChildColors: Map<string, string>;
-  /** The unfolded parent's colour, which ties its run together. */
-  inlineColor: string | null;
   settings: EstimatorSettings;
   countFor: (node: TileNode) => number;
   /** How much of a tile's count an assembly already committed. */
@@ -81,9 +75,6 @@ export default function TileGrid({
   arrangeable,
   photos,
   catalogPhotos,
-  inlineParentId,
-  runChildColors,
-  inlineColor,
   settings,
   countFor,
   lockedFor,
@@ -279,18 +270,6 @@ export default function TileGrid({
     }, LONG_PRESS_MS);
   };
 
-  /**
-   * The halo that ties a run to the tile it came out of. The unfolded parent
-   * wears a solid ring and every tile in a run a faint one, so a run that
-   * wraps onto the next row — or one left standing after it closed — still
-   * reads as belonging somewhere rather than as a stray top-level tile.
-   */
-  const runOutline = (id: string): string | null => {
-    if (id === inlineParentId && inlineColor) return `2px solid ${inlineColor}`;
-    const color = runChildColors.get(id);
-    return color ? `2px solid ${color}44` : null;
-  };
-
   return (
     <div
       ref={gridRef}
@@ -331,19 +310,7 @@ export default function TileGrid({
                 : undefined
             }
             style={
-              runOutline(node.id) && !dragging
-                ? {
-                    // The run reads as one thing: a halo in the parent's
-                    // colour rather than a box that would fight the tiles.
-                    // The parent's is solid and the children's is faint, so
-                    // the eye finds the tile the run came out of even when it
-                    // wraps onto the next row.
-                    outline: runOutline(node.id)!,
-                    outlineOffset: "3px",
-                    borderRadius: "1.5rem",
-                    touchAction: editing ? "none" : undefined,
-                  }
-                : dragging
+              dragging
                 ? {
                     transform: `translate(${dragShift.x}px, ${dragShift.y}px) scale(1.08)`,
                     zIndex: 40,

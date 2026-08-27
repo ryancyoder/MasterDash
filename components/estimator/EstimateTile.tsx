@@ -82,14 +82,18 @@ export default function EstimateTile({
 
   useEffect(() => () => clearTimer(), [clearTimer]);
 
-  const selected = count > 0;
   /**
-   * A folder showing its picks beside it is a subtotal, not a line. It takes a
-   * ring in its own colour but never the filled body a bought tile gets, so a
-   * lit row never looks like it is charging twice for the same day.
+   * Saturation is the whole state language.
+   *
+   * What is on the job is in colour and what is not has been drained of it —
+   * one property, doing one job, on the part of the tile that was already the
+   * most interesting thing about it. Every tile keeps the same body and the
+   * same brightness, so the grid reads as one surface rather than a
+   * checkerboard of lit and unlit panels, and a photographed cultivar is as
+   * legible unselected as it is picked.
    */
-  const summary = summarySell !== null;
-  const filled = selected && !summary;
+  const selected = count > 0;
+  const drained = selected ? undefined : "grayscale(1)";
   /** Only the hand-tapped part can be given back. */
   const canDecrement = count - lockedCount > 0;
 
@@ -103,6 +107,11 @@ export default function EstimateTile({
   const depthShadow = hasDepth
     ? "0 10px 18px -6px rgba(0,0,0,0.85), 0 2px 5px rgba(0,0,0,0.6)"
     : undefined;
+
+  // A hairline, in light rather than in the tile's own colour. Enough to lift
+  // a chosen tile off the grid and to tie a run to what it came out of; not
+  // enough to be a border anyone would call a border.
+  const hairline = selected ? "inset 0 0 0 1px rgba(255,255,255,0.16)" : null;
 
   const handleDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (mode === "edit") return;
@@ -187,18 +196,13 @@ export default function EstimateTile({
       )}
       aria-pressed={navigateOnly ? undefined : selected}
       aria-haspopup={hasDepth ? "menu" : undefined}
-      className={`relative w-full aspect-square rounded-3xl flex flex-col overflow-hidden touch-none select-none transition-opacity ${
+      className={`relative w-full aspect-square rounded-3xl flex flex-col overflow-hidden touch-none select-none ${
         flash ? "md-tapped" : ""
-      } ${showImage ? "justify-end" : "items-center justify-center"} ${
-        selected ? "opacity-100" : showImage ? "opacity-[0.62]" : "opacity-40"
-      }`}
+      } ${showImage ? "justify-end" : "items-center justify-center"}`}
       style={{
-        background: filled && !showImage ? node.color : "var(--md-surface-2)",
-        boxShadow: filled
-          ? `0 0 0 4px ${node.color}${showImage ? "" : "55"}${depthShadow ? `, ${depthShadow}` : ""}`
-          : summary
-            ? `inset 0 0 0 2px ${node.color}, ${depthShadow}`
-            : depthShadow,
+        background: "var(--md-surface-2)",
+        boxShadow:
+          [hairline, depthShadow].filter(Boolean).join(", ") || undefined,
       }}
     >
       {showImage && (
@@ -211,37 +215,20 @@ export default function EstimateTile({
             draggable={false}
             loading="lazy"
             onError={() => setImgBroken(true)}
-            className="absolute inset-0 w-full h-full object-cover"
+            className="absolute inset-0 w-full h-full object-cover transition-[filter] duration-300"
+            style={{ filter: drained }}
           />
           {/* A scrim, not a dimmer: the label has to stay readable in direct
               sun over whatever the photo happens to be. */}
           <span className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-black/5" />
-          {/* Selected tiles still carry their identity colour, which the photo
-              would otherwise cover completely. */}
-          {filled && (
-            <span
-              className="absolute inset-0 mix-blend-overlay"
-              style={{ background: node.color, opacity: 0.45 }}
-            />
-          )}
         </>
       )}
 
-      {!filled && !showImage && (
-        <span
-          className="absolute inset-x-0 top-0 h-1.5"
-          style={{ background: node.color }}
-        />
-      )}
-      {showImage && (
-        <span
-          className="absolute inset-x-0 top-0 h-1.5"
-          style={{ background: node.color }}
-        />
-      )}
-
       {!showImage && (
-        <span className="text-[clamp(1.75rem,4.5vw,3rem)] leading-none">
+        <span
+          className="text-[clamp(1.75rem,4.5vw,3rem)] leading-none transition-[filter] duration-300"
+          style={{ filter: drained }}
+        >
           {node.glyph}
         </span>
       )}
@@ -250,9 +237,7 @@ export default function EstimateTile({
         className={`relative ${showImage ? "px-2.5 text-left" : "mt-2 px-2 text-center"} font-semibold leading-tight text-[clamp(0.7rem,1.35vw,0.95rem)] ${
           textOnPhoto
             ? "text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
-            : filled
-              ? "text-black/85"
-              : "text-ink"
+            : "text-ink"
         }`}
       >
         {node.label}
@@ -262,9 +247,7 @@ export default function EstimateTile({
         className={`relative ${showImage ? "px-2.5 pb-2.5 text-left" : "mt-1 px-2 text-center"} text-[clamp(0.6rem,1.1vw,0.78rem)] font-medium tabular-nums ${
           textOnPhoto
             ? "text-white/85 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
-            : filled
-              ? "text-black/65"
-              : "text-muted"
+            : "text-muted"
         }`}
       >
         {subLabel(
@@ -292,7 +275,7 @@ export default function EstimateTile({
       {/* Counts survive the hide-prices toggle: the grid's checklist job
           depends on them, so only money is ever hidden. */}
       {showBadge && (
-        <span className="absolute top-2.5 right-2.5 min-w-[1.6rem] px-1.5 py-0.5 rounded-full bg-[#ef4444] text-white text-[clamp(0.65rem,1.2vw,0.85rem)] font-bold tabular-nums text-center">
+        <span className="absolute top-2.5 right-2.5 min-w-[1.6rem] px-1.5 py-0.5 rounded-full bg-white text-black text-[clamp(0.65rem,1.2vw,0.85rem)] font-bold tabular-nums text-center shadow-[0_1px_4px_rgba(0,0,0,0.6)]">
           {count}
         </span>
       )}
@@ -302,8 +285,9 @@ export default function EstimateTile({
       {lockedCount > 0 && mode !== "edit" && (
         <span
           className={`absolute bottom-2.5 left-2.5 text-[0.7rem] ${
-            textOnPhoto ? "" : filled ? "text-black/55" : "text-muted"
+            textOnPhoto ? "" : "text-muted"
           }`}
+          style={{ filter: "grayscale(1)", opacity: 0.75 }}
           aria-hidden="true"
         >
           📐
@@ -315,8 +299,9 @@ export default function EstimateTile({
       {item?.autoDelivery && (
         <span
           className={`absolute ${showImage ? "top-2.5 left-2.5" : "bottom-2.5 right-2.5"} text-[0.7rem] ${
-            textOnPhoto ? "" : filled ? "text-black/55" : "text-muted"
+            textOnPhoto ? "" : "text-muted"
           }`}
+          style={{ filter: "grayscale(1)", opacity: 0.75 }}
           aria-hidden="true"
         >
           🚚
