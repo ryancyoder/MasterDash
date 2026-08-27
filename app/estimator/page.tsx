@@ -21,7 +21,6 @@ import {
   isNavigateOnly,
   spliceRuns,
   subtreeItemIds,
-  wearChild,
 } from "@/lib/estimator/tree";
 import { useEstimate } from "@/lib/estimator/useEstimate";
 import { usePhotos } from "@/lib/estimator/usePhotos";
@@ -38,11 +37,12 @@ import { selectionKey, type TileNode } from "@/lib/estimator/types";
  * driving the estimate, and the job of this screen is to get the work on the
  * page fast.
  *
- * Two gestures do everything, at every level: TAP commits a sensible default,
- * LONG PRESS refines. Because every level commits something, stopping early is
- * always safe and drilling down is never required.
+ * Every tile is one of two things. A leaf buys one increment on TAP and gives
+ * it back on LONG PRESS. A folder opens, holds nothing, and cannot be bought
+ * by accident — its generic is a tile inside it, so stopping early is still
+ * one tap and still safe.
  *
- * The grid is also a checklist. Tiles stay dim until tapped and parents roll up
+ * The grid is also a checklist. Tiles stay dim until tapped and folders roll up
  * what is inside them, so a category still dim reads as a question nobody
  * answered — a proposal with no labour or no equipment is visible at a glance.
  */
@@ -197,34 +197,43 @@ export default function EstimatorPage() {
     [exitEditing],
   );
 
-  /** TAP: commit, or open when the tile only navigates. */
+  /**
+   * Open a folder: unfold it where it stands if it is small enough, otherwise
+   * give it the screen. Small groups unfold so the rest of the grid stays
+   * readable — you can see what is still dim while picking a machine.
+   */
+  const openFolder = useCallback(
+    (node: TileNode) => {
+      if (canExpandInline(node)) {
+        setExpandedId((open) => (open === node.id ? null : node.id));
+        setVisitTaps(0);
+        return;
+      }
+      drillInto(node);
+    },
+    [drillInto],
+  );
+
+  /** TAP: buy one, or open the folder. */
   const handleTap = (node: TileNode) => {
     if (node.commit) {
       tap(node.commit);
       registerActivity();
       return;
     }
-    drillInto(node);
+    openFolder(node);
   };
 
   /**
-   * LONG PRESS: refine.
+   * LONG PRESS: take one back.
    *
-   * Where there is nothing to refine there is also nothing for the gesture to
-   * mean, so a depthless tile spends it backing off one increment instead —
-   * the only way to fix a mis-tap without leaving the grid. The drop shadow
-   * tells the two apart before you press.
+   * A folder holds nothing to take back, so both gestures open it. That is the
+   * point of folders holding nothing: there is no second meaning to guess at,
+   * and no way to buy something by pressing a category.
    */
   const handleLongPress = (node: TileNode) => {
-    // Small groups unfold where they are, so the rest of the grid stays
-    // readable — you can see what is still dim while picking a machine.
-    if (canExpandInline(node)) {
-      setExpandedId((open) => (open === node.id ? null : node.id));
-      setVisitTaps(0);
-      return;
-    }
     if (hasDepth(node)) {
-      drillInto(node);
+      openFolder(node);
       return;
     }
     if (node.commit) {
@@ -283,7 +292,18 @@ export default function EstimatorPage() {
     if (current.childSource) {
       if (!plants) return [];
       const parent = getItem(current.childSource.itemId);
-      return plantsInGroup(plants, current.childSource.group).map((p) => ({
+      // The category's own generic. It used to live on the tile you pressed to
+      // get here; now that folders hold nothing, it is the first tile on the
+      // list — still one tap, and no longer hidden inside a gesture.
+      const generic: TileNode = {
+        id: `${current.id}::generic`,
+        label: `Any ${current.label}`,
+        glyph: parent?.glyph ?? "🌿",
+        color: parent?.color ?? "#22c55e",
+        image: parent?.image,
+        commit: { itemId: current.childSource.itemId },
+      };
+      const named = plantsInGroup(plants, current.childSource.group).map((p) => ({
         id: `${current.childSource!.itemId}::plant:${p.id}`,
         label: p.name,
         glyph: parent?.glyph ?? "🌿",
@@ -295,6 +315,7 @@ export default function EstimatorPage() {
           variantLabel: p.name,
         },
       }));
+      return [generic, ...named];
     }
     return current.children ?? [];
   }, [current, plants]);
@@ -306,13 +327,17 @@ export default function EstimatorPage() {
     [levelNodes, settings.tileOrder, key],
   );
 
-  /** Children of a tile that carry taps of their own. */
+  /**
+   * Children of a tile that carry taps. Counted by rollup rather than by the
+   * child's own key, so a category whose taps are all named plants — three
+   * 'Green Velvet' boxwood and no plain shrub — still reads as picked.
+   */
   const pickedChildren = useCallback(
     (node: TileNode): TileNode[] =>
       (node.children ?? []).filter(
-        (c) => c.commit && (estimate.taps[selectionKey(c.commit)] ?? 0) > 0,
+        (c) => rollupCount(estimate, subtreeItemIds(c)) > 0,
       ),
-    [estimate.taps],
+    [estimate],
   );
 
   /**
@@ -320,12 +345,8 @@ export default function EstimatorPage() {
    *
    * A run does not simply vanish when it closes. Whatever was picked out of it
    * stays on the grid and only the untouched tiles fold away, because the
-   * picks are the answer and the rest were the question. One pick goes further
-   * still: the placeholder becomes it outright, since a generic tile only ever
-   * meant "something from in here" and now there is a specific something.
-   *
-   * Two or more picks cannot be worn by one tile, so they stay out as tiles of
-   * their own and the placeholder goes back to being generic.
+   * picks are the answer and the rest were the question. Two machines on the
+   * job are two tiles on the job.
    *
    * Edit mode draws the level plainly. Arranging is about where the real tiles
    * live, and dragging a tile that is only on screen because of a tap would
@@ -342,46 +363,23 @@ export default function EstimatorPage() {
     const runs = new Map<string, TileNode[]>();
     const colors = new Map<string, string>();
     const shown = new Map<string, Set<string>>();
-    const faced = baseNodes.map((node) => {
+    for (const node of baseNodes) {
       const children = node.children ?? [];
-      if (!children.length) return node;
-
-      // While a run is open it shows everything, so the parent stays generic:
-      // wearing one child's face beside that same child is a tile drawn twice.
-      const open = node.id === expandedId;
-      const picked = pickedChildren(node);
-
-      // A generic tap of the parent's own is a real line on the proposal, so
-      // the placeholder still has something to stand for and keeps its face.
-      // Crew is the exception the check is written for: its tile commits the
-      // same item as one of its children, so a tap there IS the pick.
-      const ownKey = node.commit ? selectionKey(node.commit) : null;
-      const ownIsChild =
-        ownKey !== null &&
-        children.some((c) => c.commit && selectionKey(c.commit) === ownKey);
-      const genericTaps =
-        ownKey && !ownIsChild ? (estimate.taps[ownKey] ?? 0) : 0;
-
-      const worn =
-        !open && picked.length === 1 && genericTaps === 0 ? picked[0] : null;
-
-      const run = open ? children : picked.filter((c) => c.id !== worn?.id);
-      if (run.length) {
-        runs.set(node.id, run);
-        run.forEach((c) => colors.set(c.id, node.color));
-        shown.set(
-          node.id,
-          new Set(run.flatMap((c) => subtreeItemIds(c))),
-        );
-      }
-      return worn ? wearChild(node, worn) : node;
-    });
+      if (!children.length) continue;
+      // Open, a folder shows everything it holds; closed, only what was taken
+      // out of it.
+      const run = node.id === expandedId ? children : pickedChildren(node);
+      if (!run.length) continue;
+      runs.set(node.id, run);
+      run.forEach((c) => colors.set(c.id, node.color));
+      shown.set(node.id, new Set(run.flatMap((c) => subtreeItemIds(c))));
+    }
     return {
-      displayNodes: spliceRuns(faced, runs),
+      displayNodes: spliceRuns(baseNodes, runs),
       runChildColors: colors,
       runItemIds: shown,
     };
-  }, [baseNodes, editing, expandedId, pickedChildren, estimate.taps]);
+  }, [baseNodes, editing, expandedId, pickedChildren]);
 
   const saveOrder = (ids: string[]) =>
     updateSettings({ tileOrder: { ...settings.tileOrder, [key]: ids } });
@@ -393,8 +391,6 @@ export default function EstimatorPage() {
   };
 
   const onAssembliesPage = current?.page === "assemblies";
-  const parentKey = current?.commit ? selectionKey(current.commit) : null;
-  const parentTaps = parentKey ? (estimate.taps[parentKey] ?? 0) : 0;
 
   return (
     <main className="md-safe relative h-dvh w-full flex flex-col bg-bg overflow-hidden">
@@ -451,17 +447,6 @@ export default function EstimatorPage() {
                   className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
                 >
                   Edit
-                </button>
-              )}
-
-              {/* A refinable parent keeps its undo here, since its own long
-                  press is spent opening this level. */}
-              {parentTaps > 0 && (
-                <button
-                  onClick={() => parentKey && untap(parentKey)}
-                  className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
-                >
-                  − {current.label} ({parentTaps})
                 </button>
               )}
 

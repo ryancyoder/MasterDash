@@ -158,7 +158,7 @@ export default function EstimateTile({
       onPointerUp={handleUp}
       onPointerCancel={handleCancel}
       onContextMenu={(e) => e.preventDefault()}
-      aria-label={ariaLabel(node, item, count, hasDepth, navigateOnly, lockedCount)}
+      aria-label={ariaLabel(node, item, count, navigateOnly, lockedCount)}
       aria-pressed={navigateOnly ? undefined : selected}
       aria-haspopup={hasDepth ? "menu" : undefined}
       className={`relative w-full aspect-square rounded-3xl flex flex-col overflow-hidden touch-none select-none transition-opacity ${
@@ -336,15 +336,16 @@ function subLabel(
   return money ? `${per} · ${money}` : per;
 }
 
+// A tile either holds something or opens something, never both, so there is
+// no third case here: anything with depth is a folder and takes the first
+// branch.
 function ariaLabel(
   node: TileNode,
   item: CatalogItem | null,
   count: number,
-  hasDepth: boolean,
   navigateOnly: boolean,
   lockedCount = 0,
 ): string {
-  const depth = hasDepth ? ", long press to refine" : "";
   if (navigateOnly || !item) {
     return `${node.label}, ${count} selected, tap to open`;
   }
@@ -355,10 +356,8 @@ function ariaLabel(
         ? `, ${formatQuantity(lockedCount)} of them required by an assembly`
         : "";
     const undo =
-      hasDepth || count - lockedCount <= 0
-        ? ""
-        : ". Long press to remove one.";
-    return `${node.label}, ${count} taps, ${qty} ${unitLabel(item.unit)}${floor}${depth}${undo}`;
+      count - lockedCount <= 0 ? "" : ". Long press to remove one.";
+    return `${node.label}, ${count} taps, ${qty} ${unitLabel(item.unit)}${floor}${undo}`;
   }
-  return `${node.label}, not selected. Tap adds ${formatQuantity(item.increment)} ${unitLabel(item.unit)}${depth}`;
+  return `${node.label}, not selected. Tap adds ${formatQuantity(item.increment)} ${unitLabel(item.unit)}`;
 }
