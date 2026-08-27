@@ -8,12 +8,20 @@ import { formatMoneyShort, getItem } from "@/lib/estimator/catalog";
 import { loadPlants, plantsInGroup, type PlantRow } from "@/lib/estimator/plants";
 import {
   assemblyCount,
+  assemblyIncrements,
   buildProposal,
   rollupCount,
 } from "@/lib/estimator/proposal";
 import { tap, untap, updateSettings } from "@/lib/estimator/store";
 import { applyOrder, isArrangeable, levelKey } from "@/lib/estimator/tileOrder";
-import { HOME_TILES, hasDepth, isNavigateOnly, subtreeItemIds } from "@/lib/estimator/tree";
+import {
+  HOME_TILES,
+  canExpandInline,
+  hasDepth,
+  isNavigateOnly,
+  subtreeItemIds,
+  withExpansion,
+} from "@/lib/estimator/tree";
 import { useEstimate } from "@/lib/estimator/useEstimate";
 import { usePhotos } from "@/lib/estimator/usePhotos";
 import { useCatalogPhotos } from "@/lib/estimator/catalogPhotos";
@@ -60,6 +68,11 @@ export default function EstimatorPage() {
   const [stack, setStack] = useState<TileNode[]>([]);
   const [openAssembly, setOpenAssembly] = useState<string | null>(null);
   const [plants, setPlants] = useState<PlantRow[] | null>(null);
+  /**
+   * The tile currently unfolded in place. Only one at a time — two open runs
+   * and the grid stops reading as a single list.
+   */
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   /** Selections made during this visit to this level. */
   const [visitTaps, setVisitTaps] = useState(0);
   const [lastTapAt, setLastTapAt] = useState(0);
@@ -78,6 +91,16 @@ export default function EstimatorPage() {
     [estimate, settings],
   );
 
+  /**
+   * What the assemblies already commit, per item. Bulk tiles add this to their
+   * own taps so the grid shows what the job actually needs, and it is the
+   * floor those tiles cannot be taken below.
+   */
+  const derived = useMemo(
+    () => assemblyIncrements(estimate),
+    [estimate],
+  );
+
   // Only fetched once someone actually drills to a plant level.
   useEffect(() => {
     if (current?.childSource && !plants) {
@@ -89,6 +112,11 @@ export default function EstimatorPage() {
     }
   }, [current, plants]);
 
+  const collapse = useCallback(() => {
+    setExpandedId(null);
+    setVisitTaps(0);
+  }, []);
+
   const exitEditing = useCallback(() => {
     setEditing(false);
     setOptionsNode(null);
@@ -98,6 +126,7 @@ export default function EstimatorPage() {
     setStack([]);
     setOpenAssembly(null);
     setVisitTaps(0);
+    setExpandedId(null);
     exitEditing();
   }, [exitEditing]);
 
@@ -108,6 +137,7 @@ export default function EstimatorPage() {
     }
     setStack((s) => s.slice(0, -1));
     setVisitTaps(0);
+    setExpandedId(null);
     exitEditing();
   }, [openAssembly, exitEditing]);
 
@@ -120,6 +150,23 @@ export default function EstimatorPage() {
     visitTaps > 0 &&
     !editing;
 
+  /**
+   * An unfolded run closes on the same pause a page does, and for the same
+   * reason: the timer only starts once something has been picked, so opening a
+   * tile to look never snaps shut mid-thought.
+   */
+  const autoCollapse =
+    expandedId !== null &&
+    settings.folderReturn === "auto" &&
+    visitTaps > 0 &&
+    !editing;
+
+  useEffect(() => {
+    if (!autoCollapse) return;
+    const id = window.setTimeout(collapse, settings.folderReturnDelayMs);
+    return () => window.clearTimeout(id);
+  }, [autoCollapse, lastTapAt, settings.folderReturnDelayMs, collapse]);
+
   useEffect(() => {
     if (!autoBackout) return;
     const id = window.setTimeout(goHome, settings.folderReturnDelayMs);
@@ -127,15 +174,16 @@ export default function EstimatorPage() {
   }, [autoBackout, lastTapAt, settings.folderReturnDelayMs, goHome]);
 
   const registerActivity = useCallback(() => {
-    if (stack.length === 0) return;
+    if (stack.length === 0 && expandedId === null) return;
     setVisitTaps((n) => n + 1);
     setLastTapAt(Date.now());
-  }, [stack.length]);
+  }, [stack.length, expandedId]);
 
   const drillInto = useCallback(
     (node: TileNode) => {
       setStack((s) => [...s, node]);
       setVisitTaps(0);
+      setExpandedId(null);
       exitEditing();
     },
     [exitEditing],
@@ -160,20 +208,49 @@ export default function EstimatorPage() {
    * tells the two apart before you press.
    */
   const handleLongPress = (node: TileNode) => {
+    // Small groups unfold where they are, so the rest of the grid stays
+    // readable — you can see what is still dim while picking a machine.
+    if (canExpandInline(node)) {
+      setExpandedId((open) => (open === node.id ? null : node.id));
+      setVisitTaps(0);
+      return;
+    }
     if (hasDepth(node)) {
       drillInto(node);
       return;
     }
     if (node.commit) {
+      // The assembly's share is not the tile's to give back. Backing it off
+      // here would disagree with the takeoff rather than change it — the
+      // assembly is edited on its own tile.
+      if ((estimate.taps[selectionKey(node.commit)] ?? 0) === 0) return;
       untap(selectionKey(node.commit));
       registerActivity();
     }
   };
 
+  /** Assembly-derived loads at or below a node. */
+  const lockedFor = (node: TileNode): number => {
+    if (node.page === "assemblies") return 0;
+    if (hasDepth(node)) {
+      return subtreeItemIds(node).reduce((sum, id) => sum + (derived[id] ?? 0), 0);
+    }
+    // A refined tap — a named plant, say — is never something an assembly
+    // produced, so only the generic tile carries a floor.
+    if (!node.commit || node.commit.variantId) return 0;
+    return derived[node.commit.itemId] ?? 0;
+  };
+
   const countFor = (node: TileNode): number => {
     if (node.page === "assemblies") return assemblyCount(estimate);
-    if (hasDepth(node)) return rollupCount(estimate, subtreeItemIds(node));
-    return node.commit ? (estimate.taps[selectionKey(node.commit)] ?? 0) : 0;
+    const locked = lockedFor(node);
+    if (hasDepth(node)) {
+      return rollupCount(estimate, subtreeItemIds(node)) + locked;
+    }
+    const tapped = node.commit
+      ? (estimate.taps[selectionKey(node.commit)] ?? 0)
+      : 0;
+    return tapped + locked;
   };
 
   // What this level shows.
@@ -201,8 +278,17 @@ export default function EstimatorPage() {
   const key = levelKey(current);
   const arrangeable = isArrangeable(current);
   const orderedNodes = useMemo(
-    () => applyOrder(levelNodes, settings.tileOrder[key]),
-    [levelNodes, settings.tileOrder, key],
+    () => withExpansion(applyOrder(levelNodes, settings.tileOrder[key]), expandedId),
+    [levelNodes, settings.tileOrder, key, expandedId],
+  );
+
+  /** Which tiles belong to the unfolded run, and the colour that groups them. */
+  const expandedNode = expandedId
+    ? levelNodes.find((n) => n.id === expandedId)
+    : undefined;
+  const inlineChildIds = useMemo(
+    () => new Set((expandedNode?.children ?? []).map((c) => c.id)),
+    [expandedNode],
   );
 
   const saveOrder = (ids: string[]) =>
@@ -223,12 +309,21 @@ export default function EstimatorPage() {
       <header className="shrink-0 flex items-center justify-between gap-3 px-4 pt-3 pb-1 h-11">
         {editing ? (
           <>
-            <span className="text-sm font-semibold text-ink">
-              Editing
-              <span className="ml-2 font-medium text-muted">
-                drag to reorder · tap a tile for its options
+            {/* Inside a level the back arrow stays reachable, so leaving is
+                one press rather than Done and then back. */}
+            <button
+              onClick={current ? goBack : undefined}
+              className="flex items-center gap-2 text-sm font-semibold text-ink min-w-0"
+            >
+              {current && <span aria-hidden="true">‹</span>}
+              <span className="truncate">
+                Editing
+                {current && ` · ${current.label}`}
+                <span className="ml-2 font-medium text-muted">
+                  drag to reorder · tap a tile for its options
+                </span>
               </span>
-            </span>
+            </button>
             <div className="flex items-center gap-2">
               <button
                 onClick={resetOrder}
@@ -255,6 +350,18 @@ export default function EstimatorPage() {
             </button>
 
             <div className="flex items-center gap-2">
+              {/* Every arrangeable level gets the button, not just home. Long
+                  press on empty space works here too, but a gesture nothing
+                  advertises is a gesture nobody finds. */}
+              {arrangeable && (
+                <button
+                  onClick={() => setEditing(true)}
+                  className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
+                >
+                  Edit
+                </button>
+              )}
+
               {/* A refinable parent keeps its undo here, since its own long
                   press is spent opening this level. */}
               {parentTaps > 0 && (
@@ -341,6 +448,7 @@ export default function EstimatorPage() {
             catalogPhotos={catalogPhotos}
             settings={settings}
             countFor={countFor}
+            lockedFor={lockedFor}
             itemFor={(node) =>
               node.commit ? (getItem(node.commit.itemId) ?? null) : null
             }
@@ -348,6 +456,9 @@ export default function EstimatorPage() {
             navigateOnlyOf={isNavigateOnly}
             onTap={handleTap}
             onLongPress={handleLongPress}
+            inlineParentId={expandedId}
+            inlineChildIds={inlineChildIds}
+            inlineColor={expandedNode?.color ?? null}
             onReorder={saveOrder}
             onOpenOptions={setOptionsNode}
             onEnterEdit={() => setEditing(true)}

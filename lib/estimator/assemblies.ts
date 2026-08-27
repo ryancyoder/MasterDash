@@ -145,16 +145,8 @@ export function takeoff(model: AssemblyModel, buckets: number): TakeoffLine[] {
   });
 }
 
-export function bucketLabel(model: AssemblyModel, bucket: number): string {
-  if (!model.bucketSize) return "";
-  const lo = (bucket - 1) * model.bucketSize;
-  const hi = bucket * model.bucketSize;
-  return `${lo.toLocaleString()}–${hi.toLocaleString()}`;
-}
 
 export function unitOfWorkLabel(unit: string): string {
   return { sq_ft: "sq ft", ln_ft: "ln ft", ton: "ton" }[unit] ?? unit;
 }
 
-/** How many buckets to offer. Eight covers the jobs Ryan quotes on site. */
-export const BUCKET_COUNT = 8;

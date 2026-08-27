@@ -160,7 +160,9 @@ two things.
 
 Getting in is the one place this cannot copy iOS: long-pressing a tile already
 means *refine*, and taking that gesture would cost the drill-downs. So edit
-mode is entered by **long-pressing empty space**, or from the **Edit** button.
+mode is entered by **long-pressing empty space**, or from the **Edit** button —
+which sits on every arrangeable level, not just the home screen, so Drainage
+and Equipment can be reordered where you are rather than only from the top.
 
 **Order** is saved per level and survives a reload. It is stored as a list of
 tile ids, so a tile added by a later catalog sync joins the end of the grid
@@ -235,9 +237,13 @@ checklist work.
 ### Assemblies: a bucket is a load
 
 The Assemblies tile opens a takeoff path that coexists with plain tapping —
-Ryan often eyeballs the loads himself. Picking "520–1,040 sq ft" looks like
-picking an area, but **each bucket is exactly one more load of the material that
-runs out first**, computed from the coverage rates already in Supabase:
+Ryan often eyeballs the loads himself. An assembly tile behaves like every
+other tile: **a tap adds one load**, and the tile shows what has accumulated
+("1,560 sq ft · 3 loads"). A long press opens the itemised takeoff and the
+machines the catalog says the work needs.
+
+Each load is one more load of the material that runs out first, computed from
+the coverage rates already in Supabase:
 
 ```
 divide   (area / rate):    work per load = units_per_load × coverage_rate
@@ -249,6 +255,14 @@ patios in 100, French drains in 166 ln ft. The driving material is named on
 screen so the step size is checkable rather than magic, and the size is
 *floored* — the French drain's true step is 166.67 ln ft, and rounding up tips
 it past 5 tons and silently buys a second load.
+
+**The bulk tiles follow the assemblies.** Run three mulch-bed assemblies and
+the Mulch tile reads 24 cy with a badge of 3 and a 📐 marking where it came
+from — the grid shows what the job needs, not just what was tapped by hand.
+Extra one-off loads go on top with a tap, and a long press gives those back,
+but the assembly's share is a floor: it cannot be taken off the tile, because
+doing so would disagree with the takeoff rather than change it. Edit the
+assembly instead.
 
 Both paths land in the same lines: tapping four loads of mulch and running a
 1,040 sq ft mulch-bed assembly produce one Mulch line, not two, with the

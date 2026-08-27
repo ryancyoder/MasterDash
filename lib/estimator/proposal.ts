@@ -200,6 +200,31 @@ export function rollupCount(estimate: Estimate, itemIds: string[]): number {
   return total;
 }
 
+/**
+ * Loads each assembly already commits, per catalog item.
+ *
+ * Expressed in tap increments rather than raw units, so a tile can add them to
+ * its own taps and show one honest number: three loads of mulch from a bed
+ * assembly plus one tapped by hand is a tile reading four.
+ *
+ * This is also the floor a tile cannot be taken below — the assembly needs
+ * that material, and backing it off on the tile would silently disagree with
+ * the takeoff rather than change it.
+ */
+export function assemblyIncrements(estimate: Estimate): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [assemblyId, buckets] of Object.entries(estimate.assemblyBuckets)) {
+    if (buckets <= 0) continue;
+    const model = getAssembly(assemblyId);
+    if (!model?.bucketSize) continue;
+    for (const line of takeoff(model, buckets)) {
+      const increments = line.quantity / (line.item.increment || 1);
+      out[line.item.id] = Math.round(((out[line.item.id] ?? 0) + increments) * 100) / 100;
+    }
+  }
+  return out;
+}
+
 /** Total buckets across every assembly, for the Assemblies tile badge. */
 export function assemblyCount(estimate: Estimate): number {
   return Object.values(estimate.assemblyBuckets).reduce((a, b) => a + b, 0);
