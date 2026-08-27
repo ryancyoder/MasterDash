@@ -71,6 +71,15 @@ export interface TileNode {
  * "Clean 8 (French Drain)" and a named cultivar both price as their generic
  * parent, which is exactly why stopping early is safe.
  */
+/**
+ * How a tile behaves right now.
+ *
+ * "normal" commits on tap and refines on long press. "edit" hands every
+ * gesture to the grid, which decides between a drag (reorder) and a tap
+ * (open the tile's options) by whether the finger moved.
+ */
+export type TileMode = "normal" | "edit";
+
 export interface TileCommit {
   itemId: string;
   variantId?: string;
@@ -119,6 +128,11 @@ export interface EstimatorSettings {
    * depends on them, so the toggle covers money only.
    */
   showPrices: boolean;
+  /**
+   * Custom tile order per level, keyed by level id ("home", or the parent
+   * node's id). Holds only levels that have actually been rearranged.
+   */
+  tileOrder: Record<string, string[]>;
 }
 
 export const DEFAULT_ESTIMATOR_SETTINGS: EstimatorSettings = {
@@ -127,6 +141,7 @@ export const DEFAULT_ESTIMATOR_SETTINGS: EstimatorSettings = {
   autoDeliveryItemId: "svc:delivery_supplier",
   markupPercent: 0,
   showPrices: true,
+  tileOrder: {},
 };
 
 export interface LineItem {

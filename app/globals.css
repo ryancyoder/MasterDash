@@ -132,3 +132,28 @@ select {
     width: 100%;
   }
 }
+
+/* Arrange mode. The wiggle is the whole affordance: it says "these are loose"
+   without adding a single pixel of chrome to the grid. */
+@keyframes qe-wiggle {
+  0% {
+    transform: rotate(-1.15deg);
+  }
+  50% {
+    transform: rotate(1.15deg);
+  }
+  100% {
+    transform: rotate(-1.15deg);
+  }
+}
+
+.qe-wiggle {
+  animation: qe-wiggle 0.26s ease-in-out infinite;
+  transform-origin: 50% 50%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qe-wiggle {
+    animation: none;
+  }
+}
