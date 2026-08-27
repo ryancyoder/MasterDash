@@ -189,6 +189,18 @@ whatever was cover before; a plant's goes to `plant-images` and updates
 `plants.image`. So a photo taken on the iPad shows up for everything else
 reading that catalog, not just on this grid.
 
+**And it reads back the other way.** Catalog photos are fetched live from
+`/api/catalog/photos`, so a picture added straight into Supabase — from the
+dashboard, or by any other tool — appears on the tile without a re-sync or a
+redeploy. Precedence is most-specific-first: a photo taken on this device, then
+whatever the catalog currently holds, then the committed snapshot, then the
+glyph.
+
+The live map is cached in `localStorage` and the images themselves are cached by
+the service worker, so a photographed tile survives a dead zone. The API itself
+is deliberately never cached — pinning the first answer would undo the point of
+reading it live.
+
 ### One tap is a load, not a unit
 
 A tap adds one **purchase increment** — the amount Ricci's actually buys, from
