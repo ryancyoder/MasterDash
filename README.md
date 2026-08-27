@@ -235,9 +235,13 @@ checklist work.
 ### Assemblies: a bucket is a load
 
 The Assemblies tile opens a takeoff path that coexists with plain tapping —
-Ryan often eyeballs the loads himself. Picking "520–1,040 sq ft" looks like
-picking an area, but **each bucket is exactly one more load of the material that
-runs out first**, computed from the coverage rates already in Supabase:
+Ryan often eyeballs the loads himself. An assembly tile behaves like every
+other tile: **a tap adds one load**, and the tile shows what has accumulated
+("1,560 sq ft · 3 loads"). A long press opens the itemised takeoff and the
+machines the catalog says the work needs.
+
+Each load is one more load of the material that runs out first, computed from
+the coverage rates already in Supabase:
 
 ```
 divide   (area / rate):    work per load = units_per_load × coverage_rate
