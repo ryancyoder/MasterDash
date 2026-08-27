@@ -19,8 +19,9 @@ import {
   canExpandInline,
   hasDepth,
   isNavigateOnly,
+  spliceRuns,
   subtreeItemIds,
-  withExpansion,
+  wearChild,
 } from "@/lib/estimator/tree";
 import { useEstimate } from "@/lib/estimator/useEstimate";
 import { usePhotos } from "@/lib/estimator/usePhotos";
@@ -115,6 +116,13 @@ export default function EstimatorPage() {
   const collapse = useCallback(() => {
     setExpandedId(null);
     setVisitTaps(0);
+  }, []);
+
+  const enterEditing = useCallback(() => {
+    // Arranging is about the real level, so any open run closes first.
+    setExpandedId(null);
+    setVisitTaps(0);
+    setEditing(true);
   }, []);
 
   const exitEditing = useCallback(() => {
@@ -229,11 +237,27 @@ export default function EstimatorPage() {
     }
   };
 
+  /**
+   * The item ids a tile still speaks for.
+   *
+   * A parent rolls up what is inside it so a whole category reads at a glance.
+   * The moment its picks are on the grid beside it, though, rolling them up
+   * again prices the same day twice and the row stops adding up — so a tile
+   * with a run showing counts only what the run does not. A placeholder with
+   * nothing generic on it goes dim, which is the truth: the days belong to the
+   * machines next to it, not to it.
+   */
+  function ownedIds(node: TileNode): string[] {
+    const shown = runItemIds.get(node.id);
+    const ids = subtreeItemIds(node);
+    return shown ? ids.filter((id) => !shown.has(id)) : ids;
+  }
+
   /** Assembly-derived loads at or below a node. */
   const lockedFor = (node: TileNode): number => {
     if (node.page === "assemblies") return 0;
     if (hasDepth(node)) {
-      return subtreeItemIds(node).reduce((sum, id) => sum + (derived[id] ?? 0), 0);
+      return ownedIds(node).reduce((sum, id) => sum + (derived[id] ?? 0), 0);
     }
     // A refined tap — a named plant, say — is never something an assembly
     // produced, so only the generic tile carries a floor.
@@ -245,7 +269,7 @@ export default function EstimatorPage() {
     if (node.page === "assemblies") return assemblyCount(estimate);
     const locked = lockedFor(node);
     if (hasDepth(node)) {
-      return rollupCount(estimate, subtreeItemIds(node)) + locked;
+      return rollupCount(estimate, ownedIds(node)) + locked;
     }
     const tapped = node.commit
       ? (estimate.taps[selectionKey(node.commit)] ?? 0)
@@ -277,19 +301,87 @@ export default function EstimatorPage() {
 
   const key = levelKey(current);
   const arrangeable = isArrangeable(current);
-  const orderedNodes = useMemo(
-    () => withExpansion(applyOrder(levelNodes, settings.tileOrder[key]), expandedId),
-    [levelNodes, settings.tileOrder, key, expandedId],
+  const baseNodes = useMemo(
+    () => applyOrder(levelNodes, settings.tileOrder[key]),
+    [levelNodes, settings.tileOrder, key],
   );
 
-  /** Which tiles belong to the unfolded run, and the colour that groups them. */
-  const expandedNode = expandedId
-    ? levelNodes.find((n) => n.id === expandedId)
-    : undefined;
-  const inlineChildIds = useMemo(
-    () => new Set((expandedNode?.children ?? []).map((c) => c.id)),
-    [expandedNode],
+  /** Children of a tile that carry taps of their own. */
+  const pickedChildren = useCallback(
+    (node: TileNode): TileNode[] =>
+      (node.children ?? []).filter(
+        (c) => c.commit && (estimate.taps[selectionKey(c.commit)] ?? 0) > 0,
+      ),
+    [estimate.taps],
   );
+
+  /**
+   * What the grid actually draws.
+   *
+   * A run does not simply vanish when it closes. Whatever was picked out of it
+   * stays on the grid and only the untouched tiles fold away, because the
+   * picks are the answer and the rest were the question. One pick goes further
+   * still: the placeholder becomes it outright, since a generic tile only ever
+   * meant "something from in here" and now there is a specific something.
+   *
+   * Two or more picks cannot be worn by one tile, so they stay out as tiles of
+   * their own and the placeholder goes back to being generic.
+   *
+   * Edit mode draws the level plainly. Arranging is about where the real tiles
+   * live, and dragging a tile that is only on screen because of a tap would
+   * save an order that disappears the moment it is untapped.
+   */
+  const { displayNodes, runChildColors, runItemIds } = useMemo(() => {
+    if (editing) {
+      return {
+        displayNodes: baseNodes,
+        runChildColors: new Map<string, string>(),
+        runItemIds: new Map<string, Set<string>>(),
+      };
+    }
+    const runs = new Map<string, TileNode[]>();
+    const colors = new Map<string, string>();
+    const shown = new Map<string, Set<string>>();
+    const faced = baseNodes.map((node) => {
+      const children = node.children ?? [];
+      if (!children.length) return node;
+
+      // While a run is open it shows everything, so the parent stays generic:
+      // wearing one child's face beside that same child is a tile drawn twice.
+      const open = node.id === expandedId;
+      const picked = pickedChildren(node);
+
+      // A generic tap of the parent's own is a real line on the proposal, so
+      // the placeholder still has something to stand for and keeps its face.
+      // Crew is the exception the check is written for: its tile commits the
+      // same item as one of its children, so a tap there IS the pick.
+      const ownKey = node.commit ? selectionKey(node.commit) : null;
+      const ownIsChild =
+        ownKey !== null &&
+        children.some((c) => c.commit && selectionKey(c.commit) === ownKey);
+      const genericTaps =
+        ownKey && !ownIsChild ? (estimate.taps[ownKey] ?? 0) : 0;
+
+      const worn =
+        !open && picked.length === 1 && genericTaps === 0 ? picked[0] : null;
+
+      const run = open ? children : picked.filter((c) => c.id !== worn?.id);
+      if (run.length) {
+        runs.set(node.id, run);
+        run.forEach((c) => colors.set(c.id, node.color));
+        shown.set(
+          node.id,
+          new Set(run.flatMap((c) => subtreeItemIds(c))),
+        );
+      }
+      return worn ? wearChild(node, worn) : node;
+    });
+    return {
+      displayNodes: spliceRuns(faced, runs),
+      runChildColors: colors,
+      runItemIds: shown,
+    };
+  }, [baseNodes, editing, expandedId, pickedChildren, estimate.taps]);
 
   const saveOrder = (ids: string[]) =>
     updateSettings({ tileOrder: { ...settings.tileOrder, [key]: ids } });
@@ -355,7 +447,7 @@ export default function EstimatorPage() {
                   advertises is a gesture nobody finds. */}
               {arrangeable && (
                 <button
-                  onClick={() => setEditing(true)}
+                  onClick={enterEditing}
                   className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
                 >
                   Edit
@@ -410,7 +502,7 @@ export default function EstimatorPage() {
                   any arrangeable level, but nothing on screen says so. */}
               {arrangeable && (
                 <button
-                  onClick={() => setEditing(true)}
+                  onClick={enterEditing}
                   className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
                 >
                   Edit
@@ -441,7 +533,7 @@ export default function EstimatorPage() {
           </p>
         ) : (
           <TileGrid
-            nodes={orderedNodes}
+            nodes={displayNodes}
             editing={editing}
             arrangeable={arrangeable}
             photos={photos}
@@ -457,11 +549,14 @@ export default function EstimatorPage() {
             onTap={handleTap}
             onLongPress={handleLongPress}
             inlineParentId={expandedId}
-            inlineChildIds={inlineChildIds}
-            inlineColor={expandedNode?.color ?? null}
+            runChildColors={runChildColors}
+            inlineColor={
+              (expandedId && levelNodes.find((n) => n.id === expandedId)?.color) ||
+              null
+            }
             onReorder={saveOrder}
             onOpenOptions={setOptionsNode}
-            onEnterEdit={() => setEditing(true)}
+            onEnterEdit={enterEditing}
           />
         )}
       </div>

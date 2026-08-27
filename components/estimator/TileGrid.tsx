@@ -40,9 +40,9 @@ interface TileGridProps {
   catalogPhotos: Record<string, string>;
   /** The tile currently unfolded, drawn as the head of the run. */
   inlineParentId: string | null;
-  /** Tiles unfolded from a parent, drawn as a run that belongs to it. */
-  inlineChildIds: Set<string>;
-  /** The parent's colour, which ties the run together. */
+  /** Every tile shown as part of a run, mapped to its parent's colour. */
+  runChildColors: Map<string, string>;
+  /** The unfolded parent's colour, which ties its run together. */
   inlineColor: string | null;
   settings: EstimatorSettings;
   countFor: (node: TileNode) => number;
@@ -78,7 +78,7 @@ export default function TileGrid({
   photos,
   catalogPhotos,
   inlineParentId,
-  inlineChildIds,
+  runChildColors,
   inlineColor,
   settings,
   countFor,
@@ -274,15 +274,15 @@ export default function TileGrid({
   };
 
   /**
-   * The halo that ties an unfolded run together. The parent wears a solid ring
-   * and its children a faint one, so a run that wraps onto the next row still
-   * reads as belonging to the tile it came out of.
+   * The halo that ties a run to the tile it came out of. The unfolded parent
+   * wears a solid ring and every tile in a run a faint one, so a run that
+   * wraps onto the next row — or one left standing after it closed — still
+   * reads as belonging somewhere rather than as a stray top-level tile.
    */
   const runOutline = (id: string): string | null => {
-    if (!inlineColor) return null;
-    if (id === inlineParentId) return `2px solid ${inlineColor}`;
-    if (inlineChildIds.has(id)) return `2px solid ${inlineColor}44`;
-    return null;
+    if (id === inlineParentId && inlineColor) return `2px solid ${inlineColor}`;
+    const color = runChildColors.get(id);
+    return color ? `2px solid ${color}44` : null;
   };
 
   return (

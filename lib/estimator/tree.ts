@@ -208,19 +208,45 @@ export function canExpandInline(node: TileNode): boolean {
 }
 
 /**
- * Children unfolded directly after their parent, pushing the rest of the grid
- * along. Returns the list unchanged when nothing is expanded.
+ * Children shown directly after their parent, pushing the rest of the grid
+ * along. Covers both runs: the one currently unfolded, and the picks that stay
+ * out on the grid after a run closes.
  */
-export function withExpansion(
+export function spliceRuns(
   nodes: TileNode[],
-  expandedId: string | null,
+  runs: Map<string, TileNode[]>,
 ): TileNode[] {
-  if (!expandedId) return nodes;
-  const at = nodes.findIndex((n) => n.id === expandedId);
-  if (at === -1) return nodes;
-  const children = nodes[at].children ?? [];
-  if (children.length === 0) return nodes;
-  return [...nodes.slice(0, at + 1), ...children, ...nodes.slice(at + 1)];
+  if (runs.size === 0) return nodes;
+  const out: TileNode[] = [];
+  for (const node of nodes) {
+    out.push(node);
+    const run = runs.get(node.id);
+    if (run?.length) out.push(...run);
+  }
+  return out;
+}
+
+/**
+ * A placeholder tile wearing the face of the one thing picked out of it.
+ *
+ * A generic tile stands for "some equipment" or "some mulch" — it exists so a
+ * tap is possible before anyone has decided which. Once exactly one specific
+ * thing is on the estimate the placeholder has nothing left to stand for, so
+ * it becomes that thing: its photo, its name, its price, and a tap that buys
+ * another of it rather than another generic day.
+ *
+ * The parent keeps its own id and children, so a long press still unfolds the
+ * whole group and the tile can be arranged where it always was.
+ */
+export function wearChild(parent: TileNode, child: TileNode): TileNode {
+  return {
+    ...parent,
+    label: child.label,
+    glyph: child.glyph,
+    color: child.color,
+    image: child.image,
+    commit: child.commit,
+  };
 }
 
 /** A tile has depth when a long press would open something. */
