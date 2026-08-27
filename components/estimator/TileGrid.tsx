@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import EstimateTile from "./EstimateTile";
+import { photoTarget } from "@/lib/estimator/photos";
 import { selectionKey } from "@/lib/estimator/types";
 import type {
   CatalogItem,
@@ -33,8 +34,10 @@ interface TileGridProps {
    */
   editing: boolean;
   arrangeable: boolean;
-  /** Device photos by selection key; these win over the catalog image. */
+  /** Device photos by selection key; these win over anything from the catalog. */
   photos: Record<string, string>;
+  /** Catalog photos read live from Supabase, keyed `entityType:entityId`. */
+  catalogPhotos: Record<string, string>;
   settings: EstimatorSettings;
   countFor: (node: TileNode) => number;
   itemFor: (node: TileNode) => CatalogItem | null;
@@ -65,6 +68,7 @@ export default function TileGrid({
   editing,
   arrangeable,
   photos,
+  catalogPhotos,
   settings,
   countFor,
   itemFor,
@@ -330,7 +334,7 @@ export default function TileGrid({
                 showPrices={settings.showPrices}
                 markupPercent={settings.markupPercent}
                 mode={editing ? "edit" : "normal"}
-                imageOverride={photoFor(node, photos)}
+                imageOverride={photoFor(node, photos, catalogPhotos)}
                 onTap={onTap}
                 onLongPress={onLongPress}
               />
@@ -342,13 +346,20 @@ export default function TileGrid({
   );
 }
 
-/** A tile shows its device photo if it has one, else whatever the catalog has. */
+/**
+ * Which picture a tile shows, most specific first: a photo taken on this
+ * device, then whatever the catalog currently holds, then — via the tile's own
+ * `node.image` — the committed snapshot, and finally the glyph.
+ */
 function photoFor(
   node: TileNode,
   photos: Record<string, string>,
+  catalogPhotos: Record<string, string>,
 ): string | null {
   const key = node.commit ? selectionKey(node.commit) : node.id;
-  return photos[key] ?? null;
+  if (photos[key]) return photos[key];
+  const target = photoTarget(key);
+  return catalogPhotos[`${target.kind}:${target.targetId}`] ?? null;
 }
 
 /** Staggers the wiggle so the grid does not pulse in lockstep. */

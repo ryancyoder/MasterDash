@@ -10,7 +10,14 @@
 // list — are served cache-first because they only change when the catalog is
 // re-synced.
 
-const CACHE = "qe-cache-v1";
+const CACHE = "qe-cache-v2";
+
+/**
+ * Supabase's public object route. Matched by path rather than by host, so a
+ * custom domain or a CDN in front of storage still gets cached — the host is
+ * incidental, the path is what identifies a public catalog image.
+ */
+const PHOTO_PATH = "/storage/v1/object/public/";
 
 // Relative, so they resolve against the worker's own scope. The app is served
 // from /MasterDash/ on GitHub Pages and from / in dev.
@@ -52,9 +59,46 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
-  // Never touch Supabase or any other origin: estimate writes have their own
-  // queue, and caching an API response would just hide staleness.
+
+  // Catalog photos are the one cross-origin thing worth keeping. They are
+  // immutable — every upload writes a new timestamped path — so cache-first is
+  // safe, and it is what makes a photographed tile survive a dead zone. The
+  // response is opaque (an <img> is a no-cors request), which is fine: it is
+  // only ever handed back to another <img>.
+  if (url.pathname.includes(PHOTO_PATH)) {
+    event.respondWith(
+      (async () => {
+        const hit = await caches.match(request);
+        if (hit) return hit;
+        try {
+          const fresh = await fetch(request);
+          // Only keep something worth keeping. An <img> is a no-cors request,
+          // so a real success comes back opaque with ok === false and status
+          // 0 — that one is fine. A readable non-ok response is a genuine 404
+          // or 500, and caching it would blank the tile permanently, since
+          // nothing would ever go back to the network for it again.
+          if (fresh.ok || fresh.type === "opaque") {
+            const cache = await caches.open(CACHE);
+            cache.put(request, fresh.clone());
+          }
+          return fresh;
+        } catch {
+          return Response.error();
+        }
+      })(),
+    );
+    return;
+  }
+
+  // Every other origin is left alone: estimate and photo writes have their own
+  // queues, and caching an API response would just hide staleness.
   if (url.origin !== self.location.origin) return;
+
+  // The app's own API is live data — catalog photography that changes when
+  // someone adds a picture anywhere. Cache-first here would pin the first
+  // answer forever and quietly undo the whole point of reading it live. The
+  // callers already handle a failed request, so offline needs nothing here.
+  if (url.pathname.startsWith("/api/")) return;
 
   if (request.mode === "navigate") {
     event.respondWith(

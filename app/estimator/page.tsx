@@ -16,6 +16,8 @@ import { applyOrder, isArrangeable, levelKey } from "@/lib/estimator/tileOrder";
 import { HOME_TILES, hasDepth, isNavigateOnly, subtreeItemIds } from "@/lib/estimator/tree";
 import { useEstimate } from "@/lib/estimator/useEstimate";
 import { usePhotos } from "@/lib/estimator/usePhotos";
+import { useCatalogPhotos } from "@/lib/estimator/catalogPhotos";
+import { photoTarget } from "@/lib/estimator/photos";
 import TileOptionsSheet from "@/components/estimator/TileOptionsSheet";
 import { selectionKey, type TileNode } from "@/lib/estimator/types";
 
@@ -35,9 +37,24 @@ import { selectionKey, type TileNode } from "@/lib/estimator/types";
  * what is inside them, so a category still dim reads as a question nobody
  * answered — a proposal with no labour or no equipment is visible at a glance.
  */
+/** Same precedence the tiles use, for the sheet's preview. */
+function sheetPhoto(
+  node: TileNode,
+  photos: Record<string, string>,
+  catalogPhotos: Record<string, string>,
+): string | null {
+  const key = node.commit ? selectionKey(node.commit) : node.id;
+  if (photos[key]) return photos[key];
+  const target = photoTarget(key);
+  return (
+    catalogPhotos[`${target.kind}:${target.targetId}`] ?? node.image ?? null
+  );
+}
+
 export default function EstimatorPage() {
   const { estimate, settings } = useEstimate();
   const photos = usePhotos();
+  const catalogPhotos = useCatalogPhotos();
 
   /** Drill path. Empty = home. */
   const [stack, setStack] = useState<TileNode[]>([]);
@@ -321,6 +338,7 @@ export default function EstimatorPage() {
             editing={editing}
             arrangeable={arrangeable}
             photos={photos}
+            catalogPhotos={catalogPhotos}
             settings={settings}
             countFor={countFor}
             itemFor={(node) =>
@@ -345,13 +363,7 @@ export default function EstimatorPage() {
               ? (getItem(optionsNode.commit.itemId) ?? null)
               : null
           }
-          photoUrl={
-            (optionsNode.commit
-              ? photos[selectionKey(optionsNode.commit)]
-              : photos[optionsNode.id]) ??
-            optionsNode.image ??
-            null
-          }
+          photoUrl={sheetPhoto(optionsNode, photos, catalogPhotos)}
           onClose={() => setOptionsNode(null)}
         />
       )}
