@@ -16,7 +16,13 @@ import {
   queuePlanUpload,
   setPlanUploadHandler,
 } from "./planImage";
-import { emptyVisit, visitFrom, type VisitFinding, type VisitState } from "./visit";
+import {
+  emptyVisit,
+  visitFrom,
+  type VisitFinding,
+  type VisitSource,
+  type VisitState,
+} from "./visit";
 import {
   DEFAULT_ESTIMATOR_SETTINGS,
   project,
@@ -508,6 +514,25 @@ function mutateVisit(fn: (visit: VisitState) => VisitState) {
  */
 export function setTranscript(transcript: string) {
   mutateVisit((visit) => ({ ...visit, transcript }));
+}
+
+/**
+ * A transcript imported from an Upright site session.
+ *
+ * Separate from `setTranscript` because it also drops the findings: they were
+ * read out of a different visit, and leaving them would put one recording's
+ * list of work under another recording's transcript — which reads as a bug
+ * only if you notice, and prices a job wrongly if you do not. Staleness
+ * marking is not enough here, since the old rows would still be addable.
+ */
+export function setImportedTranscript(transcript: string, source: VisitSource) {
+  mutateVisit(() => ({
+    transcript,
+    source,
+    findings: [],
+    extractedAt: null,
+    extractedFrom: null,
+  }));
 }
 
 /** Replace the findings wholesale — a re-read supersedes the last one. */

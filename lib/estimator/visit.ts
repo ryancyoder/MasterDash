@@ -61,9 +61,32 @@ export interface VisitFinding {
   status: "pending" | "accepted" | "dismissed";
 }
 
+/**
+ * Where a transcript came from, when it was not typed here.
+ *
+ * The point of recording it is that the visit and the estimate are two halves
+ * of one job kept in two apps. Without this the estimate holds an hour of talk
+ * with no way back to the recording, the photo pins or the survey it was taken
+ * alongside — and "which visit was this?" is a question somebody asks weeks
+ * later, in front of a customer.
+ */
+export interface VisitSource {
+  /** `upright_sessions.id`. The join, and what makes the rest recoverable. */
+  sessionId: string;
+  /** How it read when it was chosen: the property address and the date. */
+  label: string;
+  importedAt: string;
+}
+
 export interface VisitState {
   /** What was pasted. The record of the visit, kept whether or not it parsed. */
   transcript: string;
+  /**
+   * Set on import and cleared only by Clear — editing an imported transcript
+   * does not change where it came from, and `findingsAreStale` already covers
+   * a transcript that has moved on from what was read out of it.
+   */
+  source: VisitSource | null;
   findings: VisitFinding[];
   /** When the findings were produced, so a stale read is visible as stale. */
   extractedAt: string | null;
@@ -72,7 +95,13 @@ export interface VisitState {
 }
 
 export function emptyVisit(): VisitState {
-  return { transcript: "", findings: [], extractedAt: null, extractedFrom: null };
+  return {
+    transcript: "",
+    source: null,
+    findings: [],
+    extractedAt: null,
+    extractedFrom: null,
+  };
 }
 
 /**
@@ -162,6 +191,17 @@ export function findingFrom(value: unknown): VisitFinding | null {
   };
 }
 
+function sourceFrom(value: unknown): VisitSource | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.sessionId !== "string" || !v.sessionId) return null;
+  return {
+    sessionId: v.sessionId,
+    label: typeof v.label === "string" && v.label ? v.label : v.sessionId,
+    importedAt: typeof v.importedAt === "string" ? v.importedAt : "",
+  };
+}
+
 export function visitFrom(value: unknown): VisitState {
   if (!value || typeof value !== "object") return emptyVisit();
   const v = value as Record<string, unknown>;
@@ -170,6 +210,7 @@ export function visitFrom(value: unknown): VisitState {
     : [];
   return {
     transcript: typeof v.transcript === "string" ? v.transcript : "",
+    source: sourceFrom(v.source),
     findings,
     extractedAt: typeof v.extractedAt === "string" ? v.extractedAt : null,
     extractedFrom: typeof v.extractedFrom === "string" ? v.extractedFrom : null,

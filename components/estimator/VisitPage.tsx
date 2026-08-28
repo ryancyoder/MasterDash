@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import UprightImport from "@/components/estimator/UprightImport";
 import { getAssembly, unitOfWorkLabel } from "@/lib/estimator/assemblies";
 import { formatMoney, getItem, sellFor, unitLabel } from "@/lib/estimator/catalog";
 import { baseItemId, type Estimate, type EstimatorSettings } from "@/lib/estimator/types";
@@ -14,19 +15,22 @@ import {
   unpricedCount,
   type FindingKind,
   type VisitFinding,
+  type VisitSource,
 } from "@/lib/estimator/visit";
 import {
   addIncrements,
   clearVisit,
   setFindingStatus,
   setFindings,
+  setImportedTranscript,
   setTranscript,
 } from "@/lib/estimator/store";
 
 /**
  * The site visit.
  *
- * Paste what was said, read it against the tile menu, then work the list.
+ * Take what was said — pasted, or pulled straight from the Upright session
+ * that recorded the visit — read it against the tile menu, then work the list.
  * Every row carries the sentence it came from, because the only way to trust
  * a machine's reading of an hour of talk is to see the words it read.
  *
@@ -47,6 +51,7 @@ export default function VisitPage({
   const [error, setError] = useState<string | null>(null);
   /** Collapsed once there are findings, so the list is what you look at. */
   const [editing, setEditing] = useState(visit.findings.length === 0);
+  const [importing, setImporting] = useState(false);
 
   const stale = findingsAreStale(visit);
   // "Waiting" counts what a tap can resolve, matching the tile's badge. Notes
@@ -125,6 +130,12 @@ export default function VisitPage({
             </span>
           )}
           <div className="flex-1" />
+          <button
+            onClick={() => setImporting(true)}
+            className="rounded-xl bg-surface2 px-3 py-2 text-xs font-bold text-ink"
+          >
+            From Upright
+          </button>
           {visit.findings.length > 0 && (
             <button
               onClick={() => setEditing((v) => !v)}
@@ -162,6 +173,13 @@ export default function VisitPage({
           </p>
         )}
 
+        {visit.source && (
+          <p className="mt-2 text-[0.7rem] text-muted">
+            🎙️ From the Upright session at{" "}
+            <span className="text-ink">{visit.source.label}</span>
+          </p>
+        )}
+
         <div className="mt-2 flex items-center gap-2">
           {stale && (
             <span className="text-[0.7rem] font-bold text-[#fbbf24]">
@@ -193,9 +211,10 @@ export default function VisitPage({
       {visit.findings.length === 0 ? (
         !busy && (
           <p className="px-1 text-xs leading-relaxed text-muted">
-            Nothing read yet. Paste the visit and press Read — you get a list of
-            tiles with counts, plus what was mentioned that nothing prices.
-            Every row waits for you; nothing is added on its own.
+            Nothing read yet. Paste the visit — or pull it From Upright, which
+            has the recording — and press Read. You get a list of tiles with
+            counts, plus what was mentioned that nothing prices. Every row waits
+            for you; nothing is added on its own.
           </p>
         )
       ) : (
@@ -251,6 +270,16 @@ export default function VisitPage({
             );
           })}
         </div>
+      )}
+
+      {importing && (
+        <UprightImport
+          hasTranscript={visit.transcript.trim().length > 0}
+          onImport={(text: string, source: VisitSource) =>
+            setImportedTranscript(text, source)
+          }
+          onClose={() => setImporting(false)}
+        />
       )}
     </div>
   );

@@ -30,6 +30,7 @@ now the whole app, at the root.
     lib/estimator/plan.ts     the map take-off: geometry and load maths
     lib/estimator/planImage.ts  plan images, device first, uploaded later
     lib/estimator/visit.ts    the site visit: findings and their validation
+    lib/server/upright.ts      the Upright session, read through its own API
     app/api/                  the routes that hold the service key
 
 ---
@@ -296,6 +297,71 @@ item the proposal then silently drops — invisible, and so the one failure wort
 spending code on. The route validates every key against the menu it just sent,
 and a match that loses its key is demoted to "nothing prices this" so the
 sentence stays in front of the estimator instead of vanishing with the row.
+
+#### Pulling the visit out of Upright
+
+**From Upright** on the Visit page lists recorded site sessions and drops one's
+transcript straight in, so the recording and the estimate stop being joined by
+a person selecting text on one iPad and pasting it into another.
+
+[Upright](https://github.com/ryancyoder/Upright) is the recording half of the
+same job: it runs continuous master audio for a whole visit and puts it through
+AssemblyAI with the speakers separated. The two apps stay separate deployments
+— they are used at different moments and one of them is a camera — and meet in
+the database they already share. This is that join, and nothing more: no shared
+bundle, no second copy of the other app's UI.
+
+Speaker labels are kept, and they earn their characters. The extraction has to
+tell what was agreed from what was floated and then ruled out, and "we're not
+doing the patio this year" means something different depending on which side of
+the conversation said it — speaker separation is why Upright chose AssemblyAI
+over the alternatives, so discarding it at the last step would be an odd trade.
+Consecutive utterances by one speaker are merged, since AssemblyAI splits on
+pauses and a paragraph per breath reads as a more fragmented conversation than
+the one that happened.
+
+**Reads go through `upright-api`, never through PostgREST** — even though these
+routes hold a service key that could read `upright_transcript_segments`
+directly. Upright's convention is that every one of its tables has RLS on with
+zero policies and its Edge Function is the only way in. A second reader with
+its own idea of how a transcript is assembled is the kind of duplication that
+drifts; this way, if Upright changes what a transcript looks like, the
+estimator follows for free.
+
+**Only sessions with uploaded audio are listed.** A session with none can never
+yield a transcript, so listing one would be a menu of things that cannot be
+chosen — and they are not rare. Of 99 sessions on the project today, 40 have
+audio: Upright's writes are fire-and-forget, so a visit whose upload never
+landed still leaves a row. Its own history lists those because their photos and
+measures are still worth opening; there is nothing here to import from one.
+
+A session can also have audio and no transcript — 16 of those 40. Upright kicks
+transcription off when a session ends, but that request is fire-and-forget like
+every other write it makes, so a visit recorded where there were no bars can
+arrive with audio and nothing read. Those rows get a **Transcribe** button.
+`upright-api` is idempotent about it — a session already processing or completed
+comes back with that status rather than a second AssemblyAI job — so pressing it
+twice is safe.
+
+Importing **replaces the findings**, not just the transcript. They were read out
+of a different visit, and leaving them would put one recording's list of work
+under another recording's transcript: a bug only if you notice, and a mispriced
+job if you do not. Marking them stale is not enough, because the old rows would
+still be addable.
+
+The estimate keeps the session it came from (`visit.source`), which is the
+point of doing this at the data layer at all — otherwise it holds an hour of
+talk with no way back to the recording, the photo pins or the elevation survey
+taken alongside it, and "which visit was this?" is a question somebody asks
+weeks later in front of a customer.
+
+**No new configuration.** The routes use the Supabase credentials the app
+already has. `upright-api` verifies a JWT and the legacy service role key is
+one, but a project issued the newer `sb_secret_…` key would 401 here while every
+other route kept working — so `UPRIGHT_API_KEY` (or `SUPABASE_ANON_KEY`)
+overrides which key is presented. Any key the project accepts will do: the Edge
+Function holds its own service role key and does the reading, so nothing is
+granted by the key these routes present.
 
 Extraction needs signal and an `ANTHROPIC_API_KEY` on the deployment; the
 transcript saves and syncs either way, so a visit typed with no bars is read
