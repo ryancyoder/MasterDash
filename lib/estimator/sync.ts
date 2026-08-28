@@ -137,6 +137,10 @@ function toRow(estimate: Estimate, proposal: Proposal) {
       taps: estimate.taps,
       labels: estimate.labels,
       assemblyBuckets: estimate.assemblyBuckets,
+      // Shapes and scale, so a reopened estimate can be re-measured rather
+      // than only re-read. The image itself is not here — it goes to storage
+      // through /api/plan-image, and this carries the id that finds it.
+      plan: estimate.plan,
       rendered: proposal.lines.map((l) => ({
         item_id: l.item.id,
         label: l.label,
@@ -170,7 +174,11 @@ function toRow(estimate: Estimate, proposal: Proposal) {
 let lastQueued: string | null = null;
 
 export function queueSave(estimate: Estimate, proposal: Proposal) {
-  if (estimate.ops.length === 0 && proposal.lines.length === 0) return;
+  // A plan counts as work even before it prices anything: shapes drawn to
+  // measure a site, with nothing linked to an assembly yet, are still a
+  // morning's work that must not be lost with the tab.
+  const hasPlan = estimate.plan.shapes.length > 0 || !!estimate.plan.imageId;
+  if (estimate.ops.length === 0 && proposal.lines.length === 0 && !hasPlan) return;
 
   const owed = pendingOps(estimate);
   // A pull merges and therefore changes the store, which would otherwise
@@ -183,6 +191,10 @@ export function queueSave(estimate: Estimate, proposal: Proposal) {
     estimate.propertyId,
     estimate.taps,
     estimate.assemblyBuckets,
+    // The plan owes no ops, so without it here a moved vertex or a shape
+    // relinked to another assembly would look like nothing changed and never
+    // be written.
+    estimate.plan,
   ]);
   if (owed.length === 0 && fingerprint === lastQueued) return;
   lastQueued = fingerprint;
@@ -296,6 +308,8 @@ export interface RemoteEstimate {
     jobName: string;
     dealId: number | null;
     propertyId: number | null;
+    /** Shapes and scale as the server holds them; validated on the way in. */
+    plan: unknown;
     updatedAt: string | null;
   } | null;
   ops: TapOp[];

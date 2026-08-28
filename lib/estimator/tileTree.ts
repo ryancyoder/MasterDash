@@ -99,9 +99,11 @@ export function buildTree(rows: TileRow[]): TileNode[] {
             },
           }
         : {}),
-      // Only the one page the app knows how to open. An unknown value from the
+      // Only the pages the app knows how to open. An unknown value from the
       // database becomes a plain folder rather than a tile that goes nowhere.
-      ...(row.page === "assemblies" ? { page: "assemblies" as const } : {}),
+      ...(row.page === "assemblies" || row.page === "plan"
+        ? { page: row.page as "assemblies" | "plan" }
+        : {}),
     };
     byId.set(row.tile_id, node);
   }

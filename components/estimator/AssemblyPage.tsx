@@ -14,6 +14,7 @@ import {
   sellFor,
   unitLabel,
 } from "@/lib/estimator/catalog";
+import { planBuckets } from "@/lib/estimator/proposal";
 import { setAssemblyBuckets, tap } from "@/lib/estimator/store";
 import { EXTRA_ITEMS } from "@/lib/estimator/tree";
 import type { Estimate, EstimatorSettings } from "@/lib/estimator/types";
@@ -44,12 +45,19 @@ export default function AssemblyPage({
   settings: EstimatorSettings;
   onOpen: (id: string) => void;
 }) {
+  // Loads the map take-off already committed. They read as part of the tile's
+  // count but cannot be taken off here: the shape produced them, so backing
+  // them off on this screen would disagree with the plan rather than change
+  // it — the same floor the bulk tiles carry for assembly-derived material.
+  const fromPlan = planBuckets(estimate);
+
   if (assemblyId) {
     return (
       <AssemblyDetail
         assemblyId={assemblyId}
         estimate={estimate}
         settings={settings}
+        planBuckets={fromPlan[assemblyId] ?? 0}
       />
     );
   }
@@ -68,6 +76,7 @@ export default function AssemblyPage({
             key={model.id}
             model={model}
             buckets={estimate.assemblyBuckets[model.id] ?? 0}
+            planBuckets={fromPlan[model.id] ?? 0}
             settings={settings}
             onOpen={onOpen}
           />
@@ -120,11 +129,15 @@ export default function AssemblyPage({
 function AssemblyTile({
   model,
   buckets,
+  planBuckets,
   settings,
   onOpen,
 }: {
   model: AssemblyModel;
+  /** Tapped by hand. */
   buckets: number;
+  /** Committed by a shape on the plan. Counted, never editable here. */
+  planBuckets: number;
   settings: EstimatorSettings;
   onOpen: (id: string) => void;
 }) {
@@ -134,7 +147,8 @@ function AssemblyTile({
   const longFired = useRef(false);
 
   const usable = model.bucketSize !== null;
-  const selected = buckets > 0;
+  const total = buckets + planBuckets;
+  const selected = total > 0;
 
   const clearTimer = useCallback(() => {
     if (timer.current !== null) {
@@ -145,12 +159,12 @@ function AssemblyTile({
   useEffect(() => () => clearTimer(), [clearTimer]);
 
   const cost = useMemo(() => {
-    if (!usable || buckets === 0) return 0;
-    return takeoff(model, buckets).reduce(
+    if (!usable || total === 0) return 0;
+    return takeoff(model, total).reduce(
       (sum, line) => sum + line.quantity * line.item.costPerUnit,
       0,
     );
-  }, [model, buckets, usable]);
+  }, [model, total, usable]);
 
   const handleDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (!usable) return;
@@ -191,11 +205,15 @@ function AssemblyTile({
   const unit = unitOfWorkLabel(model.unitOfWork);
   const sub = !usable
     ? "no coverage data"
-    : buckets === 0
+    : total === 0
       ? `${model.bucketSize!.toLocaleString()} ${unit} / load`
-      : `${(buckets * model.bucketSize!).toLocaleString()} ${unit} · ${buckets} load${
-          buckets === 1 ? "" : "s"
-        }${settings.showPrices ? ` · ${formatMoney(sellFor(cost, settings.markupPercent))}` : ""}`;
+      : `${(total * model.bucketSize!).toLocaleString()} ${unit} · ${total} load${
+          total === 1 ? "" : "s"
+        }${planBuckets > 0 ? ` (${planBuckets} 🗺️)` : ""}${
+          settings.showPrices
+            ? ` · ${formatMoney(sellFor(cost, settings.markupPercent))}`
+            : ""
+        }`;
 
   return (
     <button
@@ -209,9 +227,9 @@ function AssemblyTile({
       }}
       onContextMenu={(e) => e.preventDefault()}
       disabled={!usable}
-      aria-label={`${model.name}, ${buckets} load${buckets === 1 ? "" : "s"}. Tap adds ${
-        model.bucketSize ?? 0
-      } ${unit}, long press for the takeoff.`}
+      aria-label={`${model.name}, ${total} load${total === 1 ? "" : "s"}${
+        planBuckets > 0 ? `, ${planBuckets} of them from the plan` : ""
+      }. Tap adds ${model.bucketSize ?? 0} ${unit}, long press for the takeoff.`}
       aria-pressed={selected}
       className={`relative w-full aspect-square rounded-3xl flex flex-col items-center justify-center p-3 text-center touch-none select-none transition-opacity ${
         flash ? "md-tapped" : ""
@@ -248,9 +266,9 @@ function AssemblyTile({
         {sub}
       </span>
 
-      {buckets > 1 && (
+      {total > 1 && (
         <span className="absolute top-2.5 right-2.5 min-w-[1.6rem] px-1.5 py-0.5 rounded-full bg-[#ef4444] text-white text-xs font-bold tabular-nums text-center">
-          {buckets}
+          {total}
         </span>
       )}
     </button>
@@ -268,13 +286,16 @@ function AssemblyDetail({
   assemblyId,
   estimate,
   settings,
+  planBuckets,
 }: {
   assemblyId: string;
   estimate: Estimate;
   settings: EstimatorSettings;
+  planBuckets: number;
 }) {
   const model = getAssembly(assemblyId);
-  const buckets = estimate.assemblyBuckets[assemblyId] ?? 0;
+  const tapped = estimate.assemblyBuckets[assemblyId] ?? 0;
+  const buckets = tapped + planBuckets;
 
   const preview = useMemo(
     () => (model && buckets > 0 ? takeoff(model, buckets) : []),
@@ -304,11 +325,14 @@ function AssemblyDetail({
         .
       </p>
 
+      {/* The counter edits the hand-tapped share only. Loads a shape produced
+          are changed by editing that shape, on the plan, where the number came
+          from — so the two can never quietly disagree. */}
       <div className="flex items-center gap-3 mb-6">
         <button
           aria-label="Remove one load"
-          disabled={buckets === 0}
-          onClick={() => setAssemblyBuckets(assemblyId, buckets - 1)}
+          disabled={tapped === 0}
+          onClick={() => setAssemblyBuckets(assemblyId, tapped - 1)}
           className="w-12 h-12 rounded-full bg-surface2 text-ink text-2xl font-bold leading-none disabled:opacity-30"
         >
           −
@@ -319,11 +343,12 @@ function AssemblyDetail({
           </span>
           <span className="block text-xs text-muted tabular-nums">
             {buckets} load{buckets === 1 ? "" : "s"}
+            {planBuckets > 0 && ` · ${planBuckets} from the plan`}
           </span>
         </span>
         <button
           aria-label="Add one load"
-          onClick={() => setAssemblyBuckets(assemblyId, buckets + 1)}
+          onClick={() => setAssemblyBuckets(assemblyId, tapped + 1)}
           className="w-12 h-12 rounded-full bg-surface2 text-ink text-2xl font-bold leading-none"
         >
           +

@@ -27,6 +27,8 @@ now the whole app, at the root.
     lib/estimator/tree.ts     the committed tile tree, the offline floor
     lib/estimator/proposal.ts taps to priced lines, deliveries derived
     lib/estimator/assemblies.ts  bucket maths
+    lib/estimator/plan.ts     the map take-off: geometry and load maths
+    lib/estimator/planImage.ts  plan images, device first, uploaded later
     app/api/                  the routes that hold the service key
 
 ---
@@ -184,6 +186,77 @@ than on the home screen. Anything priced but belonging to no assembly (wall
 grid, HF Grand Ledge, generic steps, metal edging — there is no wall assembly
 in the catalog yet) surfaces under **Hardscape & extras**, computed rather than
 listed so a newly synced row can never become invisible.
+
+### Plan: measuring the loads instead of guessing them
+
+The **Plan** tile is a map take-off, ported from the VoiceData estimator's plan
+view. Add an aerial or a site plan, tap two points you know the distance
+between to set the scale, then draw beds with **Area** and runs with
+**Linear**. Pinch or wheel to zoom, one finger to pan, and drag a shape's dots
+to reshape it — the midpoint handles split a side.
+
+**A shape does not add a measurement to the estimate. It adds loads.** Link a
+shape to an assembly and it commits `ceil(measurement ÷ bucket)` buckets — the
+same arithmetic as tapping that assembly's tile, so a 1,200 sq ft bed drawn on
+the plan and three taps on Mulch Bed are the same act and land on the same
+proposal line. That is the whole reconciliation between the two apps: the
+original priced off the exact area, but here a bucket is a load, and you cannot
+buy two thirds of a load of mulch.
+
+The overshoot is shown rather than buried. A 1,200 sq ft bed reads
+**"3 loads · buys 1,560 sq ft (360 over)"**, because that gap is a decision —
+tighten the shape, or accept the material.
+
+Loads a shape produced behave like an assembly's share on a bulk tile: counted
+in the total, marked with 🗺️, and a floor the Assemblies screen cannot take
+back. Edit the shape instead, on the plan, where the number came from.
+
+**Scale is derived, never stored.** Recalibrating corrects every shape already
+drawn, rather than leaving the old ones quietly wrong.
+
+**The image lives on the device first.** The properties worth taking off are
+the ones with no coverage, so the picture goes to IndexedDB — not to
+localStorage, where one aerial would blow the quota and take the estimate with
+it — and uploads to the `estimate-plans` bucket through `/api/plan-image`
+whenever there is signal. A plan drawn with no bars works, draws and prices
+exactly the same; only the "saved on this device" note tells you it has not
+synced yet.
+
+Replacing the image clears the scale and the shapes with it: vertices are in
+the old image's pixel space, and a calibration measured on one aerial means
+nothing on another. Shapes that looked plausible and measured wrong would be
+worse than none.
+
+**The plan is a document, so it does not go in the op log.** It merges as a
+scalar beside the job name — newest wins, whole — because there is no union of
+two people dragging the same vertex, and half of one aerial's shapes on
+another's calibration would measure confidently and be wrong. It rides in the
+row's `lines` jsonb, so it needs no column of its own. A remote plan with no
+image never replaces one that has bytes here, the same way an empty job name
+never un-names this estimate.
+
+The loads it implies stay out of `assemblyBuckets` for the matching reason from
+the other side: they are projected from the shapes on every read, so a pull
+that replays ops can never double-count them.
+
+**The tile itself lives in the menu like every other.** The committed tree in
+`tree.ts` is only the offline floor — once Supabase serves a menu it replaces
+that tree wholesale, so a Plan row has to exist there or the tile is missing on
+any device that has been online. It is already inserted; this is the statement,
+for a rebuild or a second project:
+
+```sql
+insert into quick_tiles
+  (tile_id, parent_id, label, sort_order, kind, page, glyph, color)
+values
+  ('group:plan', null, 'Plan', 10, 'page', 'plan', '🗺️', '#0ea5e9');
+```
+
+Note the target: `quick_tile_menu` is a **view**, and the writable table beneath
+it is `quick_tiles`, whose ordering column is an integer `sort_order` rather
+than the view's derived `ordering` string. `quick_tiles_kind_shape` also
+requires a `page` row to carry a non-null `page`, which is what makes the tile
+open the take-off instead of an empty level.
 
 ### Offline, and saving
 

@@ -5,6 +5,7 @@ import { publicUrl } from "@/lib/estimator/basePath";
 import { startCatalogPhotoRefresh } from "@/lib/estimator/catalogPhotos";
 import { startCatalogPriceRefresh } from "@/lib/estimator/catalogPrices";
 import { startPhotoAutoFlush } from "@/lib/estimator/photos";
+import { startPlanAutoFlush } from "@/lib/estimator/planImage";
 import { startSync } from "@/lib/estimator/sync";
 import Autosave from "@/components/estimator/Autosave";
 
@@ -19,7 +20,7 @@ import Autosave from "@/components/estimator/Autosave";
  * offline cache, the sync loop that pulls what the server holds and pushes
  * what this device owes, the photo queue, and the pull of catalog photography
  * added anywhere else — the app is not the only way a photo reaches the
- * catalog — and the live prices, so a rate changed in Supabase reaches the
+ * catalog — the plan-image queue, and the live prices, so a rate changed in Supabase reaches the
  * field without a redeploy.
  */
 export default function Boot() {
@@ -33,11 +34,13 @@ export default function Boot() {
     }
     const stopEstimates = startSync();
     const stopPhotos = startPhotoAutoFlush();
+    const stopPlans = startPlanAutoFlush();
     const stopCatalog = startCatalogPhotoRefresh();
     const stopPrices = startCatalogPriceRefresh();
     return () => {
       stopEstimates();
       stopPhotos();
+      stopPlans();
       stopCatalog();
       stopPrices();
     };

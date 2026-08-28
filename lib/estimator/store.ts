@@ -1,6 +1,22 @@
 "use client";
 
 import {
+  SHAPE_COLORS,
+  emptyPlan,
+  nextShapeColor,
+  planId,
+  type PlanPoint,
+  type PlanScale,
+  type PlanShape,
+  type PlanState,
+  type ShapeKind,
+} from "./plan";
+import {
+  deletePlanImage,
+  queuePlanUpload,
+  setPlanUploadHandler,
+} from "./planImage";
+import {
   DEFAULT_ESTIMATOR_SETTINGS,
   project,
   selectionKey,
@@ -83,6 +99,7 @@ export function emptyEstimate(): Estimate {
     ops: [],
     syncedOpIds: [],
     baseUpdatedAt: null,
+    plan: emptyPlan(),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -98,6 +115,7 @@ const SERVER_SNAPSHOT: EstimatorSnapshot = Object.freeze({
     taps: {},
     labels: {},
     assemblyBuckets: {},
+    plan: emptyPlan(),
     updatedAt: "",
   }) as Estimate,
   settings: DEFAULT_ESTIMATOR_SETTINGS,
@@ -148,6 +166,74 @@ function stringMap(value: unknown): Record<string, string> {
   return out;
 }
 
+/**
+ * A plan read back from storage.
+ *
+ * Validated field by field rather than trusted, for the same reason countMap
+ * drops non-positive taps: a corrupt or hand-edited record must not be able to
+ * put a NaN measurement on a proposal. A vertex list that does not survive
+ * this comes back as no shape at all, which reads as "draw it again" instead
+ * of quietly measuring nothing.
+ */
+function finite(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function pointFrom(value: unknown): PlanPoint | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const x = finite(v.x);
+  const y = finite(v.y);
+  return x === null || y === null ? null : { x, y };
+}
+
+function scaleFrom(value: unknown): PlanScale | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const ppf = finite(v.pixelsPerFoot);
+  const p1 = pointFrom(v.p1);
+  const p2 = pointFrom(v.p2);
+  if (ppf === null || ppf <= 0 || !p1 || !p2) return null;
+  return { pixelsPerFoot: ppf, p1, p2, label: String(v.label ?? "") };
+}
+
+function shapesFrom(value: unknown): PlanShape[] {
+  if (!Array.isArray(value)) return [];
+  const out: PlanShape[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    const type = r.type === "linear" ? "linear" : r.type === "area" ? "area" : null;
+    if (!type || typeof r.id !== "string" || !r.id) continue;
+    const vertices = Array.isArray(r.vertices)
+      ? r.vertices.map(pointFrom).filter((p): p is PlanPoint => p !== null)
+      : [];
+    // Below the minimum the shape cannot be drawn, measured or repaired.
+    if (vertices.length < (type === "area" ? 3 : 2)) continue;
+    out.push({
+      id: r.id,
+      type,
+      vertices,
+      color: typeof r.color === "string" ? r.color : SHAPE_COLORS[0],
+      assemblyId: typeof r.assemblyId === "string" ? r.assemblyId : null,
+    });
+  }
+  return out;
+}
+
+function planFrom(value: unknown): PlanState {
+  if (!value || typeof value !== "object") return emptyPlan();
+  const v = value as Record<string, unknown>;
+  return {
+    imageId: typeof v.imageId === "string" && v.imageId ? v.imageId : null,
+    imageUrl: typeof v.imageUrl === "string" && v.imageUrl ? v.imageUrl : null,
+    imageWidth: finite(v.imageWidth) ?? 0,
+    imageHeight: finite(v.imageHeight) ?? 0,
+    scale: scaleFrom(v.scale),
+    shapes: shapesFrom(v.shapes),
+  };
+}
+
 function loadEstimate(): Estimate {
   if (typeof window === "undefined") return emptyEstimate();
   try {
@@ -176,6 +262,7 @@ function loadEstimate(): Estimate {
         ? p.syncedOpIds.filter((id): id is string => typeof id === "string")
         : [],
       baseUpdatedAt: typeof p.baseUpdatedAt === "string" ? p.baseUpdatedAt : null,
+      plan: planFrom(p.plan),
       updatedAt: at,
     };
   } catch {
@@ -262,6 +349,10 @@ function mutate(fn: (draft: Estimate) => void) {
     labels: { ...current.labels },
     assemblyBuckets: { ...current.assemblyBuckets },
     ops: [...current.ops],
+    // Shapes are replaced wholesale by every plan reducer below, so the array
+    // is copied here and its members are never mutated in place — a dragged
+    // vertex must not reach through the snapshot React last rendered.
+    plan: { ...current.plan, shapes: [...current.plan.shapes] },
     updatedAt: new Date().toISOString(),
   };
   fn(draft);
@@ -320,6 +411,81 @@ export function setAssemblyBuckets(assemblyId: string, buckets: number) {
   );
 }
 
+// --- The map take-off -----------------------------------------------------
+//
+// Every reducer here replaces the shape array rather than editing it, so a
+// render that is holding an old snapshot can never see a half-applied drag.
+
+function mutatePlan(fn: (plan: PlanState) => PlanState) {
+  mutate((d) => {
+    d.plan = fn(d.plan);
+  });
+}
+
+/**
+ * Point the plan at a newly picked image.
+ *
+ * The bytes are already in IndexedDB by the time this runs — see
+ * planImage.readPlanFile. Replacing the image clears the scale and the shapes
+ * with it: vertices are in the old image's pixel space, and a calibration
+ * measured on one aerial means nothing on another. Leaving them would produce
+ * shapes that look plausible and measure wrong, which is the worst outcome
+ * available.
+ */
+export function setPlanImage(
+  clientId: string,
+  image: { id: string; width: number; height: number },
+) {
+  const previous = getSnapshot().estimate.plan.imageId;
+  mutatePlan(() => ({
+    ...emptyPlan(),
+    imageId: image.id,
+    imageWidth: image.width,
+    imageHeight: image.height,
+  }));
+  if (previous && previous !== image.id) void deletePlanImage(previous);
+  queuePlanUpload(image.id, clientId);
+}
+
+/** Called by the upload queue once the image is reachable from elsewhere. */
+setPlanUploadHandler((id, url) => {
+  mutatePlan((plan) => (plan.imageId === id ? { ...plan, imageUrl: url } : plan));
+});
+
+export function setPlanScale(scale: PlanScale | null) {
+  mutatePlan((plan) => ({ ...plan, scale }));
+}
+
+export function addShape(type: ShapeKind, vertices: PlanPoint[], assemblyId: string | null) {
+  mutatePlan((plan) => ({
+    ...plan,
+    shapes: [
+      ...plan.shapes,
+      {
+        id: planId("shape"),
+        type,
+        vertices,
+        color: nextShapeColor(plan.shapes.length),
+        assemblyId,
+      },
+    ],
+  }));
+}
+
+export function updateShape(id: string, patch: Partial<Omit<PlanShape, "id">>) {
+  mutatePlan((plan) => ({
+    ...plan,
+    shapes: plan.shapes.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+  }));
+}
+
+export function removeShape(id: string) {
+  mutatePlan((plan) => ({
+    ...plan,
+    shapes: plan.shapes.filter((s) => s.id !== id),
+  }));
+}
+
 export function setJobName(jobName: string) {
   mutate((d) => {
     d.jobName = jobName;
@@ -349,6 +515,7 @@ export function mergeRemote(
     jobName?: string;
     dealId?: number | null;
     propertyId?: number | null;
+    plan?: unknown;
     updatedAt?: string | null;
   } | null,
   remoteOps: TapOp[],
@@ -364,6 +531,7 @@ export function mergeRemote(
   const ops = [...byId.values()].sort((a, b) => (a.at < b.at ? -1 : 1));
   const remoteNewer =
     !!remote?.updatedAt && remote.updatedAt > (current.updatedAt ?? "");
+  const remotePlan = remote?.plan !== undefined ? planFrom(remote.plan) : null;
 
   const draft: Estimate = {
     ...current,
@@ -383,6 +551,13 @@ export function mergeRemote(
         ...remoteOps.map((op) => op.id),
       ]),
     ],
+    // The plan is a document, so it takes the newer side whole rather than
+    // merging — half of one aerial's shapes on another's calibration would
+    // measure confidently and be wrong. A remote plan with no image never
+    // replaces one that has bytes here, for the same reason an empty job name
+    // does not un-name this estimate: an estimate saved before anyone drew is
+    // not evidence that the drawing should go.
+    plan: remoteNewer && remotePlan?.imageId ? remotePlan : current.plan,
     baseUpdatedAt: remote?.updatedAt ?? current.baseUpdatedAt ?? null,
     updatedAt: current.updatedAt,
   };
@@ -413,11 +588,14 @@ export function adoptEstimate(
     jobName?: string;
     dealId?: number | null;
     propertyId?: number | null;
+    plan?: unknown;
     updatedAt?: string | null;
   },
   remoteOps: TapOp[],
 ) {
   const ops = remoteOps.filter(isOp).sort((a, b) => (a.at < b.at ? -1 : 1));
+  const previousImage = getSnapshot().estimate.plan.imageId;
+  const plan = planFrom(row.plan);
   persist({
     clientId: row.clientId,
     jobName: row.jobName ?? "",
@@ -427,13 +605,26 @@ export function adoptEstimate(
     ops,
     syncedOpIds: ops.map((op) => op.id),
     baseUpdatedAt: row.updatedAt ?? null,
+    // Whatever the server holds, wholesale — this replaces the screen. The
+    // adopted plan's bytes are not on this device, so it renders from the
+    // synced URL until someone replaces the image.
+    plan,
     updatedAt: row.updatedAt ?? new Date().toISOString(),
   });
+  // The estimate being replaced is not coming back on this device; its image
+  // would otherwise sit in IndexedDB for ever with nothing referencing it.
+  if (previousImage && previousImage !== plan.imageId) {
+    void deletePlanImage(previousImage);
+  }
 }
 
 /** Start a fresh estimate. The old one is only gone once it has synced. */
 export function clearEstimate() {
+  // The queue still holds the upload, so a plan drawn offline and cleared
+  // before coverage returns still reaches storage; only the local copy goes.
+  const image = getSnapshot().estimate.plan.imageId;
   persist(emptyEstimate());
+  if (image) void deletePlanImage(image);
 }
 
 export function updateSettings(patch: Partial<EstimatorSettings>) {
