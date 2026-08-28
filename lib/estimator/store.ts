@@ -4,12 +4,15 @@ import {
   emptyPlan,
   nextShapeColor,
   planId,
-  shapeFrom,
+  pruneNodes,
+  topologyFrom,
+  type PendingPoint,
   type PlanShape,
   type PlanState,
   type ShapeKind,
 } from "./plan";
 import { isLatLng, type LatLng } from "./geo";
+import { sharedNodeIds } from "./plan";
 import type { Basemap, MapAnchor } from "./mapLayers";
 import {
   emptyVisit,
@@ -193,12 +196,12 @@ function anchorFrom(value: unknown): MapAnchor | null {
 function planFrom(value: unknown): PlanState {
   if (!value || typeof value !== "object") return emptyPlan();
   const v = value as Record<string, unknown>;
+  const { nodes, shapes } = topologyFrom(v);
   return {
     anchor: anchorFrom(v.anchor),
     basemap: v.basemap === "none" ? "none" : "satellite",
-    shapes: Array.isArray(v.shapes)
-      ? v.shapes.map(shapeFrom).filter((s): s is PlanShape => s !== null)
-      : [],
+    nodes,
+    shapes,
     hiddenOverlayIds: Array.isArray(v.hiddenOverlayIds)
       ? v.hiddenOverlayIds.filter((id): id is string => typeof id === "string")
       : [],
@@ -440,24 +443,144 @@ export function setOverlayHidden(overlayId: string, hidden: boolean) {
   });
 }
 
+/**
+ * Commit a drawn shape.
+ *
+ * Points that snapped to an existing corner while drawing arrive carrying its
+ * id and reuse it; the rest mint new corners. That is where a bed becomes
+ * joined to the lawn beside it — at the tap, when the person drawing could see
+ * what they were aiming at, rather than by a proximity guess made afterwards.
+ */
 export function addShape(
   type: ShapeKind,
-  vertices: LatLng[],
+  points: PendingPoint[],
   assemblyId: string | null,
 ) {
-  mutatePlan((plan) => ({
-    ...plan,
-    shapes: [
-      ...plan.shapes,
-      {
-        id: planId("shape"),
-        type,
-        vertices,
-        color: nextShapeColor(plan.shapes.length),
-        assemblyId,
-      },
-    ],
-  }));
+  mutatePlan((plan) => {
+    const nodes = { ...plan.nodes };
+    const vertices: string[] = [];
+    for (const point of points) {
+      if (point.nodeId && nodes[point.nodeId]) {
+        vertices.push(point.nodeId);
+        continue;
+      }
+      const id = planId("n");
+      nodes[id] = point.at;
+      vertices.push(id);
+    }
+    return {
+      ...plan,
+      nodes,
+      shapes: [
+        ...plan.shapes,
+        {
+          id: planId("shape"),
+          type,
+          vertices,
+          color: nextShapeColor(plan.shapes.length),
+          assemblyId,
+        },
+      ],
+    };
+  });
+}
+
+/**
+ * Move one corner.
+ *
+ * Every shape holding this id follows, because they are holding the same
+ * corner. That is the whole point of the node table: the bed and the lawn keep
+ * their shared edge when either is adjusted, and both measurements re-derive
+ * from where it now is.
+ */
+export function moveNode(nodeId: string, at: LatLng) {
+  mutatePlan((plan) =>
+    plan.nodes[nodeId] ? { ...plan, nodes: { ...plan.nodes, [nodeId]: at } } : plan,
+  );
+}
+
+/** Move several at once, for dragging a whole shape. */
+export function moveNodes(moves: Record<string, LatLng>) {
+  mutatePlan((plan) => ({ ...plan, nodes: { ...plan.nodes, ...moves } }));
+}
+
+/**
+ * Join two corners into one — how an adjacency drawn separately gets fixed.
+ *
+ * `from` is abandoned and every shape referencing it is repointed at `into`.
+ * A shape that ends up with the same corner twice in a row has it collapsed,
+ * since a zero-length side is a corner the user can no longer separate and it
+ * contributes nothing to the area.
+ */
+export function mergeNodes(fromId: string, intoId: string) {
+  if (fromId === intoId) return;
+  mutatePlan((plan) => {
+    if (!plan.nodes[fromId] || !plan.nodes[intoId]) return plan;
+    const shapes = plan.shapes
+      .map((shape) => {
+        const repointed = shape.vertices.map((v) => (v === fromId ? intoId : v));
+        const deduped = repointed.filter(
+          (id, i) => id !== repointed[(i + 1) % repointed.length],
+        );
+        return { ...shape, vertices: deduped };
+      })
+      // A merge can take a triangle down to a two-corner ring, which is a line
+      // pretending to be an area. Dropping it beats keeping something that
+      // measures nothing and cannot be repaired.
+      .filter((s) => s.vertices.length >= (s.type === "area" ? 3 : 2));
+    return { ...plan, shapes, nodes: pruneNodes(plan.nodes, shapes) };
+  });
+}
+
+/** Split a side: a new corner, belonging only to the shape it was added to. */
+export function insertVertex(shapeId: string, index: number, at: LatLng): string {
+  const id = planId("n");
+  mutatePlan((plan) => {
+    const shape = plan.shapes.find((s) => s.id === shapeId);
+    if (!shape) return plan;
+    const vertices = [...shape.vertices];
+    vertices.splice(index, 0, id);
+    return {
+      ...plan,
+      nodes: { ...plan.nodes, [id]: at },
+      shapes: plan.shapes.map((s) => (s.id === shapeId ? { ...s, vertices } : s)),
+    };
+  });
+  return id;
+}
+
+/**
+ * Give this shape its own copy of every corner it shares.
+ *
+ * The way out of a join. A mis-aimed tap can weld a bed to a lawn it was never
+ * meant to touch, and without this the only remedy would be redrawing it —
+ * so the shape keeps its geometry exactly and simply stops being the same
+ * corner as anything else.
+ */
+export function detachShape(shapeId: string) {
+  mutatePlan((plan) => {
+    const shape = plan.shapes.find((s) => s.id === shapeId);
+    if (!shape) return plan;
+    const shared = sharedNodeIds(plan.shapes);
+    const nodes = { ...plan.nodes };
+    const swap = new Map<string, string>();
+    for (const id of shape.vertices) {
+      if (!shared.has(id) || swap.has(id)) continue;
+      const clone = planId("n");
+      nodes[clone] = plan.nodes[id];
+      swap.set(id, clone);
+    }
+    if (swap.size === 0) return plan;
+    return {
+      ...plan,
+      nodes,
+      shapes: plan.shapes.map((s) =>
+        s.id === shapeId
+          ? { ...s, vertices: s.vertices.map((v) => swap.get(v) ?? v) }
+          : s,
+      ),
+    };
+  });
 }
 
 export function updateShape(id: string, patch: Partial<Omit<PlanShape, "id">>) {
@@ -468,10 +591,12 @@ export function updateShape(id: string, patch: Partial<Omit<PlanShape, "id">>) {
 }
 
 export function removeShape(id: string) {
-  mutatePlan((plan) => ({
-    ...plan,
-    shapes: plan.shapes.filter((s) => s.id !== id),
-  }));
+  mutatePlan((plan) => {
+    const shapes = plan.shapes.filter((s) => s.id !== id);
+    // Corners the deleted shape held alone go with it; ones it shared stay,
+    // because the shape it shared them with still has them.
+    return { ...plan, shapes, nodes: pruneNodes(plan.nodes, shapes) };
+  });
 }
 
 // --- The site visit -------------------------------------------------------

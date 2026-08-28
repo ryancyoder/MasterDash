@@ -26,7 +26,10 @@ import {
   assembliesForShape,
   bucketsForMeasurement,
   measurementOf,
+  sharedNodeIds,
   workBought,
+  type PendingPoint,
+  type PlanNodes,
   type PlanShape,
   type ShapeKind,
 } from "@/lib/estimator/plan";
@@ -41,6 +44,10 @@ import {
 } from "@/lib/estimator/propertyLayers";
 import {
   addShape,
+  detachShape,
+  insertVertex,
+  mergeNodes,
+  moveNodes,
   removeShape,
   setBasemap,
   setOverlayHidden,
@@ -98,7 +105,7 @@ export default function PlanPage({
    * reports taps; Finish, Undo and Cancel are buttons on this page, and a
    * button needs something to act on.
    */
-  const [pending, setPending] = useState<LatLng[]>([]);
+  const [pending, setPending] = useState<PendingPoint[]>([]);
   const [error, setError] = useState<string | null>(null);
   /** Which assembly a newly drawn shape links to, per shape kind. */
   const [armed, setArmed] = useState<Record<ShapeKind, string | null>>({
@@ -327,6 +334,7 @@ export default function PlanPage({
   );
 
   const ready = anchorIsReal(anchor);
+  const shared = useMemo(() => sharedNodeIds(plan.shapes), [plan.shapes]);
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -497,6 +505,7 @@ export default function PlanPage({
           basemap={plan.basemap}
           overlays={drawnOverlays}
           overlaySrc={overlaySrc}
+          nodes={plan.nodes}
           shapes={plan.shapes}
           labelFor={labelFor}
           tool={tool}
@@ -505,7 +514,9 @@ export default function PlanPage({
           pending={pending}
           onPendingChange={setPending}
           onCloseArea={finish}
-          onUpdateShape={updateShape}
+          onMoveNodes={moveNodes}
+          onMergeNodes={mergeNodes}
+          onInsertVertex={insertVertex}
           showMeasurements={showMeasurements}
           aligning={aligning}
           onAlignCommit={(georef: Georef) =>
@@ -546,6 +557,11 @@ export default function PlanPage({
               <ShapeCard
                 key={shape.id}
                 shape={shape}
+                nodes={plan.nodes}
+                sharedCount={
+                  shape.vertices.filter((v) => shared.has(v)).length
+                }
+                onDetach={() => detachShape(shape.id)}
                 settings={settings}
                 selected={shape.id === selectedId}
                 onSelect={() => {
@@ -604,7 +620,7 @@ export default function PlanPage({
             style={{ background: selected.color }}
           />
           <span className="flex-1 truncate text-sm font-bold tabular-nums text-ink">
-            {Math.round(measurementOf(selected)).toLocaleString()}{" "}
+            {Math.round(measurementOf(selected, plan.nodes)).toLocaleString()}{" "}
             {selected.type === "area" ? "sq ft" : "ln ft"}
           </span>
           <button
@@ -902,6 +918,9 @@ function LayersCard({
  */
 function ShapeCard({
   shape,
+  nodes,
+  sharedCount,
+  onDetach,
   settings,
   selected,
   onSelect,
@@ -909,13 +928,17 @@ function ShapeCard({
   onRemove,
 }: {
   shape: PlanShape;
+  nodes: PlanNodes;
+  /** How many of this shape's corners another shape also holds. */
+  sharedCount: number;
+  onDetach: () => void;
   settings: EstimatorSettings;
   selected: boolean;
   onSelect: () => void;
   onLink: (assemblyId: string | null) => void;
   onRemove: () => void;
 }) {
-  const measurement = measurementOf(shape);
+  const measurement = measurementOf(shape, nodes);
   const options = assembliesForShape(ASSEMBLY_MODELS, shape.type);
   const model = shape.assemblyId ? getAssembly(shape.assemblyId) : undefined;
   const buckets = bucketsForMeasurement(measurement, model?.bucketSize ?? null);
@@ -969,6 +992,27 @@ function ShapeCard({
           </option>
         ))}
       </select>
+
+      {sharedCount > 0 && (
+        <p className="mt-1.5 flex items-center gap-1.5 text-[0.7rem] text-muted">
+          <span>
+            Shares {sharedCount} corner{sharedCount === 1 ? "" : "s"}
+          </span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDetach();
+            }}
+            className="rounded-md bg-surface2 px-2 py-0.5 text-[0.65rem] font-bold text-ink"
+            // The way out of a join. A mis-aimed tap can weld a bed to a lawn
+            // it was never meant to touch, and without this the only remedy
+            // would be redrawing it.
+            title="Give this shape its own copies of the shared corners"
+          >
+            Detach
+          </button>
+        </p>
+      )}
 
       {model && buckets > 0 && (
         <p className="mt-2 text-[0.7rem] leading-snug text-muted">

@@ -74,11 +74,15 @@ export function planBuckets(estimate: Estimate): Record<string, number> {
   // No calibration gate any more. A shape is drawn on the ground, so it
   // measures something the moment it exists — there is no state where the
   // take-off is present but means nothing.
-  for (const shape of estimate.plan.shapes) {
+  const { nodes, shapes } = estimate.plan;
+  for (const shape of shapes) {
     if (!shape.assemblyId) continue;
     const model = getAssembly(shape.assemblyId);
     if (!model?.bucketSize) continue;
-    const buckets = bucketsForMeasurement(measurementOf(shape), model.bucketSize);
+    const buckets = bucketsForMeasurement(
+      measurementOf(shape, nodes),
+      model.bucketSize,
+    );
     if (buckets > 0) {
       out[shape.assemblyId] = (out[shape.assemblyId] ?? 0) + buckets;
     }
@@ -273,7 +277,8 @@ export function assemblyCount(estimate: Estimate): number {
 
 /** Shapes that measure something, for the Plan tile badge. */
 export function planShapeCount(estimate: Estimate): number {
-  return estimate.plan.shapes.filter((s) => measurementOf(s) > 0).length;
+  const { nodes, shapes } = estimate.plan;
+  return shapes.filter((s) => measurementOf(s, nodes) > 0).length;
 }
 
 export const ALL_ASSEMBLY_IDS = ASSEMBLY_MODELS.map((m) => m.id);

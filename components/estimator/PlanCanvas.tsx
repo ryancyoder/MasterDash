@@ -17,7 +17,14 @@ import {
   type WorldPoint,
 } from "@/lib/estimator/geo";
 import type { Basemap, MapAnchor, MapOverlay } from "@/lib/estimator/mapLayers";
-import { measurementOf, type PlanShape } from "@/lib/estimator/plan";
+import {
+  measurementOf,
+  pointsOf,
+  sharedNodeIds,
+  type PendingPoint,
+  type PlanNodes,
+  type PlanShape,
+} from "@/lib/estimator/plan";
 import {
   ATTRIBUTION,
   TILE_SIZE,
@@ -58,6 +65,15 @@ const MIDPOINT_GRAB_PX = 18;
 const CLOSE_GRAB_PX = 28;
 /** Past this, a press is a pan rather than a tap. */
 const TAP_SLOP_PX = 10;
+/**
+ * How near an existing corner a tap or a drop has to land to become that
+ * corner rather than a new one beside it.
+ *
+ * In screen pixels on purpose, so it means the same thing at every zoom: it is
+ * a statement about aim, not about the ground. Slightly tighter than the grab
+ * radius, so reaching for a corner and joining to one do not fight.
+ */
+const SNAP_PX = 18;
 
 /**
  * Zoom, as canvas pixels per World unit.
@@ -181,6 +197,7 @@ export default function PlanCanvas({
   scaling,
   scalePoints,
   onScalePointsChange,
+  nodes,
   shapes,
   labelFor,
   tool,
@@ -189,7 +206,9 @@ export default function PlanCanvas({
   pending,
   onPendingChange,
   onCloseArea,
-  onUpdateShape,
+  onMoveNodes,
+  onMergeNodes,
+  onInsertVertex,
   showMeasurements,
 }: {
   /** Where to open when there is nothing drawn yet. */
@@ -217,6 +236,8 @@ export default function PlanCanvas({
   scaling: boolean;
   scalePoints: LatLng[];
   onScalePointsChange: (points: LatLng[]) => void;
+  /** Every corner on the plan. Shapes hold ids into this; see plan.ts. */
+  nodes: PlanNodes;
   shapes: PlanShape[];
   /** The assembly name drawn under a shape's measurement, when it has one. */
   labelFor: (shape: PlanShape) => string | null;
@@ -224,11 +245,16 @@ export default function PlanCanvas({
   selectedShapeId: string | null;
   onSelectShape: (id: string | null) => void;
   /** Vertices of the shape being drawn. Owned by the page, not by the canvas. */
-  pending: LatLng[];
-  onPendingChange: (vertices: LatLng[]) => void;
+  pending: PendingPoint[];
+  onPendingChange: (vertices: PendingPoint[]) => void;
   /** Tapping the first vertex of an area asks the page to finish it. */
   onCloseArea: () => void;
-  onUpdateShape: (id: string, patch: Partial<Omit<PlanShape, "id">>) => void;
+  /** One write per drag, on release. Several corners when a shape was moved. */
+  onMoveNodes: (moves: Record<string, LatLng>) => void;
+  /** A corner dropped onto another becomes that corner. */
+  onMergeNodes: (fromId: string, intoId: string) => void;
+  /** Splitting a side. Returns the new corner's id so the drag can continue. */
+  onInsertVertex: (shapeId: string, index: number, at: LatLng) => string;
   showMeasurements: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -253,15 +279,22 @@ export default function PlanCanvas({
   // pointermove to the estimate is a localStorage write and a full re-render
   // per event, which turns a drag into a slideshow.
   const dragRef = useRef<
-    | { kind: "vertex"; shapeId: string; index: number; base: LatLng[] }
-    | { kind: "shape"; shapeId: string; base: LatLng[]; startWorld: WorldPoint }
+    | { kind: "vertex"; nodeId: string }
+    | { kind: "shape"; base: Record<string, LatLng>; startWorld: WorldPoint }
     | { kind: "pan"; startX: number; startY: number; centre: WorldPoint }
     | null
   >(null);
-  const [dragVertices, setDragVertices] = useState<{
-    shapeId: string;
-    vertices: LatLng[];
-  } | null>(null);
+  /**
+   * Corners being dragged, by id, held locally and committed on release.
+   *
+   * Keyed by CORNER rather than by shape, which is what makes a shared edge
+   * visibly behave: drag the bed's corner and the lawn holding the same corner
+   * follows it across the screen, live, instead of jumping into place after
+   * the finger lifts.
+   */
+  const [dragNodes, setDragNodes] = useState<Record<string, LatLng> | null>(null);
+  /** The corner a drop would join to, highlighted while the finger is down. */
+  const [snapTo, setSnapTo] = useState<string | null>(null);
 
   /**
    * The layer's placement mid-gesture, held here and committed on release —
@@ -351,7 +384,9 @@ export default function PlanCanvas({
   /** Everything with a position, for the opening fit. */
   const contentBounds = useCallback((): WorldBounds | null => {
     const pts: WorldPoint[] = [];
-    for (const s of shapes) for (const v of s.vertices) pts.push(toWorld(v));
+    for (const shape of shapes) {
+      for (const v of pointsOf(shape, nodes)) pts.push(toWorld(v));
+    }
     for (const o of overlays) {
       const c = cornersWorld(georefCorners(o.georef));
       pts.push(c.tl, c.tr, c.bl, {
@@ -360,7 +395,7 @@ export default function PlanCanvas({
       });
     }
     return worldBounds(pts);
-  }, [shapes, overlays]);
+  }, [shapes, nodes, overlays]);
 
   /**
    * Point the view at everything there is.
@@ -492,15 +527,18 @@ export default function PlanCanvas({
     [liveGeoref, aligning],
   );
 
-  /** Shapes as drawn right now — a live drag overrides the stored vertices. */
-  const drawnShapes = useMemo(
-    () =>
-      dragVertices
-        ? shapes.map((s) =>
-            s.id === dragVertices.shapeId ? { ...s, vertices: dragVertices.vertices } : s,
-          )
-        : shapes,
-    [shapes, dragVertices],
+  /** Corners as they are right now — a live drag overrides the stored ones. */
+  const liveNodes = useMemo(
+    () => (dragNodes ? { ...nodes, ...dragNodes } : nodes),
+    [nodes, dragNodes],
+  );
+
+  const shared = useMemo(() => sharedNodeIds(shapes), [shapes]);
+
+  /** Every corner's position, resolved once per draw rather than per shape. */
+  const shapePoints = useCallback(
+    (shape: PlanShape) => pointsOf(shape, liveNodes),
+    [liveNodes],
   );
 
   // --- Draw ---------------------------------------------------------------
@@ -642,8 +680,9 @@ export default function PlanCanvas({
     }
 
     // 3. The take-off.
-    for (const shape of drawnShapes) {
-      const pts = shape.vertices.map((v) => toCanvas(toWorld(v), t));
+    for (const shape of shapes) {
+      const points = shapePoints(shape);
+      const pts = points.map((v) => toCanvas(toWorld(v), t));
       if (pts.length < 2) continue;
       const selected = shape.id === selectedShapeId;
       ctx.strokeStyle = shape.color;
@@ -667,7 +706,7 @@ export default function PlanCanvas({
         anchorPt = pts[Math.floor(pts.length / 2)];
       }
 
-      const measurement = measurementOf(shape);
+      const measurement = measurementOf(shape, liveNodes);
       const label = labelFor(shape);
       if (showMeasurements && measurement > 0) {
         drawLabel(
@@ -690,6 +729,8 @@ export default function PlanCanvas({
         );
       }
 
+      const isShared = (i: number) => shared.has(shape.vertices[i] ?? "");
+
       if (selected) {
         const segCount = shape.type === "area" ? pts.length : pts.length - 1;
         for (let j = 0; j < segCount; j++) {
@@ -710,7 +751,7 @@ export default function PlanCanvas({
           ctx.lineTo(m.x, m.y + 3);
           ctx.stroke();
         }
-        for (const p of pts) {
+        pts.forEach((p, i) => {
           ctx.fillStyle = "#ffffff";
           ctx.strokeStyle = shape.color;
           ctx.lineWidth = 3;
@@ -718,21 +759,39 @@ export default function PlanCanvas({
           ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
-        }
+          // A shared corner gets a ring around it. Dragging one moves every
+          // shape holding it, so which kind of corner this is has to be
+          // legible BEFORE the finger lands, not discovered afterwards when
+          // the lawn came along with the bed.
+          if (isShared(i)) {
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        });
       } else {
-        for (const p of pts) {
+        pts.forEach((p, i) => {
           ctx.fillStyle = shape.color;
           ctx.beginPath();
-          ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+          ctx.arc(p.x, p.y, isShared(i) ? 5 : 4, 0, Math.PI * 2);
           ctx.fill();
-        }
+          if (isShared(i)) {
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        });
       }
     }
 
     // The shape being drawn. No rubber band to the cursor — there is no cursor
     // on a touch screen, and a line chasing the last tap is noise.
     if (pending.length > 0) {
-      const pts = pending.map((v) => toCanvas(toWorld(v), t));
+      const pts = pending.map((v) => toCanvas(toWorld(v.at), t));
       ctx.strokeStyle = "#22c55e";
       ctx.lineWidth = 3;
       ctx.setLineDash([8, 6]);
@@ -755,7 +814,29 @@ export default function PlanCanvas({
         ctx.arc(p.x, p.y, closeable ? 13 : 7, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
+        // A point that landed on an existing corner is drawn joined, so a
+        // snap you did not intend is visible while there is still an Undo
+        // point button to take it back.
+        if (pending[i].nodeId) {
+          ctx.strokeStyle = "#22c55e";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 13, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       });
+    }
+
+    // What a drop would join to. Drawn last so it sits over the corner it is
+    // about to consume.
+    if (snapTo && liveNodes[snapTo]) {
+      const p = toCanvas(toWorld(liveNodes[snapTo]), t);
+      ctx.strokeStyle = "#22c55e";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 17, 0, Math.PI * 2);
+      ctx.stroke();
+      drawLabel(ctx, "join", p.x, p.y - 28, "#22c55e");
     }
 
     // 4. A scale bar. On a plan image the zoom percentage was the honest
@@ -798,7 +879,11 @@ export default function PlanCanvas({
       ctx.fillText(text, x, y - 8);
     }
   }, [
-    drawnShapes,
+    shapes,
+    liveNodes,
+    shapePoints,
+    shared,
+    snapTo,
     pending,
     canvasSize,
     assetVersion,
@@ -822,6 +907,33 @@ export default function PlanCanvas({
 
   // --- Input --------------------------------------------------------------
 
+  /**
+   * The nearest existing corner within the snap radius, or null.
+   *
+   * Measured on screen, so aiming at a corner means the same thing whether the
+   * map is showing a whole property or one bed. `exclude` keeps a corner from
+   * joining to itself, and keeps a shape being drawn from folding onto a
+   * corner it just placed.
+   */
+  const snapCandidate = useCallback(
+    (cp: Pt, exclude: Iterable<string> = []): string | null => {
+      const t = transformNow();
+      const skip = new Set(exclude);
+      let best: string | null = null;
+      let bestDist = SNAP_PX;
+      for (const [id, at] of Object.entries(liveNodes)) {
+        if (skip.has(id)) continue;
+        const d = dist(cp, toCanvas(toWorld(at), t));
+        if (d <= bestDist) {
+          best = id;
+          bestDist = d;
+        }
+      }
+      return best;
+    },
+    [liveNodes, transformNow],
+  );
+
   function canvasPoint(e: React.PointerEvent): Pt {
     const rect = canvasRef.current!.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -842,29 +954,36 @@ export default function PlanCanvas({
     // While a layer is being placed, a tap is not a request to draw on it.
     if (aligning) return;
 
-    if (tool === "area") {
+    if (tool === "area" || tool === "linear") {
       // Tap the first vertex to close. Generous radius: this is the one target
       // that must be hittable through a glove.
       if (
+        tool === "area" &&
         pending.length >= 3 &&
-        dist(cp, toCanvas(toWorld(pending[0]), t)) < CLOSE_GRAB_PX
+        dist(cp, toCanvas(toWorld(pending[0].at), t)) < CLOSE_GRAB_PX
       ) {
         onCloseArea();
         return;
       }
-      onPendingChange([...pending, ll]);
-      return;
-    }
-
-    if (tool === "linear") {
-      onPendingChange([...pending, ll]);
+      // Land near an existing corner and this becomes that corner — which is
+      // how a bed comes to share its edge with the lawn beside it. Decided at
+      // the tap, while the person drawing can see what they were aiming at,
+      // rather than guessed from proximity once the shape is finished.
+      const nodeId = snapCandidate(
+        cp,
+        pending.map((pt) => pt.nodeId).filter((id): id is string => id !== null),
+      );
+      onPendingChange([
+        ...pending,
+        { at: nodeId ? (liveNodes[nodeId] ?? ll) : ll, nodeId },
+      ]);
       return;
     }
 
     // select: topmost shape under the finger, or nothing.
     for (let i = shapes.length - 1; i >= 0; i--) {
       const shape = shapes[i];
-      const pts = shape.vertices.map((v) => toCanvas(toWorld(v), t));
+      const pts = shapePoints(shape).map((v) => toCanvas(toWorld(v), t));
       if (shape.type === "area" && pointInPolygon(cp, pts)) {
         onSelectShape(shape.id);
         return;
@@ -887,7 +1006,7 @@ export default function PlanCanvas({
     // first finger had started, so a zoom can never reshape a bed.
     if (pointersRef.current.size === 2) {
       dragRef.current = null;
-      setDragVertices(null);
+      setDragNodes(null);
       pressRef.current = null;
       const [a, b] = [...pointersRef.current.values()];
       const gapPx = Math.hypot(a.x - b.x, a.y - b.y) || 1;
@@ -929,19 +1048,15 @@ export default function PlanCanvas({
     if (tool === "select") {
       const t = transformNow();
 
-      // 1. Grab a vertex of any shape.
+      // 1. Grab a corner of any shape. What is grabbed is the CORNER, so a
+      //    shared one carries every shape holding it.
       for (let i = shapes.length - 1; i >= 0; i--) {
         const shape = shapes[i];
-        const pts = shape.vertices.map((v) => toCanvas(toWorld(v), t));
+        const pts = shapePoints(shape).map((v) => toCanvas(toWorld(v), t));
         for (let j = 0; j < pts.length; j++) {
           if (dist(cp, pts[j]) <= VERTEX_GRAB_PX) {
             onSelectShape(shape.id);
-            dragRef.current = {
-              kind: "vertex",
-              shapeId: shape.id,
-              index: j,
-              base: shape.vertices,
-            };
+            dragRef.current = { kind: "vertex", nodeId: shape.vertices[j] };
             return;
           }
         }
@@ -949,42 +1064,39 @@ export default function PlanCanvas({
 
       const selected = shapes.find((s) => s.id === selectedShapeId);
       if (selected) {
-        const pts = selected.vertices.map((v) => toCanvas(toWorld(v), t));
-        // 2. Split a segment on its midpoint handle.
+        const pts = shapePoints(selected).map((v) => toCanvas(toWorld(v), t));
+        // 2. Split a segment on its midpoint handle. The new corner belongs to
+        //    this shape alone — splitting a side is not a claim about the
+        //    shape next door, even where the side happens to be shared.
         const segCount = selected.type === "area" ? pts.length : pts.length - 1;
         for (let j = 0; j < segCount; j++) {
           const a = pts[j];
           const b = pts[(j + 1) % pts.length];
           const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
           if (dist(cp, mid) <= MIDPOINT_GRAB_PX) {
-            const at = j + 1;
-            const verts = [
-              ...selected.vertices.slice(0, at),
+            const nodeId = onInsertVertex(
+              selected.id,
+              j + 1,
               toLatLng(fromCanvas(mid, t)),
-              ...selected.vertices.slice(at),
-            ];
-            onUpdateShape(selected.id, { vertices: verts });
-            dragRef.current = {
-              kind: "vertex",
-              shapeId: selected.id,
-              index: at,
-              base: verts,
-            };
+            );
+            dragRef.current = { kind: "vertex", nodeId };
             return;
           }
         }
-        // 3. Grab the body to move the whole shape.
+        // 3. Grab the body to move the whole shape. Shared corners come along,
+        //    which deforms whatever else holds them — that is what sharing an
+        //    edge means, and the alternative (quietly detaching) would leave
+        //    someone believing the two are still joined when they are not.
+        const base: Record<string, LatLng> = {};
+        for (const id of selected.vertices) {
+          if (liveNodes[id]) base[id] = liveNodes[id];
+        }
         const onBody =
           selected.type === "area"
             ? pointInPolygon(cp, pts)
             : pts.some((p, j) => j > 0 && distToSegment(cp, pts[j - 1], p) < 14);
         if (onBody) {
-          dragRef.current = {
-            kind: "shape",
-            shapeId: selected.id,
-            base: selected.vertices,
-            startWorld: fromCanvas(cp, t),
-          };
+          dragRef.current = { kind: "shape", base, startWorld: fromCanvas(cp, t) };
           return;
         }
       }
@@ -1099,13 +1211,13 @@ export default function PlanCanvas({
       return;
     }
 
-    const world = fromCanvas(canvasPoint(e), transformNow());
+    const cp = canvasPoint(e);
+    const world = fromCanvas(cp, transformNow());
     if (drag.kind === "vertex") {
-      const ll = toLatLng(world);
-      setDragVertices({
-        shapeId: drag.shapeId,
-        vertices: drag.base.map((v, k) => (k === drag.index ? ll : v)),
-      });
+      setDragNodes({ [drag.nodeId]: toLatLng(world) });
+      // Offered while the finger is still down, so a join is something you
+      // aim at and can steer away from rather than something you discover.
+      setSnapTo(snapCandidate(cp, [drag.nodeId]));
     } else {
       // Translated in World rather than in degrees, so the shape keeps its
       // shape on screen while it moves. Mercator's scale factor changes with
@@ -1114,13 +1226,12 @@ export default function PlanCanvas({
       // across counties is not a case worth distorting the gesture for.
       const dx = world.x - drag.startWorld.x;
       const dy = world.y - drag.startWorld.y;
-      setDragVertices({
-        shapeId: drag.shapeId,
-        vertices: drag.base.map((v) => {
-          const w = toWorld(v);
-          return toLatLng({ x: w.x + dx, y: w.y + dy });
-        }),
-      });
+      const moved: Record<string, LatLng> = {};
+      for (const [id, at] of Object.entries(drag.base)) {
+        const w = toWorld(at);
+        moved[id] = toLatLng({ x: w.x + dx, y: w.y + dy });
+      }
+      setDragNodes(moved);
     }
   }
 
@@ -1160,12 +1271,23 @@ export default function PlanCanvas({
     pressRef.current = null;
 
     // One write per drag, on release, rather than one per move event.
-    if (dragVertices && drag && drag.kind !== "pan") {
-      onUpdateShape(dragVertices.shapeId, { vertices: dragVertices.vertices });
-      setDragVertices(null);
+    if (dragNodes && drag && drag.kind !== "pan") {
+      const target = snapTo;
+      const moved = dragNodes;
+      setSnapTo(null);
+      setDragNodes(null);
+      if (drag.kind === "vertex" && target) {
+        // Dropped onto another corner: land it exactly where the target
+        // already is, then fold the two together.
+        onMoveNodes({ [drag.nodeId]: liveNodes[target] ?? moved[drag.nodeId] });
+        onMergeNodes(drag.nodeId, target);
+      } else {
+        onMoveNodes(moved);
+      }
       return;
     }
-    setDragVertices(null);
+    setSnapTo(null);
+    setDragNodes(null);
 
     if (press && !press.moved) handleTap(canvasPoint(e));
   }
@@ -1176,10 +1298,11 @@ export default function PlanCanvas({
       gestureRef.current = null;
       alignRef.current = null;
       setLiveGeoref(null);
+      setSnapTo(null);
     }
     dragRef.current = null;
     pressRef.current = null;
-    setDragVertices(null);
+    setDragNodes(null);
   }
 
   return (

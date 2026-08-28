@@ -252,6 +252,58 @@ The whole module is checked against a Vincenty inverse on WGS84. Distances
 agree to under a millimetre over a kilometre, and a 100 m square comes back at
 107,639 sq ft exactly.
 
+#### Corners are shared, not copied
+
+A mulch bed and the lawn beside it meet along an edge. Those are not two
+polygons that happen to touch — they are two polygons holding the same corners,
+and the app models it that way.
+
+Drawing a corner within **18 screen pixels** of an existing one makes it *that*
+corner rather than a new one beside it. Pixels, not feet, so aiming means the
+same thing at every zoom: it is a statement about aim, not about the ground. A
+point that snapped is drawn joined while there is still an **Undo point** button
+to take it back.
+
+**A snap that copied the coordinate would have been worse than nothing.** The
+bed's corner and the lawn's corner would sit at the same place and remain
+strangers; drag one afterwards and the other stays, opening a sliver of ground
+that belongs to neither shape and is billed by both. So the position cannot live
+on the polygon. `PlanState.nodes` holds every corner by id and shapes reference
+them — `vertices: string[]`, not coordinates. Drag a shared corner and both
+shapes follow, live, and both measurements re-derive from where it now is.
+
+Same rule as everywhere else here: store the relationship, derive the number.
+Upright reaches for it too — a slope run stores only which two points it joins
+and works the grade out at draw time, so dragging a pin corrects the slope,
+which a stored percentage could not do.
+
+Ids rather than positions in a list, because **splitting a side inserts a corner
+mid-array**. Anything identifying a corner by its index would be silently
+repointed at its neighbour by that one existing gesture.
+
+What follows from the model:
+
+- **A shared corner is drawn with a ring.** Whether a drag moves one shape or
+  two has to be legible before the finger lands, not discovered afterwards when
+  the lawn came along with the bed.
+- **Dropping a corner onto another joins them**, which is how an adjacency drawn
+  separately gets fixed. The target is ringed and labelled *join* while the
+  finger is still down, so it is something you aim at and can steer away from.
+- **Moving a whole shape carries its shared corners**, deforming whatever else
+  holds them. That is what sharing an edge means. Quietly detaching instead
+  would leave someone believing two shapes are still joined when they are not.
+- **Splitting a side creates a corner for that shape alone** — adding detail to
+  the bed is not a claim about the lawn, even where the side is shared.
+- **Detach** on a shape gives it its own copies of every corner it shares. A
+  mis-aimed tap can weld a bed to a lawn it was never meant to touch, and
+  without a way out the only remedy would be redrawing it.
+- Corners nothing holds any more are pruned when a shape is deleted; ones it
+  shared stay, because the shape it shared them with still has them.
+
+Estimates saved before this get one corner minted per stored coordinate.
+Nothing is joined by that upgrade, which is right: two corners that merely
+happened to be drawn in the same spot were never the same corner.
+
 #### The map is drawn, not embedded
 
 There is no map library. A tile, a georeferenced plan and a drawn bed are all
