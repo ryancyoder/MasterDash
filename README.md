@@ -27,9 +27,13 @@ now the whole app, at the root.
     lib/estimator/tree.ts     the committed tile tree, the offline floor
     lib/estimator/proposal.ts taps to priced lines, deliveries derived
     lib/estimator/assemblies.ts  bucket maths
-    lib/estimator/plan.ts     the map take-off: geometry and load maths
-    lib/estimator/planImage.ts  plan images, device first, uploaded later
+    lib/estimator/geo.ts      lat/lng, Web Mercator, and geodesic measurement
+    lib/estimator/plan.ts     the map take-off: shapes and load maths
+    lib/estimator/tiles.ts    the satellite basemap, as tiles
+    lib/estimator/mapLayers.ts   georeferenced overlays, and the anchor
+    lib/estimator/planImage.ts  layer images, device first, uploaded later
     lib/estimator/visit.ts    the site visit: findings and their validation
+    lib/server/upright.ts      the Upright session, read through its own API
     app/api/                  the routes that hold the service key
 
 ---
@@ -188,21 +192,19 @@ grid, HF Grand Ledge, generic steps, metal edging — there is no wall assembly
 in the catalog yet) surfaces under **Hardscape & extras**, computed rather than
 listed so a newly synced row can never become invisible.
 
-### Plan: measuring the loads instead of guessing them
+### Plan: a map of the property, with the loads measured off it
 
-The **Plan** tile is a map take-off, ported from the VoiceData estimator's plan
-view. Add an aerial or a site plan, tap two points you know the distance
-between to set the scale, then draw beds with **Area** and runs with
-**Linear**. Pinch or wheel to zoom, one finger to pan, and drag a shape's dots
-to reshape it — the midpoint handles split a side.
+The **Plan** tile is a map take-off. It opens on the real ground at the real
+property — satellite imagery underneath, any number of georeferenced plans over
+it — and you draw beds with **Area** and runs with **Linear**. Pinch or wheel to
+zoom, one finger to pan, drag a shape's dots to reshape it; the midpoint handles
+split a side.
 
 **A shape does not add a measurement to the estimate. It adds loads.** Link a
 shape to an assembly and it commits `ceil(measurement ÷ bucket)` buckets — the
 same arithmetic as tapping that assembly's tile, so a 1,200 sq ft bed drawn on
-the plan and three taps on Mulch Bed are the same act and land on the same
-proposal line. That is the whole reconciliation between the two apps: the
-original priced off the exact area, but here a bucket is a load, and you cannot
-buy two thirds of a load of mulch.
+the map and three taps on Mulch Bed are the same act and land on the same
+proposal line. You cannot buy two thirds of a load of mulch.
 
 The overshoot is shown rather than buried. A 1,200 sq ft bed reads
 **"3 loads · buys 1,560 sq ft (360 over)"**, because that gap is a decision —
@@ -210,54 +212,221 @@ tighten the shape, or accept the material.
 
 Loads a shape produced behave like an assembly's share on a bulk tile: counted
 in the total, marked with 🗺️, and a floor the Assemblies screen cannot take
-back. Edit the shape instead, on the plan, where the number came from.
+back. Edit the shape instead, on the map, where the number came from.
 
-**Scale is derived, never stored.** Recalibrating corrects every shape already
-drawn, rather than leaving the old ones quietly wrong.
+#### Vertices are lat/lng, and that is the whole design
 
-**The image lives on the device first.** The properties worth taking off are
-the ones with no coverage, so the picture goes to IndexedDB — not to
+They used to be pixels in the plan image, with a two-point calibration turning
+them into feet. That made the image the coordinate system, and three things
+followed that all had to be lived with: replacing the image had to destroy
+every shape, because the vertices meant nothing in a different picture; an
+uncalibrated plan measured nothing at all; and a shape could never be compared
+with anything outside this app.
+
+On the ground none of those exist. There is no scale to set, because the scale
+is the world's — an area is a measurement the moment it is drawn. Swapping the
+plan underneath leaves the take-off alone, because it was never in that image's
+space. And [Upright](https://github.com/ryancyoder/Upright)'s elevation points
+and slope runs are already lat/lng, so the two apps are finally measuring in
+the same units of the same thing.
+
+**The measurement stays derived, never stored**, which is what makes dragging a
+vertex correct the loads rather than leaving a stale number behind.
+
+Three spaces, and `lib/estimator/geo.ts` is strict about which is which:
+
+    LatLng   WGS84 degrees. What is stored, and what crosses the wire.
+    World    Web Mercator, normalised so the globe is the unit square. What the
+             canvas transform and the tile grid both work in.
+    Local    Metres east/north of a nearby origin. What measurements use, and
+             never stored — only ever valid near its own origin.
+
+Measurements are taken on a tangent plane at the site, not in Mercator, whose
+scale factor is 1/cos(latitude) — at 41°N that is 1.33, so a bed measured in
+Mercator would come back **77% too large**. The plane is tangent at the shape's
+own mean position rather than at its first vertex, because a measurement must
+not depend on where a ring happens to start: anchored at vertex 0, the same bed
+drawn clockwise and anticlockwise came back 1.5 sq ft apart.
+
+The whole module is checked against a Vincenty inverse on WGS84. Distances
+agree to under a millimetre over a kilometre, and a 100 m square comes back at
+107,639 sq ft exactly.
+
+#### Corners are shared, not copied
+
+A mulch bed and the lawn beside it meet along an edge. Those are not two
+polygons that happen to touch — they are two polygons holding the same corners,
+and the app models it that way.
+
+Drawing a corner within **18 screen pixels** of an existing one makes it *that*
+corner rather than a new one beside it. Pixels, not feet, so aiming means the
+same thing at every zoom: it is a statement about aim, not about the ground. A
+point that snapped is drawn joined while there is still an **Undo point** button
+to take it back.
+
+**A snap that copied the coordinate would have been worse than nothing.** The
+bed's corner and the lawn's corner would sit at the same place and remain
+strangers; drag one afterwards and the other stays, opening a sliver of ground
+that belongs to neither shape and is billed by both. So the position cannot live
+on the polygon. `PlanState.nodes` holds every corner by id and shapes reference
+them — `vertices: string[]`, not coordinates. Drag a shared corner and both
+shapes follow, live, and both measurements re-derive from where it now is.
+
+Same rule as everywhere else here: store the relationship, derive the number.
+Upright reaches for it too — a slope run stores only which two points it joins
+and works the grade out at draw time, so dragging a pin corrects the slope,
+which a stored percentage could not do.
+
+Ids rather than positions in a list, because **splitting a side inserts a corner
+mid-array**. Anything identifying a corner by its index would be silently
+repointed at its neighbour by that one existing gesture.
+
+What follows from the model:
+
+- **A shared corner is drawn with a ring.** Whether a drag moves one shape or
+  two has to be legible before the finger lands, not discovered afterwards when
+  the lawn came along with the bed.
+- **Dropping a corner onto another joins them**, which is how an adjacency drawn
+  separately gets fixed. The target is ringed and labelled *join* while the
+  finger is still down, so it is something you aim at and can steer away from.
+- **Moving a whole shape carries its shared corners**, deforming whatever else
+  holds them. That is what sharing an edge means. Quietly detaching instead
+  would leave someone believing two shapes are still joined when they are not.
+- **Splitting a side creates a corner for that shape alone** — adding detail to
+  the bed is not a claim about the lawn, even where the side is shared.
+- **Detach** on a shape gives it its own copies of every corner it shares. A
+  mis-aimed tap can weld a bed to a lawn it was never meant to touch, and
+  without a way out the only remedy would be redrawing it.
+- Corners nothing holds any more are pruned when a shape is deleted; ones it
+  shared stay, because the shape it shared them with still has them.
+
+Estimates saved before this get one corner minted per stored coordinate.
+Nothing is joined by that upgrade, which is right: two corners that merely
+happened to be drawn in the same spot were never the same corner.
+
+#### The map is drawn, not embedded
+
+There is no map library. A tile, a georeferenced plan and a drawn bed are all
+the same kind of thing — something at a known place in World space — so all
+three are painted by one canvas transform in `PlanCanvas`. That is what keeps
+the field-tuned editing (forgiving taps, two fingers always pinch, one write
+per drag on release) rather than rebuilding it on somebody else's event model.
+
+Imagery is **Esri World Imagery**, the same source Upright uses, so both apps
+show the same picture of the same yard. Tiles are the only part of the map that
+needs the network, and nothing waits on them: a tile that has not arrived
+leaves its square dark and the overlays, shapes and measurements carry on. The
+satellite can be switched off entirely — once a plan is scaled off a known
+dimension it is the more accurate of the two, and stale imagery under accurate
+drawings puts two contradictory references on screen. Hiding the tiles does not
+improve accuracy; it stops showing a disagreement.
+
+The view is held as a centre and a scale rather than fit-plus-zoom-plus-pan. On
+a plan image "fit" was a meaningful home position; on open ground there is no
+such thing. It homes once, when the canvas first has a size, and never again —
+a recentre while somebody is drawing is the map yanking itself out from under
+them.
+
+#### Overlays belong to the property, not to the estimate
+
+`property_map_layers` holds them, keyed by property. Aligning a plan against a
+yard is a fact about the yard: it takes care to get right, it does not change
+because somebody started a second quote, and both apps want the same answer.
+The take-off stays on the estimate, because two estimates for one property can
+legitimately disagree about where the beds go — that is what quoting two
+options means.
+
+The geometry is Upright's five numbers, name for name (`upright_sessions`
+carries `plan_center_lat/lng`, `plan_width_m`, `plan_aspect`, `plan_rot_deg`),
+so porting that side is a rename rather than a translation. Three corners of a
+parallelogram fully define an affine mapping from image pixel to coordinate,
+which is why those five rebuild a placed image exactly — and why placing one on
+the canvas is a single `setTransform` rather than any resampling of our own.
+
+**One interop caveat.** Upright's `planCorners()` uses a flat 111320 m/degree on
+both axes. At Hebron's latitude the true figures are 111057 and 83753, so the
+same five numbers render there about 0.24% too tall and 0.14% too narrow —
+roughly 7cm over a 30m plan. Harmless for placing by eye, but this app is where
+the measuring happens, so it uses the real WGS84 radii. Upright's three lines
+should be brought across; until they are, expect a sub-decimetre disagreement
+on the same overlay.
+
+**The image lives on the device first**, as it always did — IndexedDB, not
 localStorage, where one aerial would blow the quota and take the estimate with
-it — and uploads to the `estimate-plans` bucket through `/api/plan-image`
-whenever there is signal. A plan drawn with no bars works, draws and prices
-exactly the same; only the "saved on this device" note tells you it has not
-synced yet.
+it — and uploads to the `estimate-plans` bucket whenever there is signal. The
+geometry is small and goes to the server; the bytes are megabytes and go to the
+device. A plan added with no bars draws, places and measures exactly the same.
 
-Replacing the image clears the scale and the shapes with it: vertices are in
-the old image's pixel space, and a calibration measured on one aerial means
-nothing on another. Shapes that looked plausible and measured wrong would be
-worse than none.
+An overlay says which it is. Until its width has been set from a dimension read
+off the drawing it is marked **placed by eye**, and every measurement taken
+against it inherits however wrong that guess was. `scale_locked` is what turns
+it into **scaled**. A layer is also `locked` by default, because an unlocked
+overlay is one a stray thumb can move and reopening an old property to look at
+it is not the moment to find that out.
 
-**The plan is a document, so it does not go in the op log.** It merges as a
+**The take-off is a document, so it does not go in the op log.** It merges as a
 scalar beside the job name — newest wins, whole — because there is no union of
-two people dragging the same vertex, and half of one aerial's shapes on
-another's calibration would measure confidently and be wrong. It rides in the
-row's `lines` jsonb, so it needs no column of its own. A remote plan with no
-image never replaces one that has bytes here, the same way an empty job name
-never un-names this estimate.
+two people dragging the same vertex, and half of one take-off inside another
+reads as a plausible bed nobody drew. It rides in the row's `lines` jsonb, so it
+needs no column of its own. An empty remote plan never replaces one with work in
+it, the same way an empty job name never un-names this estimate.
 
-The loads it implies stay out of `assemblyBuckets` for the matching reason from
-the other side: they are projected from the shapes on every read, so a pull
-that replays ops can never double-count them.
+The loads it implies stay out of `assemblyBuckets` for the matching reason: they
+are projected from the shapes on every read, so a pull that replays ops can
+never double-count them.
 
-**The tile itself lives in the menu like every other.** The committed tree in
-`tree.ts` is only the offline floor — once Supabase serves a menu it replaces
-that tree wholesale, so a Plan row has to exist there or the tile is missing on
-any device that has been online. It is already inserted; this is the statement,
-for a rebuild or a second project:
+#### Anchoring, and the half of the properties with no coordinates
 
-```sql
-insert into quick_tiles
-  (tile_id, parent_id, label, sort_order, kind, page, glyph, color)
-values
-  ('group:plan', null, 'Plan', 10, 'page', 'plan', '🗺️', '#0ea5e9');
-```
+The map has to open somewhere, so the estimate carries an anchor — which
+property, where its centre is, and **how that centre was arrived at**. That
+last part is not decoration. Of 101 properties, 51 have a latitude; the rest
+have an address and nothing else. So an anchor is sometimes a record and
+sometimes a guess, and a take-off is worth what its anchor was worth. The card
+says which. `quick_estimates.property_id` has existed unused since the table was
+created; this is what finally fills it in.
 
-Note the target: `quick_tile_menu` is a **view**, and the writable table beneath
-it is `quick_tiles`, whose ordering column is an integer `sort_order` rather
-than the view's derived `ordering` string. `quick_tiles_kind_shape` also
-requires a `page` row to carry a non-null `page`, which is what makes the tile
-open the take-off instead of an empty level.
+#### Placing a layer, and scaling it off the drawing
+
+**Place** on a layer puts the canvas into an alignment mode: one finger slides
+the layer, two fingers pinch, twist and drag it. Same gestures as Upright, down
+to the sign — screen angles grow clockwise and the plan's rotation grows
+anticlockwise.
+
+It has to be a **mode** rather than something an unlocked layer simply does,
+which is where this departs from Upright. There, the map is only ever a map. Here
+the same canvas is the drawing surface, and a pinch that silently resized a plan
+instead of zooming the map would be the worst kind of surprise — every
+measurement taken against it afterwards would be wrong and nothing on screen
+would say so. So the gestures are handed to the layer only while it is being
+placed, the layer is outlined in green with corner dots for the duration, and a
+banner says what the fingers are about to do. Starting to place also brings the
+layer fully into view, because the banner takes a strip off the canvas and a
+layer near an edge would go half off it just as somebody reached for it.
+
+**Set scale** is what turns a layer from decoration into the measurement. Rough
+it in by eye, tap the two ends of a dimension the drawing already states, and
+type what it really is; the layer is resized so those two features land that far
+apart on the ground. It scales about the **first** tap, so the end you measured
+from stays put and there is less to drag back. `parseFeet` takes `100`, `100'`,
+`12'6"`, `12-6`, `30"` and `30m` — lifted from Upright, because two apps
+disagreeing about what `12-6` means is a silent measuring error.
+
+After that the scale is **locked**. The Size slider is disabled and the pinch no
+longer resizes — it still rotates and pans, which is exactly the workflow.
+**Rescale** re-runs the measurement; nothing else can change the size by eye.
+That is the point: the layer is the accurate reference and the satellite under
+it is feet-misaligned and years stale, so a stray pinch must not be able to
+re-size a measured plan against a worse one.
+
+Marking a dimension needs single taps, which the layer gestures would swallow,
+so Set scale turns them off for its duration — the same thing Upright does with
+`setMapMode('planscale')`.
+
+**Still to build:** perspective correction for a plan photographed at an angle.
+`georefCorners` models the image as a parallelogram, so a plan shot from an
+angle will never align perfectly however much it is nudged. Not solved in either
+app.
+
 
 ### Visit: reading the job off the transcript
 
@@ -296,6 +465,71 @@ item the proposal then silently drops — invisible, and so the one failure wort
 spending code on. The route validates every key against the menu it just sent,
 and a match that loses its key is demoted to "nothing prices this" so the
 sentence stays in front of the estimator instead of vanishing with the row.
+
+#### Pulling the visit out of Upright
+
+**From Upright** on the Visit page lists recorded site sessions and drops one's
+transcript straight in, so the recording and the estimate stop being joined by
+a person selecting text on one iPad and pasting it into another.
+
+[Upright](https://github.com/ryancyoder/Upright) is the recording half of the
+same job: it runs continuous master audio for a whole visit and puts it through
+AssemblyAI with the speakers separated. The two apps stay separate deployments
+— they are used at different moments and one of them is a camera — and meet in
+the database they already share. This is that join, and nothing more: no shared
+bundle, no second copy of the other app's UI.
+
+Speaker labels are kept, and they earn their characters. The extraction has to
+tell what was agreed from what was floated and then ruled out, and "we're not
+doing the patio this year" means something different depending on which side of
+the conversation said it — speaker separation is why Upright chose AssemblyAI
+over the alternatives, so discarding it at the last step would be an odd trade.
+Consecutive utterances by one speaker are merged, since AssemblyAI splits on
+pauses and a paragraph per breath reads as a more fragmented conversation than
+the one that happened.
+
+**Reads go through `upright-api`, never through PostgREST** — even though these
+routes hold a service key that could read `upright_transcript_segments`
+directly. Upright's convention is that every one of its tables has RLS on with
+zero policies and its Edge Function is the only way in. A second reader with
+its own idea of how a transcript is assembled is the kind of duplication that
+drifts; this way, if Upright changes what a transcript looks like, the
+estimator follows for free.
+
+**Only sessions with uploaded audio are listed.** A session with none can never
+yield a transcript, so listing one would be a menu of things that cannot be
+chosen — and they are not rare. Of 99 sessions on the project today, 40 have
+audio: Upright's writes are fire-and-forget, so a visit whose upload never
+landed still leaves a row. Its own history lists those because their photos and
+measures are still worth opening; there is nothing here to import from one.
+
+A session can also have audio and no transcript — 16 of those 40. Upright kicks
+transcription off when a session ends, but that request is fire-and-forget like
+every other write it makes, so a visit recorded where there were no bars can
+arrive with audio and nothing read. Those rows get a **Transcribe** button.
+`upright-api` is idempotent about it — a session already processing or completed
+comes back with that status rather than a second AssemblyAI job — so pressing it
+twice is safe.
+
+Importing **replaces the findings**, not just the transcript. They were read out
+of a different visit, and leaving them would put one recording's list of work
+under another recording's transcript: a bug only if you notice, and a mispriced
+job if you do not. Marking them stale is not enough, because the old rows would
+still be addable.
+
+The estimate keeps the session it came from (`visit.source`), which is the
+point of doing this at the data layer at all — otherwise it holds an hour of
+talk with no way back to the recording, the photo pins or the elevation survey
+taken alongside it, and "which visit was this?" is a question somebody asks
+weeks later in front of a customer.
+
+**No new configuration.** The routes use the Supabase credentials the app
+already has. `upright-api` verifies a JWT and the legacy service role key is
+one, but a project issued the newer `sb_secret_…` key would 401 here while every
+other route kept working — so `UPRIGHT_API_KEY` (or `SUPABASE_ANON_KEY`)
+overrides which key is presented. Any key the project accepts will do: the Edge
+Function holds its own service role key and does the reading, so nothing is
+granted by the key these routes present.
 
 Extraction needs signal and an `ANTHROPIC_API_KEY` on the deployment; the
 transcript saves and syncs either way, so a visit typed with no bars is read

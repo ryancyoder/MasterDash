@@ -1,36 +1,57 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PlanCanvas, { type PlanTool } from "@/components/estimator/PlanCanvas";
-import { ASSEMBLY_MODELS, getAssembly, takeoff, unitOfWorkLabel } from "@/lib/estimator/assemblies";
+import {
+  ASSEMBLY_MODELS,
+  getAssembly,
+  takeoff,
+  unitOfWorkLabel,
+} from "@/lib/estimator/assemblies";
 import { formatMoney, sellFor } from "@/lib/estimator/catalog";
+import {
+  FALLBACK_CENTRE,
+  parseFeet,
+  scaleToKnownDimension,
+  type Georef,
+  type LatLng,
+} from "@/lib/estimator/geo";
+import {
+  ANCHOR_BLURB,
+  anchorIsReal,
+  visibleOverlays,
+  type MapOverlay,
+} from "@/lib/estimator/mapLayers";
 import {
   assembliesForShape,
   bucketsForMeasurement,
   measurementOf,
+  sharedNodeIds,
   workBought,
-  type PlanPoint,
+  type PendingPoint,
+  type PlanNodes,
   type PlanShape,
   type ShapeKind,
 } from "@/lib/estimator/plan";
 import {
-  getPlanImage,
-  isQueued,
-  readPlanFile,
-  subscribePlanSync,
-} from "@/lib/estimator/planImage";
+  addOverlayFromFile,
+  deleteLayer,
+  fetchLayers,
+  fetchProperties,
+  localOverlayUrl,
+  saveLayer,
+  type PropertyOption,
+} from "@/lib/estimator/propertyLayers";
 import {
   addShape,
+  detachShape,
+  insertVertex,
+  mergeNodes,
+  moveNodes,
   removeShape,
-  setPlanImage,
-  setPlanScale,
+  setBasemap,
+  setOverlayHidden,
+  setPlanAnchor,
   updateShape,
 } from "@/lib/estimator/store";
 import type { Estimate, EstimatorSettings } from "@/lib/estimator/types";
@@ -38,28 +59,32 @@ import type { Estimate, EstimatorSettings } from "@/lib/estimator/types";
 /**
  * The map take-off.
  *
- * Ported from the VoiceData estimator's plan view. The drawing is the same
- * instrument; what changed is what a finished shape MEANS. There it drove a
- * take-off group priced off the exact measurement. Here it buys loads: a shape
- * linked to an assembly commits ceil(measurement / bucketSize) buckets, the
- * same arithmetic as tapping that assembly's tile, so the two ways of
- * estimating land on one line in the proposal instead of two.
- *
- * The overshoot is never hidden. Every linked shape shows what it measured and
+ * A shape linked to an assembly commits ceil(measurement / bucketSize)
+ * buckets, the same arithmetic as tapping that assembly's tile, so the two
+ * ways of estimating land on one line in the proposal instead of two. The
+ * overshoot is never hidden: every linked shape shows what it measured and
  * what those loads actually buy, because "1,200 measured, 1,560 bought" is a
- * decision to make, not a rounding error to bury.
+ * decision to make rather than a rounding error to bury.
+ *
+ * What is new is underneath. This is a MAP now — the real ground, at the real
+ * property, with the satellite as one layer and any number of georeferenced
+ * plans over it. There is no scale to set, because the scale is the world's;
+ * an area is a measurement the moment it is drawn.
+ *
+ * The overlays belong to the property rather than to this estimate, and are
+ * shared with Upright. Aligning a plan against a yard is a fact about the
+ * yard, it takes care to get right, and it should not have to be done twice
+ * because somebody started a second quote.
  */
 
 const TOOLS: { key: PlanTool; label: string; glyph: string }[] = [
   { key: "select", label: "Select", glyph: "☝︎" },
-  { key: "calibrate", label: "Scale", glyph: "📏" },
   { key: "area", label: "Area", glyph: "⬟" },
   { key: "linear", label: "Linear", glyph: "╱" },
 ];
 
 const HINTS: Record<PlanTool, string> = {
   select: "Tap a shape to select it · drag its dots to reshape · + splits a side",
-  calibrate: "Tap two points a known distance apart",
   area: "Tap each corner · tap the big green dot to close",
   linear: "Tap along the run · Finish when done",
 };
@@ -80,11 +105,7 @@ export default function PlanPage({
    * reports taps; Finish, Undo and Cancel are buttons on this page, and a
    * button needs something to act on.
    */
-  const [pending, setPending] = useState<PlanPoint[]>([]);
-  const [calPoints, setCalPoints] = useState<PlanPoint[]>([]);
-  const [calFeet, setCalFeet] = useState("");
-  /** Object URL for the locally-held image. Null until IndexedDB answers. */
-  const [localSrc, setLocalSrc] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingPoint[]>([]);
   const [error, setError] = useState<string | null>(null);
   /** Which assembly a newly drawn shape links to, per shape kind. */
   const [armed, setArmed] = useState<Record<ShapeKind, string | null>>({
@@ -92,31 +113,98 @@ export default function PlanPage({
     linear: null,
   });
 
+  const [overlays, setOverlays] = useState<MapOverlay[]>([]);
+  /** Object URLs for overlays this device holds the bytes for. */
+  const [localUrls, setLocalUrls] = useState<Record<string, string>>({});
+  const [picking, setPicking] = useState(false);
+  /** The layer the gestures are acting on, if any. */
+  const [aligningId, setAligningId] = useState<string | null>(null);
+  /** Marking a dimension: layer gestures off, taps collect the two ends. */
+  const [scaling, setScaling] = useState(false);
+  const [scalePoints, setScalePoints] = useState<LatLng[]>([]);
+  const [scaleInput, setScaleInput] = useState("");
+  const [scaleError, setScaleError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // The image is read from IndexedDB, not from the network: the properties
-  // worth taking off are the ones with no coverage. The synced URL is only a
-  // fallback for a device that never held the bytes.
-  const imageId = plan.imageId;
+  const anchor = plan.anchor;
+  const propertyId = anchor?.propertyId ?? null;
+
+  // The property's layers. Fetched, because they are shared — another device,
+  // or Upright on site, may have placed one since this estimate was opened.
   useEffect(() => {
-    if (!imageId) return;
-    let alive = true;
-    let objectUrl: string | null = null;
-    getPlanImage(imageId).then((blob) => {
-      if (!alive || !blob) return;
-      objectUrl = URL.createObjectURL(blob);
-      setLocalSrc(objectUrl);
+    let live = true;
+    // Nothing is set before the first await, including the empty case: state
+    // moves once, when the answer is in.
+    const load = propertyId === null ? Promise.resolve([]) : fetchLayers(propertyId);
+    void load.then((rows) => {
+      if (!live) return;
+      if (propertyId === null) {
+        setOverlays([]);
+        return;
+      }
+      // A layer this device just added has bytes here and no row yet; the
+      // fetch must not drop it. Merged by id, local copy winning on imageId.
+      setOverlays((current) => {
+        const mine = new Map(current.map((o) => [o.id, o]));
+        const merged = rows.map((r) => ({ ...r, imageId: mine.get(r.id)?.imageId ?? null }));
+        const seen = new Set(merged.map((o) => o.id));
+        return [...merged, ...current.filter((o) => !seen.has(o.id))].sort(
+          (a, b) => a.z - b.z,
+        );
+      });
     });
     return () => {
-      alive = false;
-      setLocalSrc(null);
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      live = false;
     };
-  }, [imageId]);
+  }, [propertyId]);
 
-  // Local bytes win; the synced URL is the fallback for a device that never
-  // held them. Derived rather than stored, so no effect has to keep it honest.
-  const imageSrc = localSrc ?? plan.imageUrl;
+  // Object URLs for the local copies, minted once each and revoked together.
+  useEffect(() => {
+    let live = true;
+    const minted: string[] = [];
+    void Promise.all(
+      overlays.map(async (o) => {
+        if (!o.imageId) return null;
+        const url = await localOverlayUrl(o);
+        return url ? ([o.id, url] as const) : null;
+      }),
+    ).then((pairs) => {
+      if (!live) {
+        for (const p of pairs) if (p) URL.revokeObjectURL(p[1]);
+        return;
+      }
+      const next: Record<string, string> = {};
+      for (const p of pairs) {
+        if (p) {
+          next[p[0]] = p[1];
+          minted.push(p[1]);
+        }
+      }
+      setLocalUrls(next);
+    });
+    return () => {
+      live = false;
+      for (const url of minted) URL.revokeObjectURL(url);
+    };
+  }, [overlays]);
+
+  /** Device copy first; the Storage URL is the fallback for a device that never held it. */
+  const overlaySrc = useCallback(
+    (o: MapOverlay) => localUrls[o.id] ?? o.imageUrl,
+    [localUrls],
+  );
+
+  const drawnOverlays = useMemo(
+    () => visibleOverlays(overlays, plan.hiddenOverlayIds),
+    [overlays, plan.hiddenOverlayIds],
+  );
+
+  // Looked up rather than held, so a layer removed mid-alignment simply ends
+  // the mode instead of leaving the canvas pointed at something gone.
+  const aligning = useMemo(
+    () => drawnOverlays.find((o) => o.id === aligningId) ?? null,
+    [drawnOverlays, aligningId],
+  );
 
   // A shape can vanish under the selection (deleted here, or an estimate
   // cleared elsewhere). Looking it up every render means a stale id is simply
@@ -136,7 +224,6 @@ export default function PlanPage({
   const chooseTool = useCallback((next: PlanTool) => {
     setTool(next);
     setPending([]);
-    setCalPoints([]);
   }, []);
 
   const finish = useCallback(() => {
@@ -147,37 +234,96 @@ export default function PlanPage({
     setTool("select");
   }, [tool, pending, armed]);
 
+  const patchOverlay = useCallback(
+    (id: string, patch: Partial<MapOverlay>) => {
+      setOverlays((current) => {
+        const next = current.map((o) => (o.id === id ? { ...o, ...patch } : o));
+        const changed = next.find((o) => o.id === id);
+        // Fire-and-forget, like every other write in the tapping flow. What is
+        // on screen has already moved; this is the copy the other devices get.
+        if (changed) void saveLayer(changed);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const startAligning = useCallback((id: string) => {
+    setAligningId(id);
+    setScaling(false);
+    setScalePoints([]);
+    setScaleError(null);
+    // A half-drawn bed would otherwise sit on screen through the whole of an
+    // alignment and be finished against a plan that has since moved.
+    setPending([]);
+    setTool("select");
+  }, []);
+
+  const stopAligning = useCallback(() => {
+    setAligningId(null);
+    setScaling(false);
+    setScalePoints([]);
+    setScaleError(null);
+  }, []);
+
+  /**
+   * Resize the layer so the two marked features are the stated distance apart.
+   *
+   * This is what turns a layer from "placed by eye" into the measurement, so
+   * it sets `scaleLocked` — after which the pinch no longer resizes and the
+   * Size slider is disabled. Nothing can change the scale by eye again;
+   * Rescale re-runs the measurement.
+   */
+  const applyScale = useCallback(() => {
+    if (!aligning) return;
+    if (scalePoints.length < 2) {
+      setScaleError("Tap both ends of the dimension first.");
+      return;
+    }
+    const feet = parseFeet(scaleInput);
+    if (feet === null || !(feet > 0)) {
+      setScaleError("Try 100, 100' or 12'6\".");
+      return;
+    }
+    const georef = scaleToKnownDimension(
+      aligning.georef,
+      scalePoints[0],
+      scalePoints[1],
+      feet,
+    );
+    if (!georef) {
+      setScaleError("Those taps are too close — use the longest dimension you can.");
+      return;
+    }
+    patchOverlay(aligning.id, { georef, scaleLocked: true });
+    setScaling(false);
+    setScalePoints([]);
+    setScaleInput("");
+    setScaleError(null);
+  }, [aligning, scalePoints, scaleInput, patchOverlay]);
+
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
+    if (!file || propertyId === null) return;
     setError(null);
     try {
-      const id = `plan-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      const picked = await readPlanFile(id, file);
-      setPlanImage(estimate.clientId, picked);
-      chooseTool("calibrate");
+      const centre = anchor?.centre ?? FALLBACK_CENTRE;
+      const overlay = await addOverlayFromFile(
+        propertyId,
+        centre,
+        file,
+        overlays.length,
+      );
+      // On screen immediately, from IndexedDB. The row and the upload catch up.
+      setOverlays((current) => [...current, overlay]);
+      void saveLayer(overlay);
+      // Straight into alignment: a layer arrives at a default size in the
+      // middle of the view, which is never where it goes.
+      startAligning(overlay.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "That image could not be read.");
     }
-  };
-
-  const commitScale = () => {
-    const feet = Number(calFeet);
-    if (calPoints.length < 2 || !Number.isFinite(feet) || feet <= 0) return;
-    const pixels = Math.hypot(
-      calPoints[1].x - calPoints[0].x,
-      calPoints[1].y - calPoints[0].y,
-    );
-    if (pixels <= 0) return;
-    setPlanScale({
-      pixelsPerFoot: pixels / feet,
-      p1: calPoints[0],
-      p2: calPoints[1],
-      label: `${feet} ft`,
-    });
-    setCalFeet("");
-    chooseTool("area");
   };
 
   const drawing = tool === "area" || tool === "linear";
@@ -187,13 +333,8 @@ export default function PlanPage({
     [drawing, tool],
   );
 
-  // Subscribed rather than read once: the note has to clear when the queue
-  // drains, which happens on a network event this component knows nothing about.
-  const unsynced = useSyncExternalStore(
-    subscribePlanSync,
-    () => (imageId ? isQueued(imageId) : false),
-    () => false,
-  );
+  const ready = anchorIsReal(anchor);
+  const shared = useMemo(() => sharedNodeIds(plan.shapes), [plan.shapes]);
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -203,7 +344,7 @@ export default function PlanPage({
           <button
             key={t.key}
             onClick={() => chooseTool(t.key)}
-            disabled={!plan.imageId && t.key !== "calibrate"}
+            disabled={!ready || aligning !== null}
             className={`shrink-0 flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-bold transition-colors disabled:opacity-30 ${
               tool === t.key ? "bg-accent text-black" : "bg-surface2 text-ink"
             }`}
@@ -221,10 +362,20 @@ export default function PlanPage({
           {showMeasurements ? "123" : "···"}
         </button>
         <button
-          onClick={() => fileRef.current?.click()}
-          className="shrink-0 rounded-xl bg-surface2 px-3 py-2 text-xs font-bold text-muted"
+          onClick={() => setBasemap(plan.basemap === "satellite" ? "none" : "satellite")}
+          className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${
+            plan.basemap === "satellite" ? "bg-surface2 text-ink" : "bg-surface2 text-muted"
+          }`}
+          title="Show or hide the satellite"
         >
-          {plan.imageId ? "Replace" : "Add plan"}
+          {plan.basemap === "satellite" ? "🛰️" : "🛰️ off"}
+        </button>
+        <button
+          onClick={() => fileRef.current?.click()}
+          disabled={propertyId === null}
+          className="shrink-0 rounded-xl bg-surface2 px-3 py-2 text-xs font-bold text-muted disabled:opacity-30"
+        >
+          Add plan
         </button>
         <input
           ref={fileRef}
@@ -285,49 +436,117 @@ export default function PlanPage({
         </div>
       )}
 
-      <p className="shrink-0 mb-2 text-[0.7rem] text-muted">
-        {plan.scale
-          ? HINTS[tool]
-          : "Set the scale first — tap two points you know the distance between."}
-      </p>
+      {aligning ? (
+        <div className="shrink-0 mb-2 rounded-xl border border-accent bg-accent/10 p-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold text-ink">
+              Placing {aligning.label}
+            </span>
+            <span className="min-w-0 flex-1 text-[0.7rem] text-muted">
+              {scaling
+                ? scalePoints.length < 2
+                  ? "Tap both ends of a dimension the drawing states"
+                  : "Now type what that dimension really is"
+                : aligning.scaleLocked
+                  ? "Drag to move · two fingers to turn — the size is locked to the dimension you set"
+                  : "Drag to move · two fingers to pinch and turn"}
+            </span>
+            <button
+              onClick={() => {
+                setScaling((v) => !v);
+                setScalePoints([]);
+                setScaleError(null);
+              }}
+              className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold ${
+                scaling ? "bg-[#f59e0b] text-black" : "bg-surface2 text-ink"
+              }`}
+            >
+              {scaling ? "Cancel" : aligning.scaleLocked ? "Rescale" : "Set scale"}
+            </button>
+            <button
+              onClick={stopAligning}
+              className="shrink-0 rounded-lg bg-accent px-4 py-1.5 text-xs font-bold text-black"
+            >
+              Done
+            </button>
+          </div>
+
+          {scaling && scalePoints.length === 2 && (
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                autoFocus
+                value={scaleInput}
+                onChange={(e) => setScaleInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && applyScale()}
+                placeholder={`100 · 100' · 12'6" · 30m`}
+                className="min-w-0 flex-1 rounded-lg border border-edge bg-surface px-2 py-2 text-base text-ink"
+              />
+              <button
+                onClick={applyScale}
+                className="shrink-0 rounded-lg bg-[#f59e0b] px-4 py-2 text-sm font-bold text-black"
+              >
+                Set
+              </button>
+            </div>
+          )}
+          {scaleError && (
+            <p className="mt-1 text-[0.7rem] text-[#fca5a5]">{scaleError}</p>
+          )}
+        </div>
+      ) : (
+        <p className="shrink-0 mb-2 text-[0.7rem] text-muted">
+          {ready ? HINTS[tool] : "Choose the property first — the map has to open somewhere."}
+        </p>
+      )}
 
       <div className="flex flex-1 min-h-0 gap-3">
         <PlanCanvas
-          // A different plan is a different surface: remounting drops the old
-          // zoom, pan and half-decoded image together, with nothing left to
-          // reset by hand.
-          key={imageSrc ?? "empty"}
-          imageSrc={imageSrc}
-          imageWidth={plan.imageWidth}
-          imageHeight={plan.imageHeight}
+          anchor={anchor}
+          basemap={plan.basemap}
+          overlays={drawnOverlays}
+          overlaySrc={overlaySrc}
+          nodes={plan.nodes}
           shapes={plan.shapes}
-          scale={plan.scale}
           labelFor={labelFor}
           tool={tool}
           selectedShapeId={selectedId}
           onSelectShape={setSelectedId}
           pending={pending}
           onPendingChange={setPending}
-          calPoints={calPoints}
-          onCalPointsChange={setCalPoints}
           onCloseArea={finish}
-          onUpdateShape={updateShape}
+          onMoveNodes={moveNodes}
+          onMergeNodes={mergeNodes}
+          onInsertVertex={insertVertex}
           showMeasurements={showMeasurements}
+          aligning={aligning}
+          onAlignCommit={(georef: Georef) =>
+            aligning && patchOverlay(aligning.id, { georef })
+          }
+          scaling={scaling}
+          scalePoints={scalePoints}
+          onScalePointsChange={setScalePoints}
         />
 
         <aside className="hidden w-64 shrink-0 flex-col gap-2 overflow-y-auto md-scroll sm:flex">
-          <ScaleCard
-            plan={plan}
-            calPoints={calPoints}
-            calFeet={calFeet}
-            unsynced={unsynced}
-            onCalFeet={setCalFeet}
-            onCommit={commitScale}
-            onReset={() => {
-              setPlanScale(null);
-              setCalPoints([]);
-            }}
+          <AnchorCard
+            estimate={estimate}
+            picking={picking}
+            onPicking={setPicking}
           />
+          {overlays.length > 0 && (
+            <LayersCard
+              overlays={overlays}
+              hidden={plan.hiddenOverlayIds}
+              aligningId={aligningId}
+              onAlign={startAligning}
+              onStopAligning={stopAligning}
+              onPatch={patchOverlay}
+              onRemove={(id) => {
+                setOverlays((c) => c.filter((o) => o.id !== id));
+                void deleteLayer(id);
+              }}
+            />
+          )}
           {plan.shapes.length === 0 ? (
             <p className="px-1 text-xs leading-relaxed text-muted">
               No shapes yet. Draw a bed with Area or a run with Linear, and link
@@ -338,7 +557,11 @@ export default function PlanPage({
               <ShapeCard
                 key={shape.id}
                 shape={shape}
-                scale={plan.scale}
+                nodes={plan.nodes}
+                sharedCount={
+                  shape.vertices.filter((v) => shared.has(v)).length
+                }
+                onDetach={() => detachShape(shape.id)}
                 settings={settings}
                 selected={shape.id === selectedId}
                 onSelect={() => {
@@ -354,16 +577,10 @@ export default function PlanPage({
       </div>
 
       {/*
-        Finish / Undo / Cancel as buttons. The original closed a polygon with
-        Enter and cancelled with Escape; neither key exists under a glove, and
-        a shape you cannot finish is a tool you cannot use.
-      */}
-      {/*
-        Present for the whole of a drawing tool, not only once a point is down.
-        Appearing on the first tap would shrink the canvas mid-gesture and slide
-        the plan under the finger that just placed a corner — the drawing stays
-        correct, but the picture jumping while you aim at the next one does not.
-        The buttons disable instead.
+        Finish / Undo / Cancel as buttons, present for the whole of a drawing
+        tool rather than only once a point is down. Appearing on the first tap
+        would shrink the canvas mid-gesture and slide the map under the finger
+        that just placed a corner. The buttons disable instead.
       */}
       {drawing && (
         <div className="shrink-0 mt-2 flex items-center gap-2 pr-36">
@@ -403,7 +620,7 @@ export default function PlanPage({
             style={{ background: selected.color }}
           />
           <span className="flex-1 truncate text-sm font-bold tabular-nums text-ink">
-            {Math.round(measurementOf(selected, plan.scale)).toLocaleString()}{" "}
+            {Math.round(measurementOf(selected, plan.nodes)).toLocaleString()}{" "}
             {selected.type === "area" ? "sq ft" : "ln ft"}
           </span>
           <button
@@ -418,47 +635,95 @@ export default function PlanPage({
   );
 }
 
-function ScaleCard({
-  plan,
-  calPoints,
-  calFeet,
-  unsynced,
-  onCalFeet,
-  onCommit,
-  onReset,
+/**
+ * Which yard this is, and how well we know where it is.
+ *
+ * The source is shown rather than hidden once a centre exists. Half the
+ * properties on the project have coordinates and half do not, so an anchor is
+ * sometimes a record and sometimes a guess, and a take-off is worth what its
+ * anchor was worth. A map that opens on the office and says nothing is the
+ * failure mode this card exists to prevent.
+ */
+function AnchorCard({
+  estimate,
+  picking,
+  onPicking,
 }: {
-  plan: Estimate["plan"];
-  calPoints: PlanPoint[];
-  calFeet: string;
-  unsynced: boolean;
-  onCalFeet: (v: string) => void;
-  onCommit: () => void;
-  onReset: () => void;
+  estimate: Estimate;
+  picking: boolean;
+  onPicking: (v: boolean) => void;
 }) {
-  if (calPoints.length >= 2) {
+  const anchor = estimate.plan.anchor;
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<PropertyOption[] | null>(null);
+
+  useEffect(() => {
+    if (!picking) return;
+    let live = true;
+    const timer = setTimeout(() => {
+      void fetchProperties(q).then((r) => {
+        if (live) setRows(r);
+      });
+      // Debounced, because this fires on every keystroke and each one is a
+      // round trip through a route handler to PostgREST.
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [picking, q]);
+
+  if (picking) {
     return (
-      <div className="rounded-2xl border border-[#f59e0b] bg-[#f59e0b]/10 p-3">
-        <p className="mb-2 text-xs font-bold text-[#fbbf24]">
-          How far apart are those two points?
-        </p>
-        <div className="flex items-center gap-2">
-          <input
-            type="number"
-            inputMode="decimal"
-            autoFocus
-            value={calFeet}
-            onChange={(e) => onCalFeet(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && onCommit()}
-            placeholder="20"
-            className="w-full min-w-0 rounded-lg border border-edge bg-surface px-2 py-2 text-base text-ink"
-          />
-          <span className="shrink-0 text-xs text-muted">ft</span>
+      <div className="rounded-2xl border border-accent bg-surface p-3">
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search the address…"
+          className="w-full rounded-lg border border-edge bg-surface2 px-2 py-2 text-base text-ink"
+        />
+        <div className="mt-2 flex max-h-56 flex-col gap-1 overflow-y-auto md-scroll">
+          {rows === null ? (
+            <p className="text-xs text-muted">Looking…</p>
+          ) : rows.length === 0 ? (
+            <p className="text-xs text-muted">Nothing matches.</p>
+          ) : (
+            rows.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => {
+                  setPlanAnchor({
+                    propertyId: p.id,
+                    label: p.address,
+                    // A property with no coordinates still anchors the
+                    // estimate to the right yard; the map just has nowhere to
+                    // open yet, and the card says so.
+                    centre:
+                      p.located && p.lat !== null && p.lng !== null
+                        ? { lat: p.lat, lng: p.lng }
+                        : FALLBACK_CENTRE,
+                    source: p.located ? "property" : "fallback",
+                  });
+                  onPicking(false);
+                }}
+                className="rounded-lg bg-surface2 px-2 py-2 text-left text-xs text-ink"
+              >
+                <span className="block truncate font-bold">{p.address}</span>
+                {!p.located && (
+                  <span className="text-[0.65rem] text-[#fbbf24]">
+                    No coordinates on file
+                  </span>
+                )}
+              </button>
+            ))
+          )}
         </div>
         <button
-          onClick={onCommit}
-          className="mt-2 w-full rounded-lg bg-[#f59e0b] py-2 text-sm font-bold text-black"
+          onClick={() => onPicking(false)}
+          className="mt-2 w-full rounded-lg bg-surface2 py-2 text-xs font-bold text-muted"
         >
-          Set scale
+          Cancel
         </button>
       </div>
     );
@@ -468,24 +733,178 @@ function ScaleCard({
     <div className="rounded-2xl border border-edge bg-surface p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[0.65rem] font-bold tracking-widest text-muted">
-          SCALE
+          PROPERTY
         </span>
-        {plan.scale && (
-          <button onClick={onReset} className="text-xs font-bold text-[#fca5a5]">
-            Reset
-          </button>
-        )}
+        <button
+          onClick={() => onPicking(true)}
+          className="text-xs font-bold text-accent"
+        >
+          {anchor ? "Change" : "Choose"}
+        </button>
       </div>
-      <p className="mt-1 text-sm text-ink">
-        {plan.scale
-          ? `${plan.scale.label} = ${plan.scale.pixelsPerFoot.toFixed(1)} px`
-          : "Not set"}
+      <p className="mt-1 text-sm leading-snug text-ink">
+        {anchor?.label ?? (anchor?.propertyId ? `#${anchor.propertyId}` : "Not chosen")}
       </p>
-      {unsynced && (
-        <p className="mt-1.5 text-[0.65rem] leading-tight text-muted">
-          Plan saved on this device · uploads when there is signal
+      {anchor && (
+        <p
+          className={`mt-0.5 text-[0.65rem] leading-tight ${
+            anchor.source === "fallback" ? "text-[#fbbf24]" : "text-muted"
+          }`}
+        >
+          {ANCHOR_BLURB[anchor.source]}
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * The property's georeferenced layers.
+ *
+ * `scaleLocked` is the distinction worth reading here. Until an overlay's
+ * width has been set from a dimension somebody read off the drawing, it is a
+ * picture in roughly the right place — every measurement taken against it
+ * inherits however wrong that guess was. The card says which it is rather than
+ * letting a placed image imply a survey.
+ */
+function LayersCard({
+  overlays,
+  hidden,
+  aligningId,
+  onAlign,
+  onStopAligning,
+  onPatch,
+  onRemove,
+}: {
+  overlays: MapOverlay[];
+  hidden: string[];
+  aligningId: string | null;
+  onAlign: (id: string) => void;
+  onStopAligning: () => void;
+  onPatch: (id: string, patch: Partial<MapOverlay>) => void;
+  onRemove: (id: string) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-edge bg-surface p-3">
+      <span className="text-[0.65rem] font-bold tracking-widest text-muted">
+        LAYERS
+      </span>
+      <div className="mt-2 flex flex-col gap-3">
+        {overlays.map((o) => {
+          const off = hidden.includes(o.id);
+          return (
+            <div key={o.id}>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setOverlayHidden(o.id, !off)}
+                  className="shrink-0 text-sm"
+                  aria-label={off ? `Show ${o.label}` : `Hide ${o.label}`}
+                >
+                  {off ? "○" : "◉"}
+                </button>
+                <span
+                  className={`flex-1 truncate text-xs font-bold ${
+                    off ? "text-muted" : "text-ink"
+                  }`}
+                >
+                  {o.label}
+                </span>
+                <button
+                  onClick={() => onRemove(o.id)}
+                  aria-label={`Remove ${o.label}`}
+                  className="shrink-0 rounded-lg px-1.5 text-xs text-muted"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <p className="mt-0.5 text-[0.65rem] leading-tight text-muted">
+                {Math.round(o.georef.widthM)} m wide ·{" "}
+                {o.scaleLocked ? (
+                  <span className="text-accent">scaled</span>
+                ) : (
+                  <span className="text-[#fbbf24]">placed by eye</span>
+                )}
+                {o.source === "upright" && " · from Upright"}
+              </p>
+
+              <label className="mt-1 flex items-center gap-2">
+                <span className="w-10 shrink-0 text-[0.6rem] text-muted">Fade</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={Math.round(o.opacity * 100)}
+                  onChange={(e) => onPatch(o.id, { opacity: Number(e.target.value) / 100 })}
+                  className="w-full"
+                />
+              </label>
+              <label className="flex items-center gap-2">
+                <span className="w-10 shrink-0 text-[0.6rem] text-muted">Turn</span>
+                <input
+                  type="range"
+                  min={-180}
+                  max={180}
+                  value={Math.round(o.georef.rotDeg)}
+                  disabled={o.locked}
+                  onChange={(e) =>
+                    onPatch(o.id, {
+                      georef: { ...o.georef, rotDeg: Number(e.target.value) },
+                    })
+                  }
+                  className="w-full disabled:opacity-30"
+                />
+              </label>
+              <label className="flex items-center gap-2">
+                <span className="w-10 shrink-0 text-[0.6rem] text-muted">Size</span>
+                <input
+                  type="range"
+                  min={5}
+                  max={300}
+                  value={Math.round(o.georef.widthM)}
+                  disabled={o.locked || o.scaleLocked}
+                  onChange={(e) =>
+                    onPatch(o.id, {
+                      georef: { ...o.georef, widthM: Number(e.target.value) },
+                    })
+                  }
+                  className="w-full disabled:opacity-30"
+                />
+              </label>
+              <div className="mt-1 flex gap-1">
+                <button
+                  onClick={() => {
+                    if (aligningId === o.id) {
+                      onStopAligning();
+                      return;
+                    }
+                    // Placing implies unlocked: the lock exists to stop a
+                    // stray thumb moving a finished layer, and asking someone
+                    // to unlock before they can move it is a step that only
+                    // ever gets in the way of the thing they just asked for.
+                    if (o.locked) onPatch(o.id, { locked: false });
+                    onAlign(o.id);
+                  }}
+                  className={`flex-1 rounded-lg py-1.5 text-[0.65rem] font-bold ${
+                    aligningId === o.id
+                      ? "bg-accent text-black"
+                      : "bg-surface2 text-ink"
+                  }`}
+                >
+                  {aligningId === o.id ? "Done placing" : "Place"}
+                </button>
+                <button
+                  onClick={() => onPatch(o.id, { locked: !o.locked })}
+                  className="shrink-0 rounded-lg bg-surface2 px-2.5 py-1.5 text-[0.65rem] font-bold text-muted"
+                  title={o.locked ? "Unlock" : "Lock in place"}
+                >
+                  {o.locked ? "🔒" : "🔓"}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -499,7 +918,9 @@ function ScaleCard({
  */
 function ShapeCard({
   shape,
-  scale,
+  nodes,
+  sharedCount,
+  onDetach,
   settings,
   selected,
   onSelect,
@@ -507,21 +928,28 @@ function ShapeCard({
   onRemove,
 }: {
   shape: PlanShape;
-  scale: Estimate["plan"]["scale"];
+  nodes: PlanNodes;
+  /** How many of this shape's corners another shape also holds. */
+  sharedCount: number;
+  onDetach: () => void;
   settings: EstimatorSettings;
   selected: boolean;
   onSelect: () => void;
   onLink: (assemblyId: string | null) => void;
   onRemove: () => void;
 }) {
-  const measurement = measurementOf(shape, scale);
+  const measurement = measurementOf(shape, nodes);
   const options = assembliesForShape(ASSEMBLY_MODELS, shape.type);
   const model = shape.assemblyId ? getAssembly(shape.assemblyId) : undefined;
   const buckets = bucketsForMeasurement(measurement, model?.bucketSize ?? null);
   const bought = workBought(buckets, model?.bucketSize ?? null);
-  const cost = model && buckets > 0
-    ? takeoff(model, buckets).reduce((s, l) => s + l.quantity * l.item.costPerUnit, 0)
-    : 0;
+  const cost =
+    model && buckets > 0
+      ? takeoff(model, buckets).reduce(
+          (s, l) => s + l.quantity * l.item.costPerUnit,
+          0,
+        )
+      : 0;
   const unit = shape.type === "area" ? "sq ft" : "ln ft";
 
   return (
@@ -564,6 +992,27 @@ function ShapeCard({
           </option>
         ))}
       </select>
+
+      {sharedCount > 0 && (
+        <p className="mt-1.5 flex items-center gap-1.5 text-[0.7rem] text-muted">
+          <span>
+            Shares {sharedCount} corner{sharedCount === 1 ? "" : "s"}
+          </span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDetach();
+            }}
+            className="rounded-md bg-surface2 px-2 py-0.5 text-[0.65rem] font-bold text-ink"
+            // The way out of a join. A mis-aimed tap can weld a bed to a lawn
+            // it was never meant to touch, and without this the only remedy
+            // would be redrawing it.
+            title="Give this shape its own copies of the shared corners"
+          >
+            Detach
+          </button>
+        </p>
+      )}
 
       {model && buckets > 0 && (
         <p className="mt-2 text-[0.7rem] leading-snug text-muted">

@@ -1,0 +1,185 @@
+"use client";
+
+// The property's map layers, on the client.
+//
+// Two halves that have to be kept apart. The GEOMETRY — where an overlay sits,
+// how wide it is, which way it faces — is small, belongs to the property and
+// is shared with Upright, so it goes to the server. The IMAGE BYTES are one to
+// five megabytes and belong on the device first, for the reason the plan image
+// always did: the properties worth taking off are the ones with no coverage,
+// so a layer that has to reach Supabase before it draws is blank exactly where
+// it is needed.
+//
+// So a new overlay is usable the instant it is picked — drawn from IndexedDB,
+// placed, measured against — and the row and the upload catch up whenever
+// there is signal. Nothing in the drawing flow ever awaits a request.
+
+import { georefCorners, type Georef, type LatLng } from "./geo";
+import { overlaysFrom, type MapOverlay } from "./mapLayers";
+import { getPlanImage, putPlanImage } from "./planImage";
+
+/** Ground width a freshly added plan is given before anyone aligns it. */
+export const DEFAULT_PLAN_WIDTH_M = 60;
+
+export interface PropertyOption {
+  id: number;
+  address: string;
+  lat: number | null;
+  lng: number | null;
+  located: boolean;
+}
+
+export async function fetchProperties(q: string): Promise<PropertyOption[]> {
+  const res = await fetch(`/api/properties?q=${encodeURIComponent(q)}`);
+  const body = (await res.json()) as { ok?: boolean; properties?: PropertyOption[] };
+  if (!res.ok || !body.ok) return [];
+  return body.properties ?? [];
+}
+
+export async function fetchLayers(propertyId: number): Promise<MapOverlay[]> {
+  const res = await fetch(`/api/property-layers?property=${propertyId}`);
+  const body = (await res.json()) as { ok?: boolean; layers?: unknown };
+  if (!res.ok || !body.ok) return [];
+  return overlaysFrom(body.layers);
+}
+
+/**
+ * Push one layer's geometry.
+ *
+ * Fire-and-forget by design, like every other write in the tapping flow. The
+ * caller has already updated what is on screen; a failure here means the nudge
+ * is on this device and not yet on the others, which is the same state the app
+ * is in for the whole of a job with no bars.
+ */
+export async function saveLayer(overlay: MapOverlay): Promise<MapOverlay | null> {
+  try {
+    const res = await fetch("/api/property-layers", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: overlay.id,
+        propertyId: overlay.propertyId,
+        label: overlay.label,
+        georef: overlay.georef,
+        opacity: overlay.opacity,
+        z: overlay.z,
+        locked: overlay.locked,
+        scaleLocked: overlay.scaleLocked,
+        source: overlay.source,
+        ...(overlay.storagePath ? { storagePath: overlay.storagePath } : {}),
+      }),
+    });
+    const body = (await res.json()) as { ok?: boolean; layer?: unknown };
+    if (!res.ok || !body.ok) return null;
+    const saved = overlaysFrom([body.layer]);
+    // The server has no idea whether this device holds the bytes, so the local
+    // id is carried across rather than being replaced by the row's null.
+    return saved[0] ? { ...saved[0], imageId: overlay.imageId } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteLayer(id: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/property-layers?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** A uuid, because the id is the row's primary key and the upsert's conflict target. */
+function uuid(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  // Old iPadOS Safari only exposes randomUUID on a secure origin; the app is
+  // always served over https, but a fallback beats a thrown error on a device
+  // nobody predicted.
+  const b = new Uint8Array(16);
+  (c?.getRandomValues ?? ((a: Uint8Array) => a.fill(0)))(b);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const hex = [...b].map((n) => n.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
+ * The image's height over its width, read the same way the canvas will read it.
+ *
+ * Through an `<img>` rather than `createImageBitmap`, which is the obvious
+ * call and the wrong one: it decodes a narrower set of formats than the canvas
+ * draws, so measuring with one and rendering with the other means a file that
+ * loads perfectly well on the map can fail on the way in. Whatever the browser
+ * can show, this can size.
+ */
+function aspectOf(file: Blob): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img.naturalWidth > 0 ? img.naturalHeight / img.naturalWidth : 1);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("That image could not be read."));
+    };
+    img.src = url;
+  });
+}
+
+/**
+ * Read a picked image into IndexedDB and hand back an unplaced overlay.
+ *
+ * It arrives centred on wherever the map is looking, at a default ground width
+ * and north-up. That is a guess and it is meant to look like one — `locked` is
+ * false and `scaleLocked` is false, so the screen can say the layer is a
+ * picture in roughly the right place rather than a measurement.
+ */
+export async function addOverlayFromFile(
+  propertyId: number,
+  centre: LatLng,
+  file: File,
+  z: number,
+): Promise<MapOverlay> {
+  const id = uuid();
+  const aspect = await aspectOf(file);
+  await putPlanImage(id, file);
+
+  const georef: Georef = {
+    centre,
+    widthM: DEFAULT_PLAN_WIDTH_M,
+    aspect,
+    rotDeg: 0,
+  };
+  return {
+    id,
+    propertyId,
+    label: file.name.replace(/\.[^.]+$/, "").slice(0, 60) || "Plan",
+    imageId: id,
+    storagePath: null,
+    imageUrl: null,
+    georef,
+    opacity: 0.85,
+    z,
+    locked: false,
+    scaleLocked: false,
+    source: "masterdash",
+    updatedAt: null,
+  };
+}
+
+/** The device's copy, as an object URL, or null if this device never held it. */
+export async function localOverlayUrl(overlay: MapOverlay): Promise<string | null> {
+  if (!overlay.imageId) return null;
+  const blob = await getPlanImage(overlay.imageId);
+  return blob ? URL.createObjectURL(blob) : null;
+}
+
+/** Where an overlay's corners are, for a fit. */
+export function overlayCorners(overlay: MapOverlay) {
+  return georefCorners(overlay.georef);
+}

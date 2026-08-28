@@ -1,22 +1,26 @@
 "use client";
 
 import {
-  SHAPE_COLORS,
   emptyPlan,
   nextShapeColor,
   planId,
-  type PlanPoint,
-  type PlanScale,
+  pruneNodes,
+  topologyFrom,
+  type PendingPoint,
   type PlanShape,
   type PlanState,
   type ShapeKind,
 } from "./plan";
+import { isLatLng, type LatLng } from "./geo";
+import { sharedNodeIds } from "./plan";
+import type { Basemap, MapAnchor } from "./mapLayers";
 import {
-  deletePlanImage,
-  queuePlanUpload,
-  setPlanUploadHandler,
-} from "./planImage";
-import { emptyVisit, visitFrom, type VisitFinding, type VisitState } from "./visit";
+  emptyVisit,
+  visitFrom,
+  type VisitFinding,
+  type VisitSource,
+  type VisitState,
+} from "./visit";
 import {
   DEFAULT_ESTIMATOR_SETTINGS,
   project,
@@ -169,71 +173,38 @@ function stringMap(value: unknown): Record<string, string> {
   return out;
 }
 
-/**
- * A plan read back from storage.
- *
- * Validated field by field rather than trusted, for the same reason countMap
- * drops non-positive taps: a corrupt or hand-edited record must not be able to
- * put a NaN measurement on a proposal. A vertex list that does not survive
- * this comes back as no shape at all, which reads as "draw it again" instead
- * of quietly measuring nothing.
- */
-function finite(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
 
-function pointFrom(value: unknown): PlanPoint | null {
+function anchorFrom(value: unknown): MapAnchor | null {
   if (!value || typeof value !== "object") return null;
   const v = value as Record<string, unknown>;
-  const x = finite(v.x);
-  const y = finite(v.y);
-  return x === null || y === null ? null : { x, y };
-}
-
-function scaleFrom(value: unknown): PlanScale | null {
-  if (!value || typeof value !== "object") return null;
-  const v = value as Record<string, unknown>;
-  const ppf = finite(v.pixelsPerFoot);
-  const p1 = pointFrom(v.p1);
-  const p2 = pointFrom(v.p2);
-  if (ppf === null || ppf <= 0 || !p1 || !p2) return null;
-  return { pixelsPerFoot: ppf, p1, p2, label: String(v.label ?? "") };
-}
-
-function shapesFrom(value: unknown): PlanShape[] {
-  if (!Array.isArray(value)) return [];
-  const out: PlanShape[] = [];
-  for (const raw of value) {
-    if (!raw || typeof raw !== "object") continue;
-    const r = raw as Record<string, unknown>;
-    const type = r.type === "linear" ? "linear" : r.type === "area" ? "area" : null;
-    if (!type || typeof r.id !== "string" || !r.id) continue;
-    const vertices = Array.isArray(r.vertices)
-      ? r.vertices.map(pointFrom).filter((p): p is PlanPoint => p !== null)
-      : [];
-    // Below the minimum the shape cannot be drawn, measured or repaired.
-    if (vertices.length < (type === "area" ? 3 : 2)) continue;
-    out.push({
-      id: r.id,
-      type,
-      vertices,
-      color: typeof r.color === "string" ? r.color : SHAPE_COLORS[0],
-      assemblyId: typeof r.assemblyId === "string" ? r.assemblyId : null,
-    });
-  }
-  return out;
+  if (!isLatLng(v.centre)) return null;
+  const source =
+    v.source === "property" || v.source === "upright" || v.source === "placed"
+      ? v.source
+      : "fallback";
+  return {
+    propertyId:
+      typeof v.propertyId === "number" && Number.isFinite(v.propertyId)
+        ? v.propertyId
+        : null,
+    label: typeof v.label === "string" && v.label ? v.label : null,
+    centre: { lat: v.centre.lat, lng: v.centre.lng },
+    source,
+  };
 }
 
 function planFrom(value: unknown): PlanState {
   if (!value || typeof value !== "object") return emptyPlan();
   const v = value as Record<string, unknown>;
+  const { nodes, shapes } = topologyFrom(v);
   return {
-    imageId: typeof v.imageId === "string" && v.imageId ? v.imageId : null,
-    imageUrl: typeof v.imageUrl === "string" && v.imageUrl ? v.imageUrl : null,
-    imageWidth: finite(v.imageWidth) ?? 0,
-    imageHeight: finite(v.imageHeight) ?? 0,
-    scale: scaleFrom(v.scale),
-    shapes: shapesFrom(v.shapes),
+    anchor: anchorFrom(v.anchor),
+    basemap: v.basemap === "none" ? "none" : "satellite",
+    nodes,
+    shapes,
+    hiddenOverlayIds: Array.isArray(v.hiddenOverlayIds)
+      ? v.hiddenOverlayIds.filter((id): id is string => typeof id === "string")
+      : [],
   };
 }
 
@@ -428,53 +399,188 @@ function mutatePlan(fn: (plan: PlanState) => PlanState) {
 }
 
 /**
- * Point the plan at a newly picked image.
+ * Where the map opens, and how good that location is.
  *
- * The bytes are already in IndexedDB by the time this runs — see
- * planImage.readPlanFile. Replacing the image clears the scale and the shapes
- * with it: vertices are in the old image's pixel space, and a calibration
- * measured on one aerial means nothing on another. Leaving them would produce
- * shapes that look plausible and measure wrong, which is the worst outcome
- * available.
+ * The source rides along rather than being dropped once the centre is set,
+ * because these are not equally trustworthy. Half the properties on the
+ * project have coordinates; the rest have an address and nothing else, so the
+ * centre has to come from somewhere weaker and the screen has to be able to
+ * say which. A take-off drawn against a hand-placed guess is worth exactly
+ * what the guess was worth.
  */
-export function setPlanImage(
-  clientId: string,
-  image: { id: string; width: number; height: number },
+export function setPlanAnchor(anchor: MapAnchor | null) {
+  mutatePlan((plan) => ({ ...plan, anchor }));
+}
+
+/**
+ * Take the satellite away, or put it back.
+ *
+ * Upright's reasoning applies here too: once an overlay has been scaled off a
+ * known dimension it is the more accurate of the two, and stale imagery under
+ * accurate drawings puts two contradictory references on the screen. Hiding
+ * the tiles does not improve accuracy — it stops showing a disagreement — so
+ * the overlay had better be aligned before anybody trusts the tile-free view.
+ */
+export function setBasemap(basemap: Basemap) {
+  mutatePlan((plan) => ({ ...plan, basemap }));
+}
+
+/**
+ * Show or hide one of the property's overlays on this estimate.
+ *
+ * Per-estimate on purpose. The overlay itself belongs to the property and is
+ * shared with Upright, so switching one off here must not be able to affect
+ * what anybody else sees of that yard — it is a preference about this screen,
+ * not an edit to the layer.
+ */
+export function setOverlayHidden(overlayId: string, hidden: boolean) {
+  mutatePlan((plan) => {
+    const without = plan.hiddenOverlayIds.filter((id) => id !== overlayId);
+    return {
+      ...plan,
+      hiddenOverlayIds: hidden ? [...without, overlayId] : without,
+    };
+  });
+}
+
+/**
+ * Commit a drawn shape.
+ *
+ * Points that snapped to an existing corner while drawing arrive carrying its
+ * id and reuse it; the rest mint new corners. That is where a bed becomes
+ * joined to the lawn beside it — at the tap, when the person drawing could see
+ * what they were aiming at, rather than by a proximity guess made afterwards.
+ */
+export function addShape(
+  type: ShapeKind,
+  points: PendingPoint[],
+  assemblyId: string | null,
 ) {
-  const previous = getSnapshot().estimate.plan.imageId;
-  mutatePlan(() => ({
-    ...emptyPlan(),
-    imageId: image.id,
-    imageWidth: image.width,
-    imageHeight: image.height,
-  }));
-  if (previous && previous !== image.id) void deletePlanImage(previous);
-  queuePlanUpload(image.id, clientId);
+  mutatePlan((plan) => {
+    const nodes = { ...plan.nodes };
+    const vertices: string[] = [];
+    for (const point of points) {
+      if (point.nodeId && nodes[point.nodeId]) {
+        vertices.push(point.nodeId);
+        continue;
+      }
+      const id = planId("n");
+      nodes[id] = point.at;
+      vertices.push(id);
+    }
+    return {
+      ...plan,
+      nodes,
+      shapes: [
+        ...plan.shapes,
+        {
+          id: planId("shape"),
+          type,
+          vertices,
+          color: nextShapeColor(plan.shapes.length),
+          assemblyId,
+        },
+      ],
+    };
+  });
 }
 
-/** Called by the upload queue once the image is reachable from elsewhere. */
-setPlanUploadHandler((id, url) => {
-  mutatePlan((plan) => (plan.imageId === id ? { ...plan, imageUrl: url } : plan));
-});
-
-export function setPlanScale(scale: PlanScale | null) {
-  mutatePlan((plan) => ({ ...plan, scale }));
+/**
+ * Move one corner.
+ *
+ * Every shape holding this id follows, because they are holding the same
+ * corner. That is the whole point of the node table: the bed and the lawn keep
+ * their shared edge when either is adjusted, and both measurements re-derive
+ * from where it now is.
+ */
+export function moveNode(nodeId: string, at: LatLng) {
+  mutatePlan((plan) =>
+    plan.nodes[nodeId] ? { ...plan, nodes: { ...plan.nodes, [nodeId]: at } } : plan,
+  );
 }
 
-export function addShape(type: ShapeKind, vertices: PlanPoint[], assemblyId: string | null) {
-  mutatePlan((plan) => ({
-    ...plan,
-    shapes: [
-      ...plan.shapes,
-      {
-        id: planId("shape"),
-        type,
-        vertices,
-        color: nextShapeColor(plan.shapes.length),
-        assemblyId,
-      },
-    ],
-  }));
+/** Move several at once, for dragging a whole shape. */
+export function moveNodes(moves: Record<string, LatLng>) {
+  mutatePlan((plan) => ({ ...plan, nodes: { ...plan.nodes, ...moves } }));
+}
+
+/**
+ * Join two corners into one — how an adjacency drawn separately gets fixed.
+ *
+ * `from` is abandoned and every shape referencing it is repointed at `into`.
+ * A shape that ends up with the same corner twice in a row has it collapsed,
+ * since a zero-length side is a corner the user can no longer separate and it
+ * contributes nothing to the area.
+ */
+export function mergeNodes(fromId: string, intoId: string) {
+  if (fromId === intoId) return;
+  mutatePlan((plan) => {
+    if (!plan.nodes[fromId] || !plan.nodes[intoId]) return plan;
+    const shapes = plan.shapes
+      .map((shape) => {
+        const repointed = shape.vertices.map((v) => (v === fromId ? intoId : v));
+        const deduped = repointed.filter(
+          (id, i) => id !== repointed[(i + 1) % repointed.length],
+        );
+        return { ...shape, vertices: deduped };
+      })
+      // A merge can take a triangle down to a two-corner ring, which is a line
+      // pretending to be an area. Dropping it beats keeping something that
+      // measures nothing and cannot be repaired.
+      .filter((s) => s.vertices.length >= (s.type === "area" ? 3 : 2));
+    return { ...plan, shapes, nodes: pruneNodes(plan.nodes, shapes) };
+  });
+}
+
+/** Split a side: a new corner, belonging only to the shape it was added to. */
+export function insertVertex(shapeId: string, index: number, at: LatLng): string {
+  const id = planId("n");
+  mutatePlan((plan) => {
+    const shape = plan.shapes.find((s) => s.id === shapeId);
+    if (!shape) return plan;
+    const vertices = [...shape.vertices];
+    vertices.splice(index, 0, id);
+    return {
+      ...plan,
+      nodes: { ...plan.nodes, [id]: at },
+      shapes: plan.shapes.map((s) => (s.id === shapeId ? { ...s, vertices } : s)),
+    };
+  });
+  return id;
+}
+
+/**
+ * Give this shape its own copy of every corner it shares.
+ *
+ * The way out of a join. A mis-aimed tap can weld a bed to a lawn it was never
+ * meant to touch, and without this the only remedy would be redrawing it —
+ * so the shape keeps its geometry exactly and simply stops being the same
+ * corner as anything else.
+ */
+export function detachShape(shapeId: string) {
+  mutatePlan((plan) => {
+    const shape = plan.shapes.find((s) => s.id === shapeId);
+    if (!shape) return plan;
+    const shared = sharedNodeIds(plan.shapes);
+    const nodes = { ...plan.nodes };
+    const swap = new Map<string, string>();
+    for (const id of shape.vertices) {
+      if (!shared.has(id) || swap.has(id)) continue;
+      const clone = planId("n");
+      nodes[clone] = plan.nodes[id];
+      swap.set(id, clone);
+    }
+    if (swap.size === 0) return plan;
+    return {
+      ...plan,
+      nodes,
+      shapes: plan.shapes.map((s) =>
+        s.id === shapeId
+          ? { ...s, vertices: s.vertices.map((v) => swap.get(v) ?? v) }
+          : s,
+      ),
+    };
+  });
 }
 
 export function updateShape(id: string, patch: Partial<Omit<PlanShape, "id">>) {
@@ -485,10 +591,12 @@ export function updateShape(id: string, patch: Partial<Omit<PlanShape, "id">>) {
 }
 
 export function removeShape(id: string) {
-  mutatePlan((plan) => ({
-    ...plan,
-    shapes: plan.shapes.filter((s) => s.id !== id),
-  }));
+  mutatePlan((plan) => {
+    const shapes = plan.shapes.filter((s) => s.id !== id);
+    // Corners the deleted shape held alone go with it; ones it shared stay,
+    // because the shape it shared them with still has them.
+    return { ...plan, shapes, nodes: pruneNodes(plan.nodes, shapes) };
+  });
 }
 
 // --- The site visit -------------------------------------------------------
@@ -508,6 +616,25 @@ function mutateVisit(fn: (visit: VisitState) => VisitState) {
  */
 export function setTranscript(transcript: string) {
   mutateVisit((visit) => ({ ...visit, transcript }));
+}
+
+/**
+ * A transcript imported from an Upright site session.
+ *
+ * Separate from `setTranscript` because it also drops the findings: they were
+ * read out of a different visit, and leaving them would put one recording's
+ * list of work under another recording's transcript — which reads as a bug
+ * only if you notice, and prices a job wrongly if you do not. Staleness
+ * marking is not enough here, since the old rows would still be addable.
+ */
+export function setImportedTranscript(transcript: string, source: VisitSource) {
+  mutateVisit(() => ({
+    transcript,
+    source,
+    findings: [],
+    extractedAt: null,
+    extractedFrom: null,
+  }));
 }
 
 /** Replace the findings wholesale — a re-read supersedes the last one. */
@@ -618,12 +745,15 @@ export function mergeRemote(
       ]),
     ],
     // The plan is a document, so it takes the newer side whole rather than
-    // merging — half of one aerial's shapes on another's calibration would
-    // measure confidently and be wrong. A remote plan with no image never
-    // replaces one that has bytes here, for the same reason an empty job name
-    // does not un-name this estimate: an estimate saved before anyone drew is
-    // not evidence that the drawing should go.
-    plan: remoteNewer && remotePlan?.imageId ? remotePlan : current.plan,
+    // merging: there is no union of two people dragging the same vertex, and
+    // half of one take-off inside another reads as a plausible bed nobody
+    // drew. An empty remote plan never replaces one with work in it, for the
+    // same reason an empty job name does not un-name this estimate — an
+    // estimate saved before anyone drew is not evidence the drawing should go.
+    plan:
+      remoteNewer && remotePlan && remotePlan.shapes.length > 0
+        ? remotePlan
+        : current.plan,
     // Same rule as the plan and the job name: a remote visit with no
     // transcript never replaces one that has words in it.
     visit:
@@ -665,8 +795,6 @@ export function adoptEstimate(
   remoteOps: TapOp[],
 ) {
   const ops = remoteOps.filter(isOp).sort((a, b) => (a.at < b.at ? -1 : 1));
-  const previousImage = getSnapshot().estimate.plan.imageId;
-  const plan = planFrom(row.plan);
   persist({
     clientId: row.clientId,
     jobName: row.jobName ?? "",
@@ -677,26 +805,20 @@ export function adoptEstimate(
     syncedOpIds: ops.map((op) => op.id),
     baseUpdatedAt: row.updatedAt ?? null,
     // Whatever the server holds, wholesale — this replaces the screen. The
-    // adopted plan's bytes are not on this device, so it renders from the
-    // synced URL until someone replaces the image.
-    plan,
+    // overlays it draws against are the property's and are fetched by id, so
+    // adopting an estimate from another device brings its take-off without
+    // needing any image bytes to have travelled with it.
+    plan: planFrom(row.plan),
     visit: visitFrom(row.visit),
     updatedAt: row.updatedAt ?? new Date().toISOString(),
   });
-  // The estimate being replaced is not coming back on this device; its image
-  // would otherwise sit in IndexedDB for ever with nothing referencing it.
-  if (previousImage && previousImage !== plan.imageId) {
-    void deletePlanImage(previousImage);
-  }
 }
 
 /** Start a fresh estimate. The old one is only gone once it has synced. */
 export function clearEstimate() {
-  // The queue still holds the upload, so a plan drawn offline and cleared
-  // before coverage returns still reaches storage; only the local copy goes.
-  const image = getSnapshot().estimate.plan.imageId;
+  // Nothing to clean up: the overlay images belong to the property, not to
+  // this estimate, and the next estimate on the same yard wants them.
   persist(emptyEstimate());
-  if (image) void deletePlanImage(image);
 }
 
 export function updateSettings(patch: Partial<EstimatorSettings>) {

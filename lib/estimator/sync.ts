@@ -180,7 +180,8 @@ export function queueSave(estimate: Estimate, proposal: Proposal) {
   // A plan counts as work even before it prices anything: shapes drawn to
   // measure a site, with nothing linked to an assembly yet, are still a
   // morning's work that must not be lost with the tab.
-  const hasPlan = estimate.plan.shapes.length > 0 || !!estimate.plan.imageId;
+  const hasPlan =
+    estimate.plan.shapes.length > 0 || estimate.plan.anchor !== null;
   const hasVisit = estimate.visit.transcript.length > 0;
   if (
     estimate.ops.length === 0 &&
