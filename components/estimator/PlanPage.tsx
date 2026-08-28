@@ -9,7 +9,13 @@ import {
   unitOfWorkLabel,
 } from "@/lib/estimator/assemblies";
 import { formatMoney, sellFor } from "@/lib/estimator/catalog";
-import { FALLBACK_CENTRE, type LatLng } from "@/lib/estimator/geo";
+import {
+  FALLBACK_CENTRE,
+  parseFeet,
+  scaleToKnownDimension,
+  type Georef,
+  type LatLng,
+} from "@/lib/estimator/geo";
 import {
   ANCHOR_BLURB,
   anchorIsReal,
@@ -104,6 +110,13 @@ export default function PlanPage({
   /** Object URLs for overlays this device holds the bytes for. */
   const [localUrls, setLocalUrls] = useState<Record<string, string>>({});
   const [picking, setPicking] = useState(false);
+  /** The layer the gestures are acting on, if any. */
+  const [aligningId, setAligningId] = useState<string | null>(null);
+  /** Marking a dimension: layer gestures off, taps collect the two ends. */
+  const [scaling, setScaling] = useState(false);
+  const [scalePoints, setScalePoints] = useState<LatLng[]>([]);
+  const [scaleInput, setScaleInput] = useState("");
+  const [scaleError, setScaleError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const anchor = plan.anchor;
@@ -179,6 +192,13 @@ export default function PlanPage({
     [overlays, plan.hiddenOverlayIds],
   );
 
+  // Looked up rather than held, so a layer removed mid-alignment simply ends
+  // the mode instead of leaving the canvas pointed at something gone.
+  const aligning = useMemo(
+    () => drawnOverlays.find((o) => o.id === aligningId) ?? null,
+    [drawnOverlays, aligningId],
+  );
+
   // A shape can vanish under the selection (deleted here, or an estimate
   // cleared elsewhere). Looking it up every render means a stale id is simply
   // no selection, with nothing to synchronise.
@@ -221,6 +241,60 @@ export default function PlanPage({
     [],
   );
 
+  const startAligning = useCallback((id: string) => {
+    setAligningId(id);
+    setScaling(false);
+    setScalePoints([]);
+    setScaleError(null);
+    // A half-drawn bed would otherwise sit on screen through the whole of an
+    // alignment and be finished against a plan that has since moved.
+    setPending([]);
+    setTool("select");
+  }, []);
+
+  const stopAligning = useCallback(() => {
+    setAligningId(null);
+    setScaling(false);
+    setScalePoints([]);
+    setScaleError(null);
+  }, []);
+
+  /**
+   * Resize the layer so the two marked features are the stated distance apart.
+   *
+   * This is what turns a layer from "placed by eye" into the measurement, so
+   * it sets `scaleLocked` — after which the pinch no longer resizes and the
+   * Size slider is disabled. Nothing can change the scale by eye again;
+   * Rescale re-runs the measurement.
+   */
+  const applyScale = useCallback(() => {
+    if (!aligning) return;
+    if (scalePoints.length < 2) {
+      setScaleError("Tap both ends of the dimension first.");
+      return;
+    }
+    const feet = parseFeet(scaleInput);
+    if (feet === null || !(feet > 0)) {
+      setScaleError("Try 100, 100' or 12'6\".");
+      return;
+    }
+    const georef = scaleToKnownDimension(
+      aligning.georef,
+      scalePoints[0],
+      scalePoints[1],
+      feet,
+    );
+    if (!georef) {
+      setScaleError("Those taps are too close — use the longest dimension you can.");
+      return;
+    }
+    patchOverlay(aligning.id, { georef, scaleLocked: true });
+    setScaling(false);
+    setScalePoints([]);
+    setScaleInput("");
+    setScaleError(null);
+  }, [aligning, scalePoints, scaleInput, patchOverlay]);
+
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -237,6 +311,9 @@ export default function PlanPage({
       // On screen immediately, from IndexedDB. The row and the upload catch up.
       setOverlays((current) => [...current, overlay]);
       void saveLayer(overlay);
+      // Straight into alignment: a layer arrives at a default size in the
+      // middle of the view, which is never where it goes.
+      startAligning(overlay.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "That image could not be read.");
     }
@@ -259,7 +336,7 @@ export default function PlanPage({
           <button
             key={t.key}
             onClick={() => chooseTool(t.key)}
-            disabled={!ready}
+            disabled={!ready || aligning !== null}
             className={`shrink-0 flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-bold transition-colors disabled:opacity-30 ${
               tool === t.key ? "bg-accent text-black" : "bg-surface2 text-ink"
             }`}
@@ -351,9 +428,68 @@ export default function PlanPage({
         </div>
       )}
 
-      <p className="shrink-0 mb-2 text-[0.7rem] text-muted">
-        {ready ? HINTS[tool] : "Choose the property first — the map has to open somewhere."}
-      </p>
+      {aligning ? (
+        <div className="shrink-0 mb-2 rounded-xl border border-accent bg-accent/10 p-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold text-ink">
+              Placing {aligning.label}
+            </span>
+            <span className="min-w-0 flex-1 text-[0.7rem] text-muted">
+              {scaling
+                ? scalePoints.length < 2
+                  ? "Tap both ends of a dimension the drawing states"
+                  : "Now type what that dimension really is"
+                : aligning.scaleLocked
+                  ? "Drag to move · two fingers to turn — the size is locked to the dimension you set"
+                  : "Drag to move · two fingers to pinch and turn"}
+            </span>
+            <button
+              onClick={() => {
+                setScaling((v) => !v);
+                setScalePoints([]);
+                setScaleError(null);
+              }}
+              className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold ${
+                scaling ? "bg-[#f59e0b] text-black" : "bg-surface2 text-ink"
+              }`}
+            >
+              {scaling ? "Cancel" : aligning.scaleLocked ? "Rescale" : "Set scale"}
+            </button>
+            <button
+              onClick={stopAligning}
+              className="shrink-0 rounded-lg bg-accent px-4 py-1.5 text-xs font-bold text-black"
+            >
+              Done
+            </button>
+          </div>
+
+          {scaling && scalePoints.length === 2 && (
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                autoFocus
+                value={scaleInput}
+                onChange={(e) => setScaleInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && applyScale()}
+                placeholder={`100 · 100' · 12'6" · 30m`}
+                className="min-w-0 flex-1 rounded-lg border border-edge bg-surface px-2 py-2 text-base text-ink"
+              />
+              <button
+                onClick={applyScale}
+                className="shrink-0 rounded-lg bg-[#f59e0b] px-4 py-2 text-sm font-bold text-black"
+              >
+                Set
+              </button>
+            </div>
+          )}
+          {scaleError && (
+            <p className="mt-1 text-[0.7rem] text-[#fca5a5]">{scaleError}</p>
+          )}
+        </div>
+      ) : (
+        <p className="shrink-0 mb-2 text-[0.7rem] text-muted">
+          {ready ? HINTS[tool] : "Choose the property first — the map has to open somewhere."}
+        </p>
+      )}
 
       <div className="flex flex-1 min-h-0 gap-3">
         <PlanCanvas
@@ -371,6 +507,13 @@ export default function PlanPage({
           onCloseArea={finish}
           onUpdateShape={updateShape}
           showMeasurements={showMeasurements}
+          aligning={aligning}
+          onAlignCommit={(georef: Georef) =>
+            aligning && patchOverlay(aligning.id, { georef })
+          }
+          scaling={scaling}
+          scalePoints={scalePoints}
+          onScalePointsChange={setScalePoints}
         />
 
         <aside className="hidden w-64 shrink-0 flex-col gap-2 overflow-y-auto md-scroll sm:flex">
@@ -383,6 +526,9 @@ export default function PlanPage({
             <LayersCard
               overlays={overlays}
               hidden={plan.hiddenOverlayIds}
+              aligningId={aligningId}
+              onAlign={startAligning}
+              onStopAligning={stopAligning}
               onPatch={patchOverlay}
               onRemove={(id) => {
                 setOverlays((c) => c.filter((o) => o.id !== id));
@@ -608,11 +754,17 @@ function AnchorCard({
 function LayersCard({
   overlays,
   hidden,
+  aligningId,
+  onAlign,
+  onStopAligning,
   onPatch,
   onRemove,
 }: {
   overlays: MapOverlay[];
   hidden: string[];
+  aligningId: string | null;
+  onAlign: (id: string) => void;
+  onStopAligning: () => void;
   onPatch: (id: string, patch: Partial<MapOverlay>) => void;
   onRemove: (id: string) => void;
 }) {
@@ -703,12 +855,36 @@ function LayersCard({
                   className="w-full disabled:opacity-30"
                 />
               </label>
-              <button
-                onClick={() => onPatch(o.id, { locked: !o.locked })}
-                className="mt-1 w-full rounded-lg bg-surface2 py-1.5 text-[0.65rem] font-bold text-muted"
-              >
-                {o.locked ? "Unlock to nudge" : "Lock in place"}
-              </button>
+              <div className="mt-1 flex gap-1">
+                <button
+                  onClick={() => {
+                    if (aligningId === o.id) {
+                      onStopAligning();
+                      return;
+                    }
+                    // Placing implies unlocked: the lock exists to stop a
+                    // stray thumb moving a finished layer, and asking someone
+                    // to unlock before they can move it is a step that only
+                    // ever gets in the way of the thing they just asked for.
+                    if (o.locked) onPatch(o.id, { locked: false });
+                    onAlign(o.id);
+                  }}
+                  className={`flex-1 rounded-lg py-1.5 text-[0.65rem] font-bold ${
+                    aligningId === o.id
+                      ? "bg-accent text-black"
+                      : "bg-surface2 text-ink"
+                  }`}
+                >
+                  {aligningId === o.id ? "Done placing" : "Place"}
+                </button>
+                <button
+                  onClick={() => onPatch(o.id, { locked: !o.locked })}
+                  className="shrink-0 rounded-lg bg-surface2 px-2.5 py-1.5 text-[0.65rem] font-bold text-muted"
+                  title={o.locked ? "Unlock" : "Lock in place"}
+                >
+                  {o.locked ? "🔒" : "🔓"}
+                </button>
+              </div>
             </div>
           );
         })}

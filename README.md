@@ -333,12 +333,47 @@ sometimes a guess, and a take-off is worth what its anchor was worth. The card
 says which. `quick_estimates.property_id` has existed unused since the table was
 created; this is what finally fills it in.
 
-**Still to build:** dragging, pinching and twisting an overlay into place on
-the map, and setting its width from a known dimension the way Upright's *Set
-scale* does. Today a new layer arrives centred on the view at 60 m wide and is
-nudged with the Turn and Size sliders, which is coarse. Perspective correction
-for a plan photographed at an angle is a separate problem and is not solved in
-either app.
+#### Placing a layer, and scaling it off the drawing
+
+**Place** on a layer puts the canvas into an alignment mode: one finger slides
+the layer, two fingers pinch, twist and drag it. Same gestures as Upright, down
+to the sign — screen angles grow clockwise and the plan's rotation grows
+anticlockwise.
+
+It has to be a **mode** rather than something an unlocked layer simply does,
+which is where this departs from Upright. There, the map is only ever a map. Here
+the same canvas is the drawing surface, and a pinch that silently resized a plan
+instead of zooming the map would be the worst kind of surprise — every
+measurement taken against it afterwards would be wrong and nothing on screen
+would say so. So the gestures are handed to the layer only while it is being
+placed, the layer is outlined in green with corner dots for the duration, and a
+banner says what the fingers are about to do. Starting to place also brings the
+layer fully into view, because the banner takes a strip off the canvas and a
+layer near an edge would go half off it just as somebody reached for it.
+
+**Set scale** is what turns a layer from decoration into the measurement. Rough
+it in by eye, tap the two ends of a dimension the drawing already states, and
+type what it really is; the layer is resized so those two features land that far
+apart on the ground. It scales about the **first** tap, so the end you measured
+from stays put and there is less to drag back. `parseFeet` takes `100`, `100'`,
+`12'6"`, `12-6`, `30"` and `30m` — lifted from Upright, because two apps
+disagreeing about what `12-6` means is a silent measuring error.
+
+After that the scale is **locked**. The Size slider is disabled and the pinch no
+longer resizes — it still rotates and pans, which is exactly the workflow.
+**Rescale** re-runs the measurement; nothing else can change the size by eye.
+That is the point: the layer is the accurate reference and the satellite under
+it is feet-misaligned and years stale, so a stray pinch must not be able to
+re-size a measured plan against a worse one.
+
+Marking a dimension needs single taps, which the layer gestures would swallow,
+so Set scale turns them off for its duration — the same thing Upright does with
+`setMapMode('planscale')`.
+
+**Still to build:** perspective correction for a plan photographed at an angle.
+`georefCorners` models the image as a parallelogram, so a plan shot from an
+angle will never align perfectly however much it is nudged. Not solved in either
+app.
 
 
 ### Visit: reading the job off the transcript

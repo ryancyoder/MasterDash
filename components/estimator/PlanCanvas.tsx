@@ -5,11 +5,13 @@ import {
   FEET_PER_METRE,
   cornersWorld,
   georefCorners,
+  lengthFt,
   metresPerWorldUnit,
   padBounds,
   toLatLng,
   toWorld,
   worldBounds,
+  type Georef,
   type LatLng,
   type WorldBounds,
   type WorldPoint,
@@ -155,6 +157,18 @@ function niceFeet(target: number): number {
   return 10 * pow;
 }
 
+/**
+ * Move a placement by the ground distance a gesture covered.
+ *
+ * Worked in World rather than in degrees so the layer stays under the fingers
+ * exactly: the same Mercator units the canvas transform uses, converted back
+ * once at the end.
+ */
+function shiftCentre(centre: LatLng, from: WorldPoint, to: WorldPoint): LatLng {
+  const c = toWorld(centre);
+  return toLatLng({ x: c.x + (to.x - from.x), y: c.y + (to.y - from.y) });
+}
+
 export type PlanTool = "select" | "area" | "linear";
 
 export default function PlanCanvas({
@@ -162,6 +176,11 @@ export default function PlanCanvas({
   basemap,
   overlays,
   overlaySrc,
+  aligning,
+  onAlignCommit,
+  scaling,
+  scalePoints,
+  onScalePointsChange,
   shapes,
   labelFor,
   tool,
@@ -180,6 +199,24 @@ export default function PlanCanvas({
   overlays: MapOverlay[];
   /** Object URL or public URL for an overlay's bytes, device copy first. */
   overlaySrc: (overlay: MapOverlay) => string | null;
+  /**
+   * The layer being moved into place, if any.
+   *
+   * While this is set the gestures act on the LAYER instead of on the map:
+   * one finger slides it, two pinch, twist and drag it. That is Upright's
+   * behaviour, and it has to be a mode rather than something an unlocked layer
+   * simply does, because unlike Upright this canvas is also the drawing
+   * surface — a pinch that silently resized a plan instead of zooming the map
+   * would be the worst kind of surprise, since every measurement taken
+   * afterwards would be wrong and nothing on screen would say so.
+   */
+  aligning: MapOverlay | null;
+  /** The resting placement, on release. Not called per pointermove. */
+  onAlignCommit: (georef: Georef) => void;
+  /** Marking the two ends of a dimension the drawing already states. */
+  scaling: boolean;
+  scalePoints: LatLng[];
+  onScalePointsChange: (points: LatLng[]) => void;
   shapes: PlanShape[];
   /** The assembly name drawn under a shape's measurement, when it has one. */
   labelFor: (shape: PlanShape) => string | null;
@@ -209,6 +246,8 @@ export default function PlanCanvas({
   const [viewVersion, setViewVersion] = useState(0);
   /** Whether the view has been placed at all, so the first fit happens once. */
   const homedRef = useRef(false);
+  /** The layer the view was last brought to, so it happens once per layer. */
+  const focusedRef = useRef<string | null>(null);
 
   // Live drag, held locally and committed on release. Writing every
   // pointermove to the estimate is a localStorage write and a full re-render
@@ -223,6 +262,18 @@ export default function PlanCanvas({
     shapeId: string;
     vertices: LatLng[];
   } | null>(null);
+
+  /**
+   * The layer's placement mid-gesture, held here and committed on release —
+   * the same reason a vertex drag is: writing every pointermove to the estimate
+   * is a localStorage write and a full re-render per event.
+   */
+  const [liveGeoref, setLiveGeoref] = useState<Georef | null>(null);
+  const alignRef = useRef<
+    | { kind: "move"; base: Georef; world0: WorldPoint }
+    | { kind: "pinch"; base: Georef; world0: WorldPoint; dist0: number; ang0: number }
+    | null
+  >(null);
 
   const pointersRef = useRef(new Map<number, Pt>());
   const gestureRef = useRef<{ lastDist: number; lastMid: Pt } | null>(null);
@@ -345,6 +396,35 @@ export default function PlanCanvas({
     bumpView();
   }, [bumpView, placeView]);
 
+  /**
+   * Bring one layer fully into view. Ref only, like `placeView`.
+   *
+   * Starting to place a layer is the one moment a recentre is wanted rather
+   * than resented: the banner that opens with it takes a strip off the canvas,
+   * so a layer sitting near an edge goes half off it just as somebody reaches
+   * to drag the thing.
+   */
+  const focusOverlay = useCallback(
+    (overlay: MapOverlay, width: number, height: number) => {
+      if (!width || !height) return;
+      const c = cornersWorld(georefCorners(overlay.georef));
+      const bounds = worldBounds([
+        c.tl,
+        c.tr,
+        c.bl,
+        { x: c.tr.x + c.bl.x - c.tl.x, y: c.tr.y + c.bl.y - c.tl.y },
+      ]);
+      if (!bounds) return;
+      const b = padBounds(bounds, 0.35);
+      const w = Math.max(b.maxX - b.minX, 1e-9);
+      const h = Math.max(b.maxY - b.minY, 1e-9);
+      viewRef.current.centre = { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 };
+      viewRef.current.pxPerWorld = Math.min(width / w, height / h);
+      clampView();
+    },
+    [clampView],
+  );
+
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -405,6 +485,13 @@ export default function PlanCanvas({
     return () => canvas.removeEventListener("wheel", onWheel);
   }, [zoomToPoint]);
 
+  /** An aligning layer draws at its gesture position, not its stored one. */
+  const georefOf = useCallback(
+    (o: MapOverlay): Georef =>
+      liveGeoref && aligning && o.id === aligning.id ? liveGeoref : o.georef,
+    [liveGeoref, aligning],
+  );
+
   /** Shapes as drawn right now — a live drag overrides the stored vertices. */
   const drawnShapes = useMemo(
     () =>
@@ -431,6 +518,13 @@ export default function PlanCanvas({
     if (!homedRef.current && canvas.width && canvas.height) {
       homedRef.current = true;
       placeView(canvas.width, canvas.height);
+    }
+
+    // Once per layer, on the way into placing it — not on every redraw, or a
+    // drag would fight the view trying to re-centre under it.
+    if ((aligning?.id ?? null) !== focusedRef.current) {
+      focusedRef.current = aligning?.id ?? null;
+      if (aligning) focusOverlay(aligning, canvas.width, canvas.height);
     }
 
     const t = transformFor(canvas.width, canvas.height);
@@ -469,7 +563,7 @@ export default function PlanCanvas({
       const src = overlaySrc(overlay);
       const img = src ? overlayImages.current.get(src) : null;
       if (!img || !img.naturalWidth) continue;
-      const c = cornersWorld(georefCorners(overlay.georef));
+      const c = cornersWorld(georefCorners(georefOf(overlay)));
       const tl = toCanvas(c.tl, t);
       const tr = toCanvas(c.tr, t);
       const bl = toCanvas(c.bl, t);
@@ -485,6 +579,66 @@ export default function PlanCanvas({
       );
       ctx.drawImage(img, 0, 0);
       ctx.restore();
+
+      // The layer under the fingers gets an outline and corner dots. Without
+      // it, a gesture that moves a plan and a gesture that moves the map look
+      // identical until you notice the satellite did not come with it.
+      if (aligning && overlay.id === aligning.id) {
+        const br = { x: tr.x + bl.x - tl.x, y: tr.y + bl.y - tl.y };
+        ctx.strokeStyle = "#22c55e";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([7, 5]);
+        ctx.beginPath();
+        ctx.moveTo(tl.x, tl.y);
+        ctx.lineTo(tr.x, tr.y);
+        ctx.lineTo(br.x, br.y);
+        ctx.lineTo(bl.x, bl.y);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        for (const p of [tl, tr, br, bl]) {
+          ctx.fillStyle = "#22c55e";
+          ctx.strokeStyle = "#052e16";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+    }
+
+    // The dimension being marked, with what it measures right now — so the
+    // number typed into the box can be checked against what is on screen
+    // before it rescales the layer.
+    if (scaling && scalePoints.length > 0) {
+      const pts = scalePoints.map((v) => toCanvas(toWorld(v), t));
+      if (pts.length === 2) {
+        ctx.strokeStyle = "#f59e0b";
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([8, 5]);
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        ctx.lineTo(pts[1].x, pts[1].y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        drawLabel(
+          ctx,
+          `${lengthFt(scalePoints).toFixed(1)} ft now`,
+          (pts[0].x + pts[1].x) / 2,
+          (pts[0].y + pts[1].y) / 2 - 14,
+          "#fbbf24",
+        );
+      }
+      for (const p of pts) {
+        ctx.fillStyle = "#f59e0b";
+        ctx.strokeStyle = "#000";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
     }
 
     // 3. The take-off.
@@ -651,12 +805,17 @@ export default function PlanCanvas({
     basemap,
     overlays,
     overlaySrc,
+    georefOf,
+    aligning,
+    scaling,
+    scalePoints,
     selectedShapeId,
     showMeasurements,
     labelFor,
     tool,
     transformFor,
     placeView,
+    focusOverlay,
     bumpAssets,
     viewVersion,
   ]);
@@ -672,6 +831,16 @@ export default function PlanCanvas({
   function handleTap(cp: Pt) {
     const t = transformNow();
     const ll = toLatLng(fromCanvas(cp, t));
+
+    // Marking a dimension takes single taps, which is why the layer gestures
+    // are off for the duration — they would swallow them. Upright hit the
+    // same thing and solved it the same way.
+    if (scaling) {
+      onScalePointsChange([...scalePoints, ll].slice(-2));
+      return;
+    }
+    // While a layer is being placed, a tap is not a request to draw on it.
+    if (aligning) return;
 
     if (tool === "area") {
       // Tap the first vertex to close. Generous radius: this is the one target
@@ -721,10 +890,23 @@ export default function PlanCanvas({
       setDragVertices(null);
       pressRef.current = null;
       const [a, b] = [...pointersRef.current.values()];
-      gestureRef.current = {
-        lastDist: Math.hypot(a.x - b.x, a.y - b.y),
-        lastMid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
-      };
+      const gapPx = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      gestureRef.current = { lastDist: gapPx, lastMid: mid };
+
+      if (aligning && !scaling) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        alignRef.current = {
+          kind: "pinch",
+          base: liveGeoref ?? aligning.georef,
+          world0: fromCanvas(
+            { x: mid.x - rect.left, y: mid.y - rect.top },
+            transformNow(),
+          ),
+          dist0: gapPx,
+          ang0: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI,
+        };
+      }
       return;
     }
     if (pointersRef.current.size > 2) return;
@@ -732,6 +914,17 @@ export default function PlanCanvas({
     const cp = canvasPoint(e);
     pressRef.current = { x: e.clientX, y: e.clientY, moved: false };
     e.currentTarget.setPointerCapture?.(e.pointerId);
+
+    // One finger slides the layer, and does NOT fall through to a map pan:
+    // while a layer is being placed the map is the thing that must hold still.
+    if (aligning && !scaling) {
+      alignRef.current = {
+        kind: "move",
+        base: liveGeoref ?? aligning.georef,
+        world0: fromCanvas(cp, transformNow()),
+      };
+      return;
+    }
 
     if (tool === "select") {
       const t = transformNow();
@@ -815,11 +1008,45 @@ export default function PlanCanvas({
     const g = gestureRef.current;
     if (g && pointersRef.current.size >= 2) {
       const [a, b] = [...pointersRef.current.values()];
-      const distNow = Math.hypot(a.x - b.x, a.y - b.y);
+      const distNow = Math.hypot(a.x - b.x, a.y - b.y) || 1;
       const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
       const rect = canvasRef.current!.getBoundingClientRect();
       const fx = mid.x - rect.left;
       const fy = mid.y - rect.top;
+
+      const align = alignRef.current;
+      if (align?.kind === "pinch") {
+        // Pinch sizes, twist turns, and the midpoint drags — all three at
+        // once, which is how a drawing actually gets roughed into place.
+        //
+        // Once the size came from a known dimension the pinch stops resizing
+        // and only rotate and pan stay live. That is the whole point of
+        // locking it: the plan is the accurate reference and the satellite
+        // under it is feet-misaligned and years stale, so a stray pinch must
+        // not be able to re-size a measured plan against a worse one.
+        const angNow = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+        // Screen angles grow clockwise and the plan's rotation grows
+        // anticlockwise, hence the subtraction.
+        let rotDeg = align.base.rotDeg - (angNow - align.ang0);
+        while (rotDeg > 180) rotDeg -= 360;
+        while (rotDeg < -180) rotDeg += 360;
+
+        const widthM = aligning?.scaleLocked
+          ? align.base.widthM
+          : Math.max(0.5, Math.min(5000, align.base.widthM * (distNow / align.dist0)));
+
+        const worldNow = fromCanvas({ x: fx, y: fy }, transformNow());
+        setLiveGeoref({
+          ...align.base,
+          widthM,
+          rotDeg,
+          centre: shiftCentre(align.base.centre, align.world0, worldNow),
+        });
+        g.lastDist = distNow;
+        g.lastMid = mid;
+        return;
+      }
+
       if (g.lastDist > 0) zoomToPoint(distNow / g.lastDist, fx, fy);
       // Two-finger drag pans as well as pinching, which is how a map is
       // expected to behave and costs nothing here.
@@ -842,6 +1069,20 @@ export default function PlanCanvas({
         Math.abs(e.clientY - press.y) > TAP_SLOP_PX)
     ) {
       press.moved = true;
+    }
+
+    const align = alignRef.current;
+    if (align?.kind === "move") {
+      if (!press?.moved) return;
+      setLiveGeoref({
+        ...align.base,
+        centre: shiftCentre(
+          align.base.centre,
+          align.world0,
+          fromCanvas(canvasPoint(e), transformNow()),
+        ),
+      });
+      return;
     }
 
     const drag = dragRef.current;
@@ -887,6 +1128,23 @@ export default function PlanCanvas({
     pointersRef.current.delete(e.pointerId);
     e.currentTarget.releasePointerCapture?.(e.pointerId);
 
+    // One write per gesture, on release. The placement is left on screen
+    // until the parent hands it back as the layer's own georef, so the plan
+    // never flicks back to where it was for a frame.
+    if (alignRef.current && pointersRef.current.size === 0) {
+      const placed = liveGeoref;
+      alignRef.current = null;
+      gestureRef.current = null;
+      pressRef.current = null;
+      if (placed) {
+        onAlignCommit(placed);
+        // Cleared in the same handler as the commit, so React batches the two
+        // and the layer never renders one frame at its old placement.
+        setLiveGeoref(null);
+      }
+      return;
+    }
+
     if (gestureRef.current) {
       // Wait for both fingers to lift, so the second release is not read as a
       // tap on whatever it happens to be over.
@@ -914,7 +1172,11 @@ export default function PlanCanvas({
 
   function handlePointerCancel(e: React.PointerEvent<HTMLCanvasElement>) {
     pointersRef.current.delete(e.pointerId);
-    if (pointersRef.current.size === 0) gestureRef.current = null;
+    if (pointersRef.current.size === 0) {
+      gestureRef.current = null;
+      alignRef.current = null;
+      setLiveGeoref(null);
+    }
     dragRef.current = null;
     pressRef.current = null;
     setDragVertices(null);

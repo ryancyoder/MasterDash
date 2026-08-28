@@ -191,7 +191,13 @@ export interface Georef {
   widthM: number;
   /** Image height ÷ width. Carried so the pixels are never re-measured. */
   aspect: number;
-  /** Clockwise from north-up, in degrees. */
+  /**
+   * Rotation in degrees, ANTICLOCKWISE from north-up — east turns towards
+   * north as it grows. Not a compass bearing, which runs the other way. It is
+   * this way round because it matches Upright's `plan_rot_deg`, and a shared
+   * number that means two different things in two apps is worse than an
+   * unusual convention documented once.
+   */
   rotDeg: number;
 }
 
@@ -340,4 +346,71 @@ export function latLngsFrom(value: unknown): LatLng[] {
   return Array.isArray(value)
     ? value.map(latLngFrom).filter((p): p is LatLng => p !== null)
     : [];
+}
+
+// --- Scaling a raster off a known dimension -------------------------------
+
+/**
+ * Feet, from what somebody would actually type.
+ *
+ * Plans are dimensioned in feet and inches and nobody converts in their head
+ * on site, so `100`, `100'`, `12'6"`, `12-6`, `30"` and `30m` all work. Lifted
+ * from Upright, where the same box exists, because two apps disagreeing about
+ * what `12-6` means is a silent measuring error.
+ */
+export function parseFeet(text: string | null | undefined): number | null {
+  if (text == null) return null;
+  const t = String(text)
+    .trim()
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u2032]/g, "'")
+    .replace(/[\u201c\u201d\u2033]/g, '"');
+  if (!t) return null;
+
+  let m = /^(\d+(?:\.\d+)?)\s*'\s*(\d+(?:\.\d+)?)\s*"?$/.exec(t); // 12'6"
+  if (m) return parseFloat(m[1]) + parseFloat(m[2]) / 12;
+  m = /^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$/.exec(t); // 12-6
+  if (m) return parseFloat(m[1]) + parseFloat(m[2]) / 12;
+  m = /^(\d+(?:\.\d+)?)\s*(?:"|in|ins|inch|inches)$/.exec(t); // 30"
+  if (m) return parseFloat(m[1]) / 12;
+  m = /^(\d+(?:\.\d+)?)\s*(?:m|metre|metres|meter|meters)$/.exec(t); // 30m
+  if (m) return parseFloat(m[1]) * FEET_PER_METRE;
+  m = /^(\d+(?:\.\d+)?)\s*(?:'|ft|feet|foot)?$/.exec(t); // 100 / 100'
+  if (m) return parseFloat(m[1]);
+  return null;
+}
+
+/**
+ * Resize a placed raster so two marked features land a known distance apart.
+ *
+ * This is what turns an overlay from a picture in roughly the right place into
+ * the measurement. Rough it in by eye, tap the two ends of a dimension the
+ * drawing already states, type what it really is, and everything drawn against
+ * it afterwards inherits that scale rather than a guess.
+ *
+ * The scaling happens about the FIRST tap, so the end you measured from stays
+ * where it is and there is less to drag back afterwards.
+ *
+ * Null when the two taps are too close to divide by — at which point the
+ * honest answer is to ask for a longer dimension, not to apply a ratio derived
+ * from two touches a centimetre apart.
+ */
+export function scaleToKnownDimension(
+  georef: Georef,
+  from: LatLng,
+  to: LatLng,
+  knownFeet: number,
+): Georef | null {
+  const measuredFeet = lengthFt([from, to]);
+  if (!(measuredFeet > 0.03) || !(knownFeet > 0)) return null;
+  const k = knownFeet / measuredFeet;
+  if (!Number.isFinite(k) || k <= 0) return null;
+
+  const frame = localFrame(from);
+  const centre = toLocal(georef.centre, frame);
+  return {
+    ...georef,
+    widthM: Math.max(0.5, Math.min(5000, georef.widthM * k)),
+    centre: fromLocal({ e: centre.e * k, n: centre.n * k }, frame),
+  };
 }
