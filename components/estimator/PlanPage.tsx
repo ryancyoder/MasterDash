@@ -207,17 +207,53 @@ export default function PlanPage({
   }, [overlays]);
 
   const surveySessionId = plan.survey?.sessionId ?? null;
+  const surveyLabel = plan.survey?.label ?? null;
   useEffect(() => {
     let live = true;
     const load = surveySessionId ? fetchSurvey(surveySessionId) : Promise.resolve(null);
     void load.then((result) => {
       if (!live) return;
-      setSurvey(result ? ({ points: result.points, runs: result.runs } as SurveyLayer) : null);
+      const layer = result
+        ? ({ points: result.points, runs: result.runs } as SurveyLayer)
+        : null;
+      setSurvey(layer);
+
+      // A survey can anchor the map by itself.
+      //
+      // 47 of the 48 surveys on the project belong to a session with no
+      // property, so requiring a property first meant anchoring on some
+      // unrelated address and then pressing Fit to go and find the survey.
+      // The points are real surveyed positions — a better fix on the ground
+      // than half the property records, which have no coordinates at all —
+      // so they stand in until a property is chosen, and never override one.
+      if (!layer || anchorIsReal(plan.anchor)) return;
+      const placed = layer.points.filter((p) => !p.hidden);
+      if (placed.length === 0) return;
+      const centre = placed.reduce(
+        (acc, p) => ({
+          lat: acc.lat + p.at.lat / placed.length,
+          lng: acc.lng + p.at.lng / placed.length,
+        }),
+        { lat: 0, lng: 0 },
+      );
+      setPlanAnchor({
+        propertyId: plan.anchor?.propertyId ?? null,
+        // Deliberately not the survey's label: this anchors the MAP, it does
+        // not name the yard. The estimate still wants a property, and the
+        // card should keep saying so.
+        label: null,
+        centre,
+        source: "upright",
+      });
     });
     return () => {
       live = false;
     };
-  }, [surveySessionId]);
+    // `plan.anchor` is read but deliberately not a dependency: this should run
+    // when the SURVEY changes, not every time the anchor moves, or choosing a
+    // property afterwards would re-run it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [surveySessionId, surveyLabel]);
 
   /** Device copy first; the Storage URL is the fallback for a device that never held it. */
   const overlaySrc = useCallback(
@@ -819,6 +855,11 @@ function AnchorCard({
       <p className="mt-1 text-sm leading-snug text-ink">
         {anchor?.label ?? (anchor?.propertyId ? `#${anchor.propertyId}` : "Not chosen")}
       </p>
+      {anchor?.source === "upright" && anchor.propertyId === null && (
+        <p className="mt-0.5 text-[0.65rem] leading-tight text-muted">
+          The map is on the survey — pick the property to attach the estimate.
+        </p>
+      )}
       {anchor && (
         <p
           className={`mt-0.5 text-[0.65rem] leading-tight ${
