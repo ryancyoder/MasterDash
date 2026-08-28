@@ -125,6 +125,15 @@ export default function PlanPage({
   const [localUrls, setLocalUrls] = useState<Record<string, string>>({});
   const [picking, setPicking] = useState(false);
   const [survey, setSurvey] = useState<SurveyLayer | null>(null);
+  /**
+   * The side panel, on a phone.
+   *
+   * On an iPad in landscape it is a column beside the map and always open.
+   * Below that it was simply `hidden`, which meant a phone had no property
+   * picker — and since the drawing tools stay disabled until a property is
+   * chosen, the whole screen was unusable rather than merely cramped.
+   */
+  const [panelOpen, setPanelOpen] = useState(false);
   const [pickingSurvey, setPickingSurvey] = useState(false);
   /** The layer the gestures are acting on, if any. */
   const [aligningId, setAligningId] = useState<string | null>(null);
@@ -521,7 +530,7 @@ export default function PlanPage({
         </p>
       )}
 
-      <div className="flex flex-1 min-h-0 gap-3">
+      <div className="relative flex flex-1 min-h-0 gap-3">
         <PlanCanvas
           anchor={anchor}
           basemap={plan.basemap}
@@ -550,7 +559,43 @@ export default function PlanPage({
           onScalePointsChange={setScalePoints}
         />
 
-        <aside className="hidden w-64 shrink-0 flex-col gap-2 overflow-y-auto md-scroll sm:flex">
+        {/*
+          The way in on a phone. Top right of the map, clear of the zoom
+          controls bottom left and the running-total pill bottom right, and
+          outside the tool row — which scrolls sideways, so anything in it can
+          be off screen exactly when it is needed. Ringed while there is no
+          property, because then it is the only thing worth pressing.
+        */}
+        <button
+          onClick={() => setPanelOpen(true)}
+          className={`absolute right-3 top-3 z-30 flex h-11 items-center gap-2 rounded-2xl px-4 text-sm font-bold backdrop-blur sm:hidden ${
+            ready ? "bg-bg/90 text-ink" : "bg-accent text-black"
+          }`}
+        >
+          <span aria-hidden="true">☰</span>
+          {ready ? "Panel" : "Choose property"}
+        </button>
+
+        {panelOpen && (
+          <div
+            className="fixed inset-0 z-30 bg-black/60 sm:hidden"
+            onPointerDown={() => setPanelOpen(false)}
+          />
+        )}
+
+        <aside
+          className={`shrink-0 flex-col gap-2 overflow-y-auto md-scroll sm:static sm:z-auto sm:flex sm:w-64 sm:max-w-none sm:border-0 sm:bg-transparent sm:p-0 ${
+            panelOpen
+              ? "fixed inset-y-0 right-0 z-40 flex w-72 max-w-[85vw] border-l border-edge bg-bg p-3"
+              : "hidden"
+          }`}
+        >
+          <button
+            onClick={() => setPanelOpen(false)}
+            className="shrink-0 rounded-xl bg-surface2 px-4 py-2.5 text-sm font-bold text-ink sm:hidden"
+          >
+            Close
+          </button>
           <AnchorCard
             estimate={estimate}
             picking={picking}
@@ -612,29 +657,29 @@ export default function PlanPage({
         that just placed a corner. The buttons disable instead.
       */}
       {drawing && (
-        <div className="shrink-0 mt-2 flex items-center gap-2 pr-36">
-          <span className="text-xs font-bold tabular-nums text-muted">
+        <div className="shrink-0 mt-2 mb-16 flex items-center gap-2 pr-2 sm:mb-0 sm:pr-36">
+          <span className="hidden text-xs font-bold tabular-nums text-muted sm:inline">
             {pending.length} point{pending.length === 1 ? "" : "s"}
           </span>
           <div className="flex-1" />
           <button
             onClick={() => setPending([])}
             disabled={pending.length === 0}
-            className="rounded-xl bg-surface2 px-4 py-2.5 text-sm font-bold text-muted disabled:opacity-30"
+            className="shrink-0 rounded-xl bg-surface2 px-4 py-2.5 text-sm font-bold text-muted disabled:opacity-30"
           >
             Cancel
           </button>
           <button
             onClick={() => setPending((p) => p.slice(0, -1))}
             disabled={pending.length === 0}
-            className="rounded-xl bg-surface2 px-4 py-2.5 text-sm font-bold text-ink disabled:opacity-30"
+            className="shrink-0 rounded-xl bg-surface2 px-4 py-2.5 text-sm font-bold text-ink disabled:opacity-30"
           >
-            Undo point
+            Undo<span className="hidden sm:inline"> point</span>
           </button>
           <button
             onClick={finish}
             disabled={!canFinish}
-            className="rounded-xl bg-accent px-5 py-2.5 text-sm font-bold text-black disabled:opacity-30"
+            className="shrink-0 rounded-xl bg-accent px-5 py-2.5 text-sm font-bold text-black disabled:opacity-30"
           >
             Finish
           </button>
@@ -643,7 +688,7 @@ export default function PlanPage({
 
       {/* The selected shape's controls, reachable without the side list. */}
       {!drawing && selected && (
-        <div className="shrink-0 mt-2 flex items-center gap-2 pr-36 sm:hidden">
+        <div className="shrink-0 mt-2 mb-16 flex items-center gap-2 pr-2 sm:hidden">
           <span
             className="h-3 w-3 shrink-0 rounded-full"
             style={{ background: selected.color }}
