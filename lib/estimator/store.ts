@@ -16,6 +16,7 @@ import {
   queuePlanUpload,
   setPlanUploadHandler,
 } from "./planImage";
+import { emptyVisit, visitFrom, type VisitFinding, type VisitState } from "./visit";
 import {
   DEFAULT_ESTIMATOR_SETTINGS,
   project,
@@ -100,6 +101,7 @@ export function emptyEstimate(): Estimate {
     syncedOpIds: [],
     baseUpdatedAt: null,
     plan: emptyPlan(),
+    visit: emptyVisit(),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -116,6 +118,7 @@ const SERVER_SNAPSHOT: EstimatorSnapshot = Object.freeze({
     labels: {},
     assemblyBuckets: {},
     plan: emptyPlan(),
+    visit: emptyVisit(),
     updatedAt: "",
   }) as Estimate,
   settings: DEFAULT_ESTIMATOR_SETTINGS,
@@ -263,6 +266,7 @@ function loadEstimate(): Estimate {
         : [],
       baseUpdatedAt: typeof p.baseUpdatedAt === "string" ? p.baseUpdatedAt : null,
       plan: planFrom(p.plan),
+      visit: visitFrom(p.visit),
       updatedAt: at,
     };
   } catch {
@@ -353,6 +357,7 @@ function mutate(fn: (draft: Estimate) => void) {
     // is copied here and its members are never mutated in place — a dragged
     // vertex must not reach through the snapshot React last rendered.
     plan: { ...current.plan, shapes: [...current.plan.shapes] },
+    visit: { ...current.visit, findings: [...current.visit.findings] },
     updatedAt: new Date().toISOString(),
   };
   fn(draft);
@@ -486,6 +491,65 @@ export function removeShape(id: string) {
   }));
 }
 
+// --- The site visit -------------------------------------------------------
+
+function mutateVisit(fn: (visit: VisitState) => VisitState) {
+  mutate((d) => {
+    d.visit = fn(d.visit);
+  });
+}
+
+/**
+ * The transcript, kept whether or not anything is ever read out of it.
+ *
+ * Saved on every keystroke like the rest of the estimate — it is the record
+ * of the visit, and losing an hour of talk to a closed tab is not a trade
+ * worth making for a smaller localStorage write.
+ */
+export function setTranscript(transcript: string) {
+  mutateVisit((visit) => ({ ...visit, transcript }));
+}
+
+/** Replace the findings wholesale — a re-read supersedes the last one. */
+export function setFindings(findings: VisitFinding[], from: string) {
+  mutateVisit((visit) => ({
+    ...visit,
+    findings,
+    extractedAt: new Date().toISOString(),
+    extractedFrom: from,
+  }));
+}
+
+export function setFindingStatus(id: string, status: VisitFinding["status"]) {
+  mutateVisit((visit) => ({
+    ...visit,
+    findings: visit.findings.map((f) => (f.id === id ? { ...f, status } : f)),
+  }));
+}
+
+/** Clear the visit, transcript and all. Its own button, never a side effect. */
+export function clearVisit() {
+  const had = getSnapshot().estimate.visit.transcript;
+  if (!had) return;
+  mutateVisit(() => emptyVisit());
+}
+
+/**
+ * Add several increments at once, as ONE op.
+ *
+ * Accepting a finding that says three loads of mulch is a single decision, so
+ * it should be a single entry in the log: one op to undo, one row in the
+ * history, and nothing for a merge to interleave halfway through.
+ */
+export function addIncrements(
+  target: "tap" | "assembly",
+  key: string,
+  count: number,
+) {
+  if (!Number.isFinite(count) || count <= 0) return;
+  apply({ kind: target === "assembly" ? "assembly" : "tap", key, delta: Math.floor(count) });
+}
+
 export function setJobName(jobName: string) {
   mutate((d) => {
     d.jobName = jobName;
@@ -516,6 +580,7 @@ export function mergeRemote(
     dealId?: number | null;
     propertyId?: number | null;
     plan?: unknown;
+    visit?: unknown;
     updatedAt?: string | null;
   } | null,
   remoteOps: TapOp[],
@@ -532,6 +597,7 @@ export function mergeRemote(
   const remoteNewer =
     !!remote?.updatedAt && remote.updatedAt > (current.updatedAt ?? "");
   const remotePlan = remote?.plan !== undefined ? planFrom(remote.plan) : null;
+  const remoteVisit = remote?.visit !== undefined ? visitFrom(remote.visit) : null;
 
   const draft: Estimate = {
     ...current,
@@ -558,6 +624,10 @@ export function mergeRemote(
     // does not un-name this estimate: an estimate saved before anyone drew is
     // not evidence that the drawing should go.
     plan: remoteNewer && remotePlan?.imageId ? remotePlan : current.plan,
+    // Same rule as the plan and the job name: a remote visit with no
+    // transcript never replaces one that has words in it.
+    visit:
+      remoteNewer && remoteVisit?.transcript ? remoteVisit : current.visit,
     baseUpdatedAt: remote?.updatedAt ?? current.baseUpdatedAt ?? null,
     updatedAt: current.updatedAt,
   };
@@ -589,6 +659,7 @@ export function adoptEstimate(
     dealId?: number | null;
     propertyId?: number | null;
     plan?: unknown;
+    visit?: unknown;
     updatedAt?: string | null;
   },
   remoteOps: TapOp[],
@@ -609,6 +680,7 @@ export function adoptEstimate(
     // adopted plan's bytes are not on this device, so it renders from the
     // synced URL until someone replaces the image.
     plan,
+    visit: visitFrom(row.visit),
     updatedAt: row.updatedAt ?? new Date().toISOString(),
   });
   // The estimate being replaced is not coming back on this device; its image

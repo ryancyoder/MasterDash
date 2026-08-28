@@ -296,6 +296,16 @@ export const HOME_TILES: TileNode[] = [
     color: "#0ea5e9",
     page: "plan",
   },
+
+  // The site visit. Sits with the other two ways of getting work onto the
+  // estimate: measure it, tap it, or say it out loud and read it back.
+  {
+    id: "group:visit",
+    label: "Visit",
+    glyph: "🗒️",
+    color: "#8b5cf6",
+    page: "visit",
+  },
 ];
 
 /**

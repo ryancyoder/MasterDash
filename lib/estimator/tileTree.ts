@@ -101,8 +101,8 @@ export function buildTree(rows: TileRow[]): TileNode[] {
         : {}),
       // Only the pages the app knows how to open. An unknown value from the
       // database becomes a plain folder rather than a tile that goes nowhere.
-      ...(row.page === "assemblies" || row.page === "plan"
-        ? { page: row.page as "assemblies" | "plan" }
+      ...(row.page === "assemblies" || row.page === "plan" || row.page === "visit"
+        ? { page: row.page as "assemblies" | "plan" | "visit" }
         : {}),
     };
     byId.set(row.tile_id, node);
