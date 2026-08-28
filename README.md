@@ -272,6 +272,46 @@ grid, HF Grand Ledge, generic steps, metal edging — there is no wall assembly
 in the catalog yet) surfaces under **Hardscape & extras**, computed rather than
 listed so a newly synced row can never become invisible.
 
+### Plan: measuring the loads instead of guessing them
+
+The **Plan** tile is a map take-off, ported from the VoiceData estimator's plan
+view. Add an aerial or a site plan, tap two points you know the distance
+between to set the scale, then draw beds with **Area** and runs with
+**Linear**. Pinch or wheel to zoom, one finger to pan, and drag a shape's dots
+to reshape it — the midpoint handles split a side.
+
+**A shape does not add a measurement to the estimate. It adds loads.** Link a
+shape to an assembly and it commits `ceil(measurement ÷ bucket)` buckets — the
+same arithmetic as tapping that assembly's tile, so a 1,200 sq ft bed drawn on
+the plan and three taps on Mulch Bed are the same act and land on the same
+proposal line. That is the whole reconciliation between the two apps: the
+original priced off the exact area, but here a bucket is a load, and you cannot
+buy two thirds of a load of mulch.
+
+The overshoot is shown rather than buried. A 1,200 sq ft bed reads
+**"3 loads · buys 1,560 sq ft (360 over)"**, because that gap is a decision —
+tighten the shape, or accept the material.
+
+Loads a shape produced behave like an assembly's share on a bulk tile: counted
+in the total, marked with 🗺️, and a floor the Assemblies screen cannot take
+back. Edit the shape instead, on the plan, where the number came from.
+
+**Scale is derived, never stored.** Recalibrating corrects every shape already
+drawn, rather than leaving the old ones quietly wrong.
+
+**The image lives on the device first.** The properties worth taking off are
+the ones with no coverage, so the picture goes to IndexedDB — not to
+localStorage, where one aerial would blow the quota and take the estimate with
+it — and uploads to the `estimate-plans` bucket through `/api/plan-image`
+whenever there is signal. A plan drawn with no bars works, draws and prices
+exactly the same; only the "saved on this device" note tells you it has not
+synced yet.
+
+Replacing the image clears the scale and the shapes with it: vertices are in
+the old image's pixel space, and a calibration measured on one aerial means
+nothing on another. Shapes that looked plausible and measured wrong would be
+worse than none.
+
 ### Offline, and saving
 
 Supabase is the source of truth, but the network is never in the way:

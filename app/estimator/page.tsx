@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AssemblyPage from "@/components/estimator/AssemblyPage";
+import PlanPage from "@/components/estimator/PlanPage";
 import TileGrid from "@/components/estimator/TileGrid";
 import { formatMoneyShort, getItem } from "@/lib/estimator/catalog";
 import { loadPlants, plantsInGroup, type PlantRow } from "@/lib/estimator/plants";
@@ -10,6 +11,7 @@ import {
   assemblyCount,
   assemblyIncrements,
   buildProposal,
+  planShapeCount,
   rollupCount,
 } from "@/lib/estimator/proposal";
 import { tap, untap, updateSettings } from "@/lib/estimator/store";
@@ -231,7 +233,7 @@ export default function EstimatorPage() {
 
   /** Assembly-derived loads at or below a node. */
   const lockedFor = (node: TileNode): number => {
-    if (node.page === "assemblies") return 0;
+    if (node.page) return 0;
     if (hasDepth(node)) {
       return subtreeItemIds(node).reduce((sum, id) => sum + (derived[id] ?? 0), 0);
     }
@@ -243,6 +245,7 @@ export default function EstimatorPage() {
 
   const countFor = (node: TileNode): number => {
     if (node.page === "assemblies") return assemblyCount(estimate);
+    if (node.page === "plan") return planShapeCount(estimate);
     const locked = lockedFor(node);
     if (hasDepth(node)) {
       return rollupCount(estimate, subtreeItemIds(node)) + locked;
@@ -301,6 +304,7 @@ export default function EstimatorPage() {
   };
 
   const onAssembliesPage = current?.page === "assemblies";
+  const onPlanPage = current?.page === "plan";
   const parentKey = current?.commit ? selectionKey(current.commit) : null;
   const parentTaps = parentKey ? (estimate.taps[parentKey] ?? 0) : 0;
 
@@ -424,8 +428,18 @@ export default function EstimatorPage() {
         )}
       </header>
 
-      <div className="flex-1 min-h-0 overflow-y-auto md-scroll px-3 pb-24">
-        {onAssembliesPage ? (
+      {/* The plan fills the frame and manages its own scrolling — a canvas
+          inside a scroll container fights the pan gesture for the same drag. */}
+      <div
+        className={`flex-1 min-h-0 px-3 ${
+          onPlanPage
+            ? "flex flex-col overflow-hidden pb-3"
+            : "overflow-y-auto md-scroll pb-24"
+        }`}
+      >
+        {onPlanPage ? (
+          <PlanPage estimate={estimate} settings={settings} />
+        ) : onAssembliesPage ? (
           <AssemblyPage
             assemblyId={openAssembly}
             estimate={estimate}

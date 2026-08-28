@@ -8,6 +8,8 @@
 //    default, LONG PRESS refines. Every level is a valid stopping point, so a
 //    tile is never a dead end and drilling down is never required.
 
+import type { PlanState } from "./plan";
+
 export type ItemSource = "material" | "equipment" | "service" | "synthetic";
 
 export interface CatalogItem {
@@ -63,7 +65,7 @@ export interface TileNode {
   /** Children too numerous to bundle; fetched on demand. */
   childSource?: { kind: "plants"; group: string; itemId: string };
   /** A level that is not a plain grid. */
-  page?: "assemblies";
+  page?: "assemblies" | "plan";
 }
 
 /**
@@ -110,8 +112,15 @@ export interface Estimate {
    * file loaded, so the label travels with the tap that created it.
    */
   labels: Record<string, string>;
-  /** assemblyId -> bucket count. One bucket is one more load of material. */
+  /**
+   * assemblyId -> bucket count, TAPPED BY HAND. Loads the map take-off implies
+   * are derived from `plan.shapes` and added on top, never merged in here —
+   * the same separation as taps and assembly-derived material, and for the
+   * same reason: a number the shape produced is not the tile's to give back.
+   */
   assemblyBuckets: Record<string, number>;
+  /** The map take-off: a calibrated image and the shapes drawn on it. */
+  plan: PlanState;
   updatedAt: string;
 }
 

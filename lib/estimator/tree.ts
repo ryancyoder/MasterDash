@@ -185,6 +185,17 @@ export const HOME_TILES: TileNode[] = [
     color: "#14b8a6",
     page: "assemblies",
   },
+
+  // The map take-off. Sits beside Assemblies because it is the same commitment
+  // reached another way: a shape linked to an assembly buys the loads its area
+  // needs, exactly as tapping that assembly's tile does.
+  {
+    id: "group:plan",
+    label: "Plan",
+    glyph: "🗺️",
+    color: "#0ea5e9",
+    page: "plan",
+  },
 ];
 
 /**

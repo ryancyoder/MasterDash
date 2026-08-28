@@ -88,6 +88,10 @@ function toPayload(estimate: Estimate, proposal: Proposal) {
       taps: estimate.taps,
       labels: estimate.labels,
       assemblyBuckets: estimate.assemblyBuckets,
+      // Shapes and scale, so a reopened estimate can be re-measured rather
+      // than only re-read. The image itself is not here — it goes to storage
+      // through /api/plan-image, and this carries the id that finds it.
+      plan: estimate.plan,
       rendered: proposal.lines.map((l) => ({
         item_id: l.item.id,
         label: l.label,

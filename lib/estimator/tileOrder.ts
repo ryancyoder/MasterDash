@@ -55,5 +55,5 @@ export function applyOrder(
  * useful nor something anyone would find again.
  */
 export function isArrangeable(parent: TileNode | null): boolean {
-  return !parent?.childSource && parent?.page !== "assemblies";
+  return !parent?.childSource && !parent?.page;
 }

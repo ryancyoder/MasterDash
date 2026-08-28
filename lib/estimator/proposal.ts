@@ -14,6 +14,7 @@
 // was entered.
 
 import { ASSEMBLY_MODELS, getAssembly, takeoff } from "./assemblies";
+import { bucketsForMeasurement, measurementOf } from "./plan";
 import { getItem, quantityFor, sellFor } from "./catalog";
 import {
   SECTION_ORDER,
@@ -59,6 +60,48 @@ interface Draft {
   autoLoads: number;
 }
 
+/**
+ * Loads the map take-off implies, per assembly.
+ *
+ * A shape does not carry a measurement into the estimate — it carries the
+ * loads that measurement needs, by the same ceiling the assembly tile applies
+ * to a tap. Drawing a 1,200 sq ft bed and tapping Mulch Bed three times are
+ * therefore the same act and land on the same line, which is what keeps the
+ * proposal a bill of materials rather than a record of how it was entered.
+ */
+export function planBuckets(estimate: Estimate): Record<string, number> {
+  const out: Record<string, number> = {};
+  const { scale, shapes } = estimate.plan;
+  if (!scale) return out;
+  for (const shape of shapes) {
+    if (!shape.assemblyId) continue;
+    const model = getAssembly(shape.assemblyId);
+    if (!model?.bucketSize) continue;
+    const buckets = bucketsForMeasurement(
+      measurementOf(shape, scale),
+      model.bucketSize,
+    );
+    if (buckets > 0) {
+      out[shape.assemblyId] = (out[shape.assemblyId] ?? 0) + buckets;
+    }
+  }
+  return out;
+}
+
+/**
+ * What the job actually needs: hand-tapped buckets plus the ones the plan
+ * produced. Everything downstream — the proposal, the tile badges, the
+ * material floors — reads this rather than `estimate.assemblyBuckets`, so the
+ * two ways of estimating agree by construction instead of by discipline.
+ */
+export function effectiveBuckets(estimate: Estimate): Record<string, number> {
+  const out = { ...estimate.assemblyBuckets };
+  for (const [id, buckets] of Object.entries(planBuckets(estimate))) {
+    out[id] = (out[id] ?? 0) + buckets;
+  }
+  return out;
+}
+
 export function buildProposal(
   estimate: Estimate,
   settings: EstimatorSettings,
@@ -86,7 +129,7 @@ export function buildProposal(
 
   // 2. Assembly takeoffs, merged into the same lines.
   const assemblies: Proposal["assemblies"] = [];
-  for (const [assemblyId, buckets] of Object.entries(estimate.assemblyBuckets)) {
+  for (const [assemblyId, buckets] of Object.entries(effectiveBuckets(estimate))) {
     if (buckets <= 0) continue;
     const model = getAssembly(assemblyId);
     if (!model?.bucketSize) continue;
@@ -213,7 +256,7 @@ export function rollupCount(estimate: Estimate, itemIds: string[]): number {
  */
 export function assemblyIncrements(estimate: Estimate): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const [assemblyId, buckets] of Object.entries(estimate.assemblyBuckets)) {
+  for (const [assemblyId, buckets] of Object.entries(effectiveBuckets(estimate))) {
     if (buckets <= 0) continue;
     const model = getAssembly(assemblyId);
     if (!model?.bucketSize) continue;
@@ -227,7 +270,14 @@ export function assemblyIncrements(estimate: Estimate): Record<string, number> {
 
 /** Total buckets across every assembly, for the Assemblies tile badge. */
 export function assemblyCount(estimate: Estimate): number {
-  return Object.values(estimate.assemblyBuckets).reduce((a, b) => a + b, 0);
+  return Object.values(effectiveBuckets(estimate)).reduce((a, b) => a + b, 0);
+}
+
+/** Shapes that measure something, for the Plan tile badge. */
+export function planShapeCount(estimate: Estimate): number {
+  const { scale, shapes } = estimate.plan;
+  if (!scale) return 0;
+  return shapes.filter((s) => measurementOf(s, scale) > 0).length;
 }
 
 export const ALL_ASSEMBLY_IDS = ASSEMBLY_MODELS.map((m) => m.id);
