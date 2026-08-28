@@ -1,9 +1,17 @@
 // The tile tree.
 //
-// v1 had folders that only navigated. v2 inverts that: almost every tile both
-// commits something on tap and refines on long press, so the estimator can
-// stop at any depth. Navigate-only tiles still exist — Drainage and Assemblies
-// — but they are the exception, and the spec is explicit that they should be.
+// No tile holds a generic value it does not name. v2 let Equipment open five
+// machines AND buy a generic machine day, and in the field that was a coin
+// toss every time: nothing on the tile said which a press would mean, and a
+// category could quietly end up on the proposal.
+//
+// Nothing was dropped in straightening that out. Every generic is still here,
+// as the first tile inside its folder, where a tap on it means one thing. And
+// a folder holding one pick still shows it — a tile that says "Mini Excavator"
+// and buys a mini excavator is not the ambiguity that was worth killing.
+//
+// So the two gestures split by what they are about rather than by depth: a tap
+// concerns what a tile already holds, a long press what it could hold.
 //
 // Placement is per-item and deliberate. Which materials deserve a home tile is
 // a judgement about how Ryan sells, not a property of a category, so this file
@@ -98,9 +106,52 @@ function applicationChildren(itemId: string): TileNode[] | undefined {
   }));
 }
 
+/**
+ * A folder tile, and the generic it used to hold.
+ *
+ * A tile that both opened a group and bought something generic was two things
+ * at once, and nothing about it said which a press would mean. Folders now
+ * only open. The generic has not gone anywhere — "a machine day" is still the
+ * honest answer before anyone has decided which machine — it is simply a tile
+ * of its own, first inside the folder, where a tap on it means one thing.
+ */
+function folderNode(
+  base: Omit<TileNode, "commit">,
+  generic: { itemId: string; label: string } | null,
+): TileNode {
+  const children = generic
+    ? [
+        itemNode(generic.itemId, {
+          // The folder may already own the plain item's id, so the tile inside
+          // takes a suffixed one. Only the id moves: what it commits, and
+          // therefore its photo and its line on the proposal, is unchanged.
+          id: `${base.id}::generic`,
+          label: generic.label,
+        }),
+        ...(base.children ?? []),
+      ]
+    : (base.children ?? []);
+  return { ...base, children };
+}
+
 function bulkNode(itemId: string): TileNode {
   const children = applicationChildren(itemId);
-  return itemNode(itemId, children ? { children } : {});
+  if (!children) return itemNode(itemId);
+  const item = getItem(itemId)!;
+  return folderNode(
+    {
+      id: itemId,
+      label: item.tileName,
+      glyph: item.glyph,
+      color: item.color,
+      image: item.image,
+      children,
+    },
+    // Not the bare tile name: the folder above it already carries that, and
+    // two adjacent tiles reading "Clean 8" is the ambiguity this change is
+    // meant to end. It sits beside "(French Drain)" and "(Pavers)".
+    { itemId, label: `${item.tileName} (Plain)` },
+  );
 }
 
 function equipmentNodes(category: string): TileNode[] {
@@ -110,36 +161,65 @@ function equipmentNodes(category: string): TileNode[] {
 }
 
 export const HOME_TILES: TileNode[] = [
-  ...BULK_MATERIALS.map(bulkNode),
+  // Six tiles of dirt and stone filled the whole first row, which put the rest
+  // of the job below the fold on the screen it is estimated from. They are one
+  // folder now: what a landscaper buys by the load, in one place.
+  //
+  // No generic inside it. "Some bulk material" is not a thing anyone can
+  // price, so unlike Equipment or Lighting there is nothing for a placeholder
+  // to stand for — the folder opens onto the six real answers.
+  folderNode(
+    {
+      id: "group:bulk",
+      label: "Bulk Materials",
+      glyph: "⛰️",
+      color: getItem("mat:mulch")!.color,
+      children: BULK_MATERIALS.map(bulkNode),
+    },
+    null,
+  ),
 
   // Tap buys $500 of plants; long press names the category; long press again
   // names the actual plant. Price never changes as you go deeper — refining
   // sharpens the proposal's wording, not its arithmetic.
-  itemNode("mat:plant_allowance", {
-    id: "group:plants",
-    label: "Plants",
-    children: PLANT_GROUPS.map(({ itemId, group, label }) => {
-      const item = getItem(itemId)!;
-      return {
-        id: `group:plants/${group}`,
-        label,
-        glyph: item.glyph,
-        color: item.color,
-        image: item.image,
-        commit: { itemId },
-        childSource: { kind: "plants" as const, group, itemId },
-      };
-    }),
-  }),
+  folderNode(
+    {
+      id: "group:plants",
+      label: "Plants",
+      glyph: getItem("mat:plant_allowance")!.glyph,
+      color: getItem("mat:plant_allowance")!.color,
+      image: getItem("mat:plant_allowance")!.image,
+      children: PLANT_GROUPS.map(({ itemId, group, label }) => {
+        const item = getItem(itemId)!;
+        // A category is a folder too. Its own generic — an unnamed shrub —
+        // leads the plant list it opens, built in the page from childSource.
+        return {
+          id: `group:plants/${group}`,
+          label,
+          glyph: item.glyph,
+          color: item.color,
+          image: item.image,
+          childSource: { kind: "plants" as const, group, itemId },
+        };
+      }),
+    },
+    { itemId: "mat:plant_allowance", label: "Plant Allowance" },
+  ),
 
-  itemNode("syn:lighting_allowance", {
-    id: "group:lighting",
-    label: "Lighting",
-    children: LIGHTING_FIXTURES.map((id) => itemNode(id)),
-  }),
+  folderNode(
+    {
+      id: "group:lighting",
+      label: "Lighting",
+      glyph: getItem("syn:lighting_allowance")!.glyph,
+      color: getItem("syn:lighting_allowance")!.color,
+      image: getItem("syn:lighting_allowance")!.image,
+      children: LIGHTING_FIXTURES.map((id) => itemNode(id)),
+    },
+    { itemId: "syn:lighting_allowance", label: "Lighting Allowance" },
+  ),
 
-  // The one navigate-only tile: no generic drainage allowance is defined yet,
-  // so there is nothing sensible for a tap to commit.
+  // The one folder with no generic inside it: no drainage allowance is defined
+  // in the catalog yet, so there is nothing for that tile to be.
   {
     id: "group:drainage",
     label: "Drainage",
@@ -151,17 +231,29 @@ export const HOME_TILES: TileNode[] = [
   // Large and small equipment stay separate: large implies a trailer and will
   // drive truck mobilization once that layer exists, small just gets thrown in
   // the truck. Nothing auto-adds mobilization today.
-  itemNode("syn:machine_day", {
-    id: "group:equipment",
-    label: "Equipment",
-    children: equipmentNodes("large_equipment"),
-  }),
+  folderNode(
+    {
+      id: "group:equipment",
+      label: "Equipment",
+      glyph: getItem("syn:machine_day")!.glyph,
+      color: getItem("syn:machine_day")!.color,
+      image: getItem("syn:machine_day")!.image,
+      children: equipmentNodes("large_equipment"),
+    },
+    { itemId: "syn:machine_day", label: "Machine Day" },
+  ),
 
-  itemNode("syn:small_equipment_day", {
-    id: "group:small_equipment",
-    label: "Small Equip",
-    children: equipmentNodes("small_equipment"),
-  }),
+  folderNode(
+    {
+      id: "group:small_equipment",
+      label: "Small Equip",
+      glyph: getItem("syn:small_equipment_day")!.glyph,
+      color: getItem("syn:small_equipment_day")!.color,
+      image: getItem("syn:small_equipment_day")!.image,
+      children: equipmentNodes("small_equipment"),
+    },
+    { itemId: "syn:small_equipment_day", label: "Small Equip Day" },
+  ),
 
   itemNode("svc:debris", { id: "tile:debris", label: "Debris" }),
 
@@ -172,11 +264,19 @@ export const HOME_TILES: TileNode[] = [
     label: "Delivery",
   }),
 
-  itemNode("mat:crew_4_man", {
-    id: "group:crew",
-    label: "Crew",
-    children: [itemNode("mat:crew_3_man"), itemNode("mat:crew_4_man")],
-  }),
+  // No generic of its own: a crew day is either three men or four, and the
+  // four-man tile inside already is what the folder used to commit.
+  folderNode(
+    {
+      id: "group:crew",
+      label: "Crew",
+      glyph: getItem("mat:crew_4_man")!.glyph,
+      color: getItem("mat:crew_4_man")!.color,
+      image: getItem("mat:crew_4_man")!.image,
+      children: [itemNode("mat:crew_3_man"), itemNode("mat:crew_4_man")],
+    },
+    null,
+  ),
 
   {
     id: "group:assemblies",
@@ -219,19 +319,24 @@ export function canExpandInline(node: TileNode): boolean {
 }
 
 /**
- * Children unfolded directly after their parent, pushing the rest of the grid
- * along. Returns the list unchanged when nothing is expanded.
+ * A folder wearing the face of the one thing picked out of it.
+ *
+ * With a single pick there is nothing for a folder to summarise and no reason
+ * to spend two tiles saying it, so the folder shows that pick outright: its
+ * photo, its name, its count and its price, and a tap that buys another of it.
+ * It never buys anything generic — the tile says what it is, and that is what
+ * a tap gets you. The long press still opens the folder, so the other nine
+ * machines are one gesture away.
  */
-export function withExpansion(
-  nodes: TileNode[],
-  expandedId: string | null,
-): TileNode[] {
-  if (!expandedId) return nodes;
-  const at = nodes.findIndex((n) => n.id === expandedId);
-  if (at === -1) return nodes;
-  const children = nodes[at].children ?? [];
-  if (children.length === 0) return nodes;
-  return [...nodes.slice(0, at + 1), ...children, ...nodes.slice(at + 1)];
+export function wearChild(parent: TileNode, child: TileNode): TileNode {
+  return {
+    ...parent,
+    label: child.label,
+    glyph: child.glyph,
+    color: child.color,
+    image: child.image,
+    commit: child.commit,
+  };
 }
 
 /** A tile has depth when a long press would open something. */
@@ -239,7 +344,7 @@ export function hasDepth(node: TileNode): boolean {
   return Boolean(node.children?.length || node.childSource || node.page);
 }
 
-/** A tile whose tap navigates rather than commits. */
+/** A folder: it opens, and holds nothing of its own. */
 export function isNavigateOnly(node: TileNode): boolean {
   return !node.commit && hasDepth(node);
 }

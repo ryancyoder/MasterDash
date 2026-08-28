@@ -98,6 +98,79 @@ export function baseItemId(key: string): string {
   return i === -1 ? key : key.slice(0, i);
 }
 
+/**
+ * One increment, as it happened.
+ *
+ * The estimate's quantities are counts and the app already thinks in
+ * increments — one tap is one load — so the log of increments is the real
+ * record and the totals are a projection of it. That is what lets two devices
+ * merge by union instead of one overwriting the other.
+ */
+export interface TapOp {
+  /** Minted on the device before the op has ever seen the network. */
+  id: string;
+  /** Which device wrote it. For diagnosis; the merge does not consult it. */
+  device: string;
+  /** "tap" counts a selection key; "assembly" counts an assembly's buckets. */
+  kind: "tap" | "assembly";
+  key: string;
+  /** Signed: a long press is -1 the same way a tap is +1. */
+  delta: number;
+  /** Variant label, carried so a proposal can name a cultivar offline. */
+  label?: string;
+  at: string;
+}
+
+/**
+ * Fold a log back into the totals the grid renders.
+ *
+ * Deduplicated by op id here rather than by the callers. Counting the same op
+ * twice is the one way a log can lie, and leaving that to whoever holds the
+ * array means it only takes one caller to get it wrong — a merge that appends
+ * before it dedupes, a pull that overlaps a push. Folding the same op set
+ * twice must be worth exactly as much as folding it once.
+ *
+ * Clamped at zero: an op set that has one device's removal but not the other
+ * device's addition can sum below nothing, and a negative load is not a thing
+ * anyone can buy.
+ */
+export function project(ops: TapOp[]): {
+  taps: Record<string, number>;
+  labels: Record<string, string>;
+  assemblyBuckets: Record<string, number>;
+} {
+  const taps: Record<string, number> = {};
+  const labels: Record<string, string> = {};
+  const assemblyBuckets: Record<string, number> = {};
+  const labelledAt: Record<string, string> = {};
+  const counted = new Set<string>();
+
+  for (const op of ops) {
+    if (counted.has(op.id)) continue;
+    counted.add(op.id);
+
+    const into = op.kind === "assembly" ? assemblyBuckets : taps;
+    into[op.key] = (into[op.key] ?? 0) + op.delta;
+    // Last label wins by the op's own timestamp, not by array order: a pull
+    // can hand us another device's ops interleaved with our own.
+    if (op.label && (!labelledAt[op.key] || op.at >= labelledAt[op.key])) {
+      labels[op.key] = op.label;
+      labelledAt[op.key] = op.at;
+    }
+  }
+
+  for (const map of [taps, assemblyBuckets]) {
+    for (const [key, n] of Object.entries(map)) {
+      if (n > 0) map[key] = Math.floor(n);
+      else {
+        delete map[key];
+        if (map === taps) delete labels[key];
+      }
+    }
+  }
+  return { taps, labels, assemblyBuckets };
+}
+
 export interface Estimate {
   /** Stable client-side id, minted before the row ever reaches the network. */
   clientId: string;
@@ -119,14 +192,46 @@ export interface Estimate {
    * same reason: a number the shape produced is not the tile's to give back.
    */
   assemblyBuckets: Record<string, number>;
-  /** The map take-off: a calibrated image and the shapes drawn on it. */
+  /**
+   * The log the three maps above are projected from. Append-only; the maps are
+   * cached alongside it only so nothing downstream has to fold on every read.
+   */
+  ops: TapOp[];
+  /** Ops already accepted by the server, so a push only sends what is new. */
+  syncedOpIds?: string[];
+  /** The row's updatedAt as last seen from the server, for scalar conflicts. */
+  baseUpdatedAt?: string | null;
+  /**
+   * The map take-off: a calibrated image and the shapes drawn on it.
+   *
+   * A document, not a counter, so it does not go in the op log — there is no
+   * union of two people dragging the same vertex any more than there is of two
+   * job names. It merges as a scalar, newest wins, alongside jobName above.
+   *
+   * The loads it implies stay out of `assemblyBuckets` for the same reason
+   * from the other direction: they are projected from these shapes on every
+   * read, so a merge can never double-count them the way an op replayed twice
+   * would.
+   */
   plan: PlanState;
   updatedAt: string;
 }
 
 export type FolderReturn = "auto" | "done";
 
+/**
+ * How much of what a folder holds is drawn on the grid beside it.
+ *
+ * "none" is the resting state: a folder is one tile carrying a subtotal, and
+ * the grid stays the same length however much is on the estimate. "picked"
+ * lays every folder's choices out to read the job back; "all" opens everything
+ * for a fast sweep across categories.
+ */
+export type Reveal = "none" | "picked" | "all";
+
 export interface EstimatorSettings {
+  /** The grid-wide setting of how far folders are opened. */
+  reveal: Reveal;
   folderReturn: FolderReturn;
   folderReturnDelayMs: number;
   autoDeliveryItemId: string;
@@ -145,6 +250,7 @@ export interface EstimatorSettings {
 }
 
 export const DEFAULT_ESTIMATOR_SETTINGS: EstimatorSettings = {
+  reveal: "none",
   folderReturn: "auto",
   folderReturnDelayMs: 3000,
   autoDeliveryItemId: "svc:delivery_supplier",

@@ -1,12 +1,13 @@
 import type { Metadata, Viewport } from "next";
+import Boot from "@/components/estimator/Boot";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "MasterDash",
-  description: "Tile-based personal operating system portal",
+  title: "Quick Estimator",
+  description: "Tap a tile, price the job, on site and with no signal",
   appleWebApp: {
     capable: true,
-    title: "MasterDash",
+    title: "Estimator",
     // Black-translucent lets the page paint under the status bar, which is
     // what makes the top frame read as bezel once installed.
     statusBarStyle: "black-translucent",
@@ -31,7 +32,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-bg text-ink antialiased">{children}</body>
+      <body className="bg-bg text-ink antialiased">
+        <Boot />
+        {children}
+      </body>
     </html>
   );
 }

@@ -29,7 +29,7 @@ import { ITEMS } from "./catalog";
 
 const CATALOG_ORDER = new Map(ITEMS.map((item, i) => [item.id, i]));
 
-function sectionFor(item: CatalogItem): Section {
+export function sectionFor(item: CatalogItem): Section {
   if (item.category === "labor") return "Labor";
   if (item.source === "equipment" || item.category.endsWith("_equipment")) {
     return "Equipment";

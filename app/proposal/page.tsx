@@ -13,6 +13,7 @@ import { CATALOG_SYNCED_AT, SERVICES } from "@/lib/estimator/catalog-data";
 import { buildProposal } from "@/lib/estimator/proposal";
 import {
   attachDeal,
+  adoptEstimate,
   clearEstimate,
   setAssemblyBuckets,
   setJobName,
@@ -20,13 +21,18 @@ import {
   updateSettings,
 } from "@/lib/estimator/store";
 import {
+  fetchEstimate,
   getServerSyncState,
+  getLastError,
+  getLastSyncedAt,
+  getServerLastSyncedAt,
   getSyncState,
-  queueSave,
+  listEstimates,
   readQueue,
-  startAutoFlush,
   subscribeSync,
+  type EstimateSummary,
 } from "@/lib/estimator/sync";
+import { useCatalogPrices } from "@/lib/estimator/catalogPrices";
 import { useEstimate } from "@/lib/estimator/useEstimate";
 import type { EstimatorSettings, LineItem } from "@/lib/estimator/types";
 
@@ -40,11 +46,13 @@ import type { EstimatorSettings, LineItem } from "@/lib/estimator/types";
  */
 export default function ProposalPage() {
   const { estimate, settings } = useEstimate();
-  const proposal = useMemo(
-    () => buildProposal(estimate, settings),
-    [estimate, settings],
-  );
-  const [saved, setSaved] = useState(false);
+  const priceVersion = useCatalogPrices();
+  const proposal = useMemo(() => {
+    // Read, not ignored: prices are applied to the catalog items in place, so
+    // this counter is the only thing React can see change when a rate moves.
+    void priceVersion;
+    return buildProposal(estimate, settings);
+  }, [estimate, settings, priceVersion]);
 
   const syncState = useSyncExternalStore(
     subscribeSync,
@@ -52,20 +60,25 @@ export default function ProposalPage() {
     getServerSyncState,
   );
 
-  useEffect(() => startAutoFlush(), []);
+  const lastError = useSyncExternalStore(
+    subscribeSync,
+    getLastError,
+    () => null,
+  );
+  const lastSyncedAt = useSyncExternalStore(
+    subscribeSync,
+    getLastSyncedAt,
+    getServerLastSyncedAt,
+  );
+
+  const [opening, setOpening] = useState(false);
 
   const empty = proposal.lines.length === 0;
-
-  const save = () => {
-    queueSave(estimate, proposal);
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 2500);
-  };
 
   return (
     <main className="md-safe min-h-dvh w-full bg-bg flex flex-col">
       <header className="shrink-0 flex items-center gap-3 px-4 py-3 border-b border-edge">
-        <Link href="/estimator" className="text-sm font-semibold text-ink">
+        <Link href="/" className="text-sm font-semibold text-ink">
           <span aria-hidden="true">‹</span> Grid
         </Link>
         <input
@@ -74,19 +87,17 @@ export default function ProposalPage() {
           placeholder="Job name"
           className="flex-1 min-w-0 bg-transparent text-ink placeholder:text-muted text-base font-semibold outline-none px-2 py-1 rounded-lg focus:bg-surface2"
         />
+        {/* Where a Save button used to be. Nothing to press, so nothing to
+            forget; this only reports. */}
+        <SyncStatus state={syncState} lastSyncedAt={lastSyncedAt} />
         <button
-          onClick={save}
-          disabled={empty}
-          className="px-4 py-1.5 rounded-full bg-accent text-black text-xs font-bold disabled:opacity-40"
+          onClick={() => setOpening(true)}
+          className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
         >
-          {saved ? "Saved" : "Save"}
+          Open
         </button>
         <button
-          onClick={() => {
-            if (window.confirm("Start a new estimate? Save this one first.")) {
-              clearEstimate();
-            }
-          }}
+          onClick={() => clearEstimate()}
           disabled={empty}
           className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted disabled:opacity-40"
         >
@@ -94,7 +105,9 @@ export default function ProposalPage() {
         </button>
       </header>
 
-      <SyncBanner state={syncState} />
+      <SyncBanner state={syncState} error={lastError} />
+
+      {opening && <OpenSheet onClose={() => setOpening(false)} />}
 
       <div className="flex-1 md-scroll overflow-y-auto px-4 py-4">
         {empty ? (
@@ -216,9 +229,146 @@ export default function ProposalPage() {
   );
 }
 
-function SyncBanner({ state }: { state: string }) {
+/**
+ * What the Save button used to claim, told honestly.
+ *
+ * Nothing here is pressable. The estimate is written down whether or not
+ * anyone is watching this, and a control implies a choice that no longer
+ * exists — the only thing left to say is where the work has got to.
+ */
+function SyncStatus({
+  state,
+  lastSyncedAt,
+}: {
+  state: string;
+  lastSyncedAt: string | null;
+}) {
+  const text =
+    state === "syncing"
+      ? "Saving…"
+      : state === "rejected"
+        ? "Held here"
+        : state === "queued"
+          ? "Waiting for signal"
+          : lastSyncedAt
+            ? `Saved ${ago(lastSyncedAt)}`
+            : "Saved on this device";
+
+  return (
+    <span
+      className={`text-[0.7rem] font-semibold tabular-nums whitespace-nowrap ${
+        state === "rejected" ? "text-[#f59e0b]" : "text-muted"
+      }`}
+    >
+      {text}
+    </span>
+  );
+}
+
+function ago(iso: string): string {
+  const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 45) return "just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.round(mins / 60)}h ago`;
+}
+
+/**
+ * Every estimate the server holds.
+ *
+ * The estimate on screen is not lost by opening another: it is already saved,
+ * by client id, and choosing it here brings it back with its whole log. That
+ * is the difference the read path makes — the tablet stops being the only
+ * place a job exists.
+ */
+function OpenSheet({ onClose }: { onClose: () => void }) {
+  const [rows, setRows] = useState<EstimateSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    listEstimates()
+      .then((r) => alive && setRows(r))
+      .catch((e) => alive && setError(String(e)));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const open = async (clientId: string) => {
+    try {
+      const remote = await fetchEstimate(clientId);
+      if (remote.estimate) {
+        adoptEstimate(remote.estimate, remote.ops);
+        onClose();
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center p-4">
+      <div className="w-full max-w-lg max-h-[80dvh] flex flex-col rounded-3xl bg-surface border border-edge overflow-hidden">
+        <header className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-edge">
+          <h2 className="text-sm font-bold text-ink">Open an estimate</h2>
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
+          >
+            Close
+          </button>
+        </header>
+        <div className="flex-1 overflow-y-auto md-scroll">
+          {error && <p className="px-4 py-6 text-xs text-[#f59e0b]">{error}</p>}
+          {!error && rows === null && (
+            <p className="px-4 py-6 text-sm text-muted">Looking…</p>
+          )}
+          {rows?.length === 0 && (
+            <p className="px-4 py-6 text-sm text-muted">
+              Nothing saved yet. This one will be here once it syncs.
+            </p>
+          )}
+          {rows?.map((r) => (
+            <button
+              key={r.client_id}
+              onClick={() => open(r.client_id)}
+              className="w-full flex items-center gap-3 px-4 py-3 border-b border-edge last:border-b-0 text-left"
+            >
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-semibold text-ink truncate">
+                  {r.job_name || "Untitled"}
+                </span>
+                <span className="block text-xs text-muted tabular-nums">
+                  {ago(r.updated_at)}
+                </span>
+              </span>
+              <span className="text-sm font-bold tabular-nums text-ink">
+                {formatMoney(r.total_sell)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SyncBanner({ state, error }: { state: string; error: string | null }) {
   const queued = typeof window === "undefined" ? 0 : readQueue().length;
   if (state === "idle" || state === "synced") return null;
+
+  // A refusal used to be reported as "will push when back in coverage", which
+  // blamed the tunnel for a server that had answered. The estimate is held
+  // safely either way; only one of the two ever clears itself.
+  if (state === "rejected") {
+    return (
+      <p className="shrink-0 px-4 py-2 text-xs bg-surface2 text-ink border-b border-edge">
+        Held on this device — the server refused the save.
+        {error && <span className="block text-muted mt-0.5">{error}</span>}
+      </p>
+    );
+  }
 
   const text =
     state === "syncing"
