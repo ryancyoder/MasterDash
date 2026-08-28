@@ -1,6 +1,6 @@
-// The app is served from /MasterDash/ on GitHub Pages and from / in dev, so
-// anything fetched out of public/ has to know which. Next inlines the router's
-// base path at build time; this reads it with a fallback for dev.
+// Anything fetched out of public/ has to know what subpath the app is served
+// from. Next inlines the router's base path at build time; this reads it with
+// a fallback for the usual case of a domain root.
 declare const process: { env: Record<string, string | undefined> };
 
 export function basePath(): string {

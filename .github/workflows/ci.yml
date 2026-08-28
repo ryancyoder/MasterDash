@@ -1,10 +1,8 @@
 # Deployment is Vercel's job now — it builds every push and every pull request.
 # This workflow only guards the branch: the same checks, before review.
 #
-# The app used to be a static export published to GitHub Pages. It needs a
-# server now: the browser has no Supabase write credentials, so photo uploads
-# and estimate saves go through the app's own route handlers, and a static
-# export has nowhere to run those.
+# The app needs a server: the browser has no Supabase write credentials, so
+# photo uploads and estimate saves go through the app's own route handlers.
 name: CI
 
 on:

@@ -19,14 +19,9 @@ const CACHE = "qe-cache-v2";
  */
 const PHOTO_PATH = "/storage/v1/object/public/";
 
-// Relative, so they resolve against the worker's own scope. The app is served
-// from /MasterDash/ on GitHub Pages and from / in dev.
-const PRECACHE = [
-  "./",
-  "./estimator",
-  "./estimator/proposal",
-  "./catalog/plants.json",
-];
+// Relative, so they resolve against the worker's own scope whatever subpath
+// the app is served from.
+const PRECACHE = ["./", "./proposal", "./catalog/plants.json"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -111,7 +106,7 @@ self.addEventListener("fetch", (event) => {
         } catch {
           return (
             (await caches.match(request)) ??
-            (await caches.match("./estimator")) ??
+            (await caches.match("./")) ??
             Response.error()
           );
         }

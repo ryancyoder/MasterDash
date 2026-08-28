@@ -1,122 +1,35 @@
-# MasterDash
+# Quick Estimator
 
-A tile-based personal operating system portal. Tap a tile, it logs time. The
-tile grid is the data-entry surface — there is no form in the primary flow.
+Tap a tile, price the job. A POS-style grid for estimating landscape work on
+site — built for **iPad in landscape, in the field**: gloved hands, bright sun,
+one glance and one tap, and often no signal at all.
 
-Built for **iPad in landscape, used in the field**: gloved hands, bright sun,
-one glance and one tap.
+One tap is one *purchase increment*, never one unit. A tap on Mulch is eight
+cubic yards because that is how mulch arrives. Nothing in the tapping flow ever
+asks for a typed quantity.
+
+This repository used to hold a time tracker as well — a board, a calendar, a
+log. The two shared a nav bar and nothing else, so the time tracker moved out;
+it is on the `timetracker-extract` branch, with its history. The estimator is
+now the whole app, at the root.
 
 ---
 
-## The views
+## The screens
 
-| View | What it is |
-|---|---|
-| **Board** | The tile grid. Tap to log, long-press to correct. |
-| **Calendar** | Day and week timeline of what you logged, laid out proportionally. |
-| **Log** | The raw table — filter, edit, export CSV. |
-| **Estimator** | The tile grid for pricing a job. See below. |
+    /            the grid — the whole of data entry
+    /proposal    the numbers, the job name, and the list of saved estimates
 
-The first three read the same two entities: an **Activity** (a tile) and an
-**Entry** (one logged span against it). The Estimator is a separate surface with
-its own model and its own storage — clearing an estimate never touches the log.
+## Where the work is kept
 
-## How logging works
+    lib/estimator/store.ts    the estimate, as a log of increments
+    lib/estimator/sync.ts     two-way sync that survives no signal
+    lib/estimator/tree.ts     the committed tile tree, the offline floor
+    lib/estimator/proposal.ts taps to priced lines, deliveries derived
+    lib/estimator/assemblies.ts  bucket maths
+    app/api/                  the routes that hold the service key
 
-Each tile has a tap behaviour, set per tile in Settings:
-
-- **Punch** (default) — closes whatever is running and starts this one. The log
-  becomes a continuous ribbon rather than a set of islands, which is how field
-  time actually behaves. Tapping the running tile stops it.
-- **Toggle** — runs alongside others. For overlapping work.
-- **Instant** — writes a fixed-length block (e.g. a 10-minute fuel stop) and
-  leaves whatever is running alone.
-
-**Tiles nest.** A tile with children is a folder: tapping it opens that set and
-logs nothing. Only leaf tiles log time, so a tap never means two things at once
-and a mis-tap while browsing can't start a timer. To track time at a parent's
-level, give it a child for the general case. Tapping a child keeps you among its
-siblings, since moving between related tasks is the common case once you're
-inside a set.
-
-**Nest by dragging.** Hold a tile until it lifts, then drag it onto another
-tile to make it a child of that one. Drop it on a crumb in the trail at the top
-to move it back out. A green ring means the drop will land, red means it is
-refused. Releasing without moving still opens the entry sheet, so the hold
-gesture keeps both meanings.
-
-Tiles are also created, nested and edited in the **Tiles** list — one compact
-row each, hierarchy by indentation, folders collapsible, with a filter across
-label and group. Rename in place on the row; everything else opens from the
-row's gear. That list is the keyboard-accessible path for nesting; drag is a
-touch convenience, not the only way.
-
-**Leaf tiles can carry a link.** **Double-tap** to open it, which also clocks
-you in if the timer was not already running — so "clock into Aspire and open
-Aspire" is one gesture. A **single tap only starts or stops the timer**, which
-means clocking out of a link tile never reopens the site.
-
-Double-tap can start a timer but never stops one, so the gesture that means "go
-work over there" can't silently end an entry. Only link tiles wait out the
-double-tap window; every other tile still fires on touch-up.
-
-Link tiles show a ↗ marker, and their icon can be pulled from the site itself — where the site
-allows it the icon is saved locally so it still shows with no signal, otherwise
-the tile falls back to its glyph. Icons come from Google's favicon service, so
-fetching one tells Google which site you added. Only http and https links are
-ever opened. Folders cannot carry links, since their tap already means "open
-this set".
-
-**Long-press** is the only gesture that isn't logging. It opens the entry sheet
-where you adjust times, add a note, split, or delete. Everything destructive
-lives behind it, so a mis-tap on the board can never lose data.
-
-## Field layout
-
-Held two-handed in landscape, your thumbs cover the left and right edges. That
-space is reserved for navigation and never holds content:
-
-- **Left gutter** — view switcher
-- **Right gutter** — context filter and stop
-- **Top** — status only: what's running, for how long, and the clock
-
-The frame is true black so it reads as bezel and disappears on the device.
-
-**Browser mode** drops the frame for a denser desktop layout. It's automatic
-(by pointer type) and overridable in Settings.
-
-### Install it to the home screen
-
-The black frame only fully works once Safari's chrome is gone. On the iPad:
-**Share → Add to Home Screen**. That launches it standalone, in landscape, with
-no browser UI.
-
-## Data and backup
-
-The Board, Calendar and Log are stored **in your browser only** — no account,
-no server, no sync. The app works with no signal, which is the normal condition
-on a job site.
-
-The Estimator is the one exception: it also works fully offline, but saved
-estimates queue locally and push to Supabase once there is coverage. See
-[Quick Estimator](#quick-estimator).
-
-Two consequences worth taking seriously:
-
-1. **Clearing site data erases your log.** Export regularly from Settings.
-2. **It does not sync across devices.** The iPad's log and a laptop's log are
-   separate.
-
-Storage is `localStorage` for v1. That is a deliberate v1 choice — synchronous
-reads mean zero delay between a tap and the visual confirmation, which matters
-more than capacity at this stage. The practical ceiling is roughly 4–5 years of
-20 entries a day. All access is behind `lib/store.ts`, so moving the entry log
-to IndexedDB later touches one file.
-
-## Quick Estimator
-
-A second surface at **/estimator**, for pricing a job on site. Same instrument,
-different work: the Board logs time, the Estimator builds a proposal.
+---
 
 ### Two gestures, all the way down
 
@@ -362,7 +275,7 @@ meant to be argued with.
 npm install
 npm run dev      # http://localhost:3000
 
-npm run build    # static export to ./out
+npm run build
 npx eslint .
 ```
 
@@ -417,5 +330,9 @@ or Supabase Auth if it needs to be more than that.
 Next.js 16 (Turbopack) on Vercel · React 19 · TypeScript · Tailwind v4 ·
 Supabase behind two server routes.
 
-See [SPEC.md](./SPEC.md) for the full design, data model, and what's
-deliberately out of scope for v1.
+The estimate is stored as a log of increments rather than as totals, which is
+what lets two devices edit one job offline and merge by union afterwards. The
+agent-facing brief for reading and editing estimates directly in Supabase —
+including the one thing that must not be edited — is in the conversation that
+produced it; the short version is that `quick_estimates.lines` is a projection
+and the estimate lives in `quick_estimate_taps`.

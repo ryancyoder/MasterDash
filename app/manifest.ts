@@ -1,16 +1,16 @@
 import type { MetadataRoute } from "next";
 
-// Required under `output: "export"` — metadata routes are dynamic by default,
-// and a static export has nowhere to run them.
+// Static: nothing here depends on the request, and a manifest that has to be
+// rendered per request is a cold start in front of the app opening.
 export const dynamic = "force-static";
 
-// Relative start_url/scope so the manifest works under any basePath — GitHub
-// Pages serves this app from /MasterDash/, not the domain root.
+// Relative start_url/scope so the manifest survives being served from a
+// subpath rather than a domain root.
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "MasterDash",
-    short_name: "MasterDash",
-    description: "Tile-based personal operating system portal",
+    name: "Quick Estimator",
+    short_name: "Estimator",
+    description: "Tap a tile, price the job, on site and with no signal",
     start_url: ".",
     scope: ".",
     display: "standalone",
