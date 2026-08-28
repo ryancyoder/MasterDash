@@ -1,68 +1,70 @@
 // The map take-off.
 //
-// Ported from the VoiceData estimator's plan view, but re-pointed at this
-// app's model. There, a shape drove a take-off group whose assembly lines
-// priced off the exact measurement. Here there are no groups and no exact
-// quantities: a tap is a purchase increment and an assembly's bucket is one
-// more load of the material that runs out first. So a shape does not add a
-// measurement to the estimate — it adds BUCKETS, by the same arithmetic the
-// assembly tile uses when you tap it.
+// A shape does not add a measurement to the estimate — it adds BUCKETS, by the
+// same arithmetic the assembly tile uses when you tap it. Drawing a 1,200 sq ft
+// bed and tapping Mulch Bed three times are the same act and land on the same
+// proposal line, because 1,200 sq ft needs three loads of mulch either way. The
+// map just counts them for you and remembers why.
 //
-// That is the whole reconciliation. Drawing a 1,200 sq ft bed and tapping the
-// Mulch Bed tile three times are the same act, and they land in the same
-// place, because 1,200 sq ft needs three loads of mulch either way. The map
-// just counts them for you and remembers why.
+// What changed underneath: vertices are LAT/LNG, not image pixels.
 //
-// Vertices are stored in IMAGE pixel space, never canvas space, so a shape
-// survives a resize, a zoom, and a different device. Feet come from the
-// calibration scale, and the measurement is DERIVED rather than stored —
-// recalibrating therefore corrects every shape already drawn instead of
-// leaving the old ones quietly wrong.
+// They used to be pixels, with a two-point calibration turning them into feet.
+// That made the plan image the coordinate system, with three consequences that
+// all had to be lived with — replacing the image had to destroy every shape,
+// because the vertices meant nothing in a different picture; an uncalibrated
+// plan measured nothing at all; and the shapes could never be compared with
+// anything outside this app.
+//
+// On the ground, none of those exist. The scale is the world's, so there is
+// nothing to calibrate and a shape is a measurement the moment it is drawn.
+// Swapping the plan underneath leaves the take-off alone, because it was never
+// in that image's space. And Upright's elevation points and slope runs are
+// already lat/lng, so the two apps are finally measuring in the same units of
+// the same thing.
+//
+// The measurement stays DERIVED — computed from the vertices on every read,
+// never stored — which is what makes dragging a vertex correct the loads
+// instead of leaving a stale number behind.
 
 import type { AssemblyModel } from "./assemblies";
+import { areaSqFt, latLngsFrom, lengthFt, type LatLng } from "./geo";
+import type { Basemap, MapAnchor } from "./mapLayers";
 
 export type ShapeKind = "area" | "linear";
-
-export interface PlanPoint {
-  x: number;
-  y: number;
-}
-
-export interface PlanScale {
-  pixelsPerFoot: number;
-  p1: PlanPoint;
-  p2: PlanPoint;
-  label: string;
-}
 
 export interface PlanShape {
   id: string;
   type: ShapeKind;
-  vertices: PlanPoint[];
+  /** WGS84. The ground, not a picture of it. */
+  vertices: LatLng[];
   color: string;
   /** The assembly this shape's measurement buys loads of. Null = unlinked. */
   assemblyId: string | null;
 }
 
+/**
+ * The estimate's half of the map.
+ *
+ * The overlays are NOT here — they live on the property, in
+ * `property_map_layers`, because aligning a plan against a yard is a fact
+ * about the yard rather than about this quote. What is here is what this
+ * estimate decided: where the beds are, what the map is anchored on, and which
+ * layers it wants to look at while drawing.
+ */
 export interface PlanState {
-  /** IndexedDB key for the image bytes. The bytes never enter localStorage. */
-  imageId: string | null;
-  /** Public URL once the image has synced. Null while it is local-only. */
-  imageUrl: string | null;
-  imageWidth: number;
-  imageHeight: number;
-  scale: PlanScale | null;
+  anchor: MapAnchor | null;
+  basemap: Basemap;
   shapes: PlanShape[];
+  /** Overlay ids switched off for this estimate. Absence means shown. */
+  hiddenOverlayIds: string[];
 }
 
 export function emptyPlan(): PlanState {
   return {
-    imageId: null,
-    imageUrl: null,
-    imageWidth: 0,
-    imageHeight: 0,
-    scale: null,
+    anchor: null,
+    basemap: "satellite",
     shapes: [],
+    hiddenOverlayIds: [],
   };
 }
 
@@ -91,49 +93,17 @@ export function planId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${++idCounter}`;
 }
 
-// --- Geometry -------------------------------------------------------------
-
-/** Shoelace. Pixel², converted to feet² by the caller. */
-function polygonArea(vertices: PlanPoint[]): number {
-  let area = 0;
-  const n = vertices.length;
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    area += vertices[i].x * vertices[j].y - vertices[j].x * vertices[i].y;
-  }
-  return Math.abs(area) / 2;
-}
-
-function polylineLength(vertices: PlanPoint[]): number {
-  let length = 0;
-  for (let i = 1; i < vertices.length; i++) {
-    length += Math.hypot(
-      vertices[i].x - vertices[i - 1].x,
-      vertices[i].y - vertices[i - 1].y,
-    );
-  }
-  return length;
-}
+// --- Measurement ----------------------------------------------------------
 
 /**
- * A shape's measurement in feet (sq ft for an area, ln ft for a line).
+ * A shape's measurement in feet: square for an area, linear for a run.
  *
- * Zero without a scale, which is the honest answer: an uncalibrated plan
- * measures nothing, and a shape that silently reported pixels as feet would be
- * worse than one that reports nothing at all.
+ * No scale argument any more, and no way for this to return a number that
+ * means nothing. Geodesy is in `geo.ts`; what matters here is that the answer
+ * is computed on every read.
  */
-export function measurementOf(
-  shape: Pick<PlanShape, "type" | "vertices">,
-  scale: PlanScale | null,
-): number {
-  const ppf = scale?.pixelsPerFoot ?? 0;
-  if (!ppf || ppf <= 0) return 0;
-  if (shape.type === "area") {
-    if (shape.vertices.length < 3) return 0;
-    return polygonArea(shape.vertices) / (ppf * ppf);
-  }
-  if (shape.vertices.length < 2) return 0;
-  return polylineLength(shape.vertices) / ppf;
+export function measurementOf(shape: Pick<PlanShape, "type" | "vertices">): number {
+  return shape.type === "area" ? areaSqFt(shape.vertices) : lengthFt(shape.vertices);
 }
 
 /** The unit a shape can be linked against. */
@@ -170,4 +140,25 @@ export function bucketsForMeasurement(
 /** What those buckets actually buy, so the overshoot is never hidden. */
 export function workBought(buckets: number, bucketSize: number | null): number {
   return bucketSize ? buckets * bucketSize : 0;
+}
+
+// --- Validation -----------------------------------------------------------
+
+export function shapeFrom(value: unknown): PlanShape | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.id !== "string" || !v.id) return null;
+  const type: ShapeKind = v.type === "linear" ? "linear" : "area";
+  const vertices = latLngsFrom(v.vertices);
+  // A ring needs three corners and a run needs two ends. Anything less draws
+  // nothing and measures nothing, so it is dropped rather than kept as a shape
+  // that quietly contributes zero loads.
+  if (vertices.length < (type === "area" ? 3 : 2)) return null;
+  return {
+    id: v.id,
+    type,
+    vertices,
+    color: typeof v.color === "string" && v.color ? v.color : SHAPE_COLORS[0],
+    assemblyId: typeof v.assemblyId === "string" && v.assemblyId ? v.assemblyId : null,
+  };
 }

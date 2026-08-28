@@ -1,21 +1,16 @@
 "use client";
 
 import {
-  SHAPE_COLORS,
   emptyPlan,
   nextShapeColor,
   planId,
-  type PlanPoint,
-  type PlanScale,
+  shapeFrom,
   type PlanShape,
   type PlanState,
   type ShapeKind,
 } from "./plan";
-import {
-  deletePlanImage,
-  queuePlanUpload,
-  setPlanUploadHandler,
-} from "./planImage";
+import { isLatLng, type LatLng } from "./geo";
+import type { Basemap, MapAnchor } from "./mapLayers";
 import {
   emptyVisit,
   visitFrom,
@@ -175,71 +170,38 @@ function stringMap(value: unknown): Record<string, string> {
   return out;
 }
 
-/**
- * A plan read back from storage.
- *
- * Validated field by field rather than trusted, for the same reason countMap
- * drops non-positive taps: a corrupt or hand-edited record must not be able to
- * put a NaN measurement on a proposal. A vertex list that does not survive
- * this comes back as no shape at all, which reads as "draw it again" instead
- * of quietly measuring nothing.
- */
-function finite(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
 
-function pointFrom(value: unknown): PlanPoint | null {
+function anchorFrom(value: unknown): MapAnchor | null {
   if (!value || typeof value !== "object") return null;
   const v = value as Record<string, unknown>;
-  const x = finite(v.x);
-  const y = finite(v.y);
-  return x === null || y === null ? null : { x, y };
-}
-
-function scaleFrom(value: unknown): PlanScale | null {
-  if (!value || typeof value !== "object") return null;
-  const v = value as Record<string, unknown>;
-  const ppf = finite(v.pixelsPerFoot);
-  const p1 = pointFrom(v.p1);
-  const p2 = pointFrom(v.p2);
-  if (ppf === null || ppf <= 0 || !p1 || !p2) return null;
-  return { pixelsPerFoot: ppf, p1, p2, label: String(v.label ?? "") };
-}
-
-function shapesFrom(value: unknown): PlanShape[] {
-  if (!Array.isArray(value)) return [];
-  const out: PlanShape[] = [];
-  for (const raw of value) {
-    if (!raw || typeof raw !== "object") continue;
-    const r = raw as Record<string, unknown>;
-    const type = r.type === "linear" ? "linear" : r.type === "area" ? "area" : null;
-    if (!type || typeof r.id !== "string" || !r.id) continue;
-    const vertices = Array.isArray(r.vertices)
-      ? r.vertices.map(pointFrom).filter((p): p is PlanPoint => p !== null)
-      : [];
-    // Below the minimum the shape cannot be drawn, measured or repaired.
-    if (vertices.length < (type === "area" ? 3 : 2)) continue;
-    out.push({
-      id: r.id,
-      type,
-      vertices,
-      color: typeof r.color === "string" ? r.color : SHAPE_COLORS[0],
-      assemblyId: typeof r.assemblyId === "string" ? r.assemblyId : null,
-    });
-  }
-  return out;
+  if (!isLatLng(v.centre)) return null;
+  const source =
+    v.source === "property" || v.source === "upright" || v.source === "placed"
+      ? v.source
+      : "fallback";
+  return {
+    propertyId:
+      typeof v.propertyId === "number" && Number.isFinite(v.propertyId)
+        ? v.propertyId
+        : null,
+    label: typeof v.label === "string" && v.label ? v.label : null,
+    centre: { lat: v.centre.lat, lng: v.centre.lng },
+    source,
+  };
 }
 
 function planFrom(value: unknown): PlanState {
   if (!value || typeof value !== "object") return emptyPlan();
   const v = value as Record<string, unknown>;
   return {
-    imageId: typeof v.imageId === "string" && v.imageId ? v.imageId : null,
-    imageUrl: typeof v.imageUrl === "string" && v.imageUrl ? v.imageUrl : null,
-    imageWidth: finite(v.imageWidth) ?? 0,
-    imageHeight: finite(v.imageHeight) ?? 0,
-    scale: scaleFrom(v.scale),
-    shapes: shapesFrom(v.shapes),
+    anchor: anchorFrom(v.anchor),
+    basemap: v.basemap === "none" ? "none" : "satellite",
+    shapes: Array.isArray(v.shapes)
+      ? v.shapes.map(shapeFrom).filter((s): s is PlanShape => s !== null)
+      : [],
+    hiddenOverlayIds: Array.isArray(v.hiddenOverlayIds)
+      ? v.hiddenOverlayIds.filter((id): id is string => typeof id === "string")
+      : [],
   };
 }
 
@@ -434,40 +396,55 @@ function mutatePlan(fn: (plan: PlanState) => PlanState) {
 }
 
 /**
- * Point the plan at a newly picked image.
+ * Where the map opens, and how good that location is.
  *
- * The bytes are already in IndexedDB by the time this runs — see
- * planImage.readPlanFile. Replacing the image clears the scale and the shapes
- * with it: vertices are in the old image's pixel space, and a calibration
- * measured on one aerial means nothing on another. Leaving them would produce
- * shapes that look plausible and measure wrong, which is the worst outcome
- * available.
+ * The source rides along rather than being dropped once the centre is set,
+ * because these are not equally trustworthy. Half the properties on the
+ * project have coordinates; the rest have an address and nothing else, so the
+ * centre has to come from somewhere weaker and the screen has to be able to
+ * say which. A take-off drawn against a hand-placed guess is worth exactly
+ * what the guess was worth.
  */
-export function setPlanImage(
-  clientId: string,
-  image: { id: string; width: number; height: number },
+export function setPlanAnchor(anchor: MapAnchor | null) {
+  mutatePlan((plan) => ({ ...plan, anchor }));
+}
+
+/**
+ * Take the satellite away, or put it back.
+ *
+ * Upright's reasoning applies here too: once an overlay has been scaled off a
+ * known dimension it is the more accurate of the two, and stale imagery under
+ * accurate drawings puts two contradictory references on the screen. Hiding
+ * the tiles does not improve accuracy — it stops showing a disagreement — so
+ * the overlay had better be aligned before anybody trusts the tile-free view.
+ */
+export function setBasemap(basemap: Basemap) {
+  mutatePlan((plan) => ({ ...plan, basemap }));
+}
+
+/**
+ * Show or hide one of the property's overlays on this estimate.
+ *
+ * Per-estimate on purpose. The overlay itself belongs to the property and is
+ * shared with Upright, so switching one off here must not be able to affect
+ * what anybody else sees of that yard — it is a preference about this screen,
+ * not an edit to the layer.
+ */
+export function setOverlayHidden(overlayId: string, hidden: boolean) {
+  mutatePlan((plan) => {
+    const without = plan.hiddenOverlayIds.filter((id) => id !== overlayId);
+    return {
+      ...plan,
+      hiddenOverlayIds: hidden ? [...without, overlayId] : without,
+    };
+  });
+}
+
+export function addShape(
+  type: ShapeKind,
+  vertices: LatLng[],
+  assemblyId: string | null,
 ) {
-  const previous = getSnapshot().estimate.plan.imageId;
-  mutatePlan(() => ({
-    ...emptyPlan(),
-    imageId: image.id,
-    imageWidth: image.width,
-    imageHeight: image.height,
-  }));
-  if (previous && previous !== image.id) void deletePlanImage(previous);
-  queuePlanUpload(image.id, clientId);
-}
-
-/** Called by the upload queue once the image is reachable from elsewhere. */
-setPlanUploadHandler((id, url) => {
-  mutatePlan((plan) => (plan.imageId === id ? { ...plan, imageUrl: url } : plan));
-});
-
-export function setPlanScale(scale: PlanScale | null) {
-  mutatePlan((plan) => ({ ...plan, scale }));
-}
-
-export function addShape(type: ShapeKind, vertices: PlanPoint[], assemblyId: string | null) {
   mutatePlan((plan) => ({
     ...plan,
     shapes: [
@@ -643,12 +620,15 @@ export function mergeRemote(
       ]),
     ],
     // The plan is a document, so it takes the newer side whole rather than
-    // merging — half of one aerial's shapes on another's calibration would
-    // measure confidently and be wrong. A remote plan with no image never
-    // replaces one that has bytes here, for the same reason an empty job name
-    // does not un-name this estimate: an estimate saved before anyone drew is
-    // not evidence that the drawing should go.
-    plan: remoteNewer && remotePlan?.imageId ? remotePlan : current.plan,
+    // merging: there is no union of two people dragging the same vertex, and
+    // half of one take-off inside another reads as a plausible bed nobody
+    // drew. An empty remote plan never replaces one with work in it, for the
+    // same reason an empty job name does not un-name this estimate — an
+    // estimate saved before anyone drew is not evidence the drawing should go.
+    plan:
+      remoteNewer && remotePlan && remotePlan.shapes.length > 0
+        ? remotePlan
+        : current.plan,
     // Same rule as the plan and the job name: a remote visit with no
     // transcript never replaces one that has words in it.
     visit:
@@ -690,8 +670,6 @@ export function adoptEstimate(
   remoteOps: TapOp[],
 ) {
   const ops = remoteOps.filter(isOp).sort((a, b) => (a.at < b.at ? -1 : 1));
-  const previousImage = getSnapshot().estimate.plan.imageId;
-  const plan = planFrom(row.plan);
   persist({
     clientId: row.clientId,
     jobName: row.jobName ?? "",
@@ -702,26 +680,20 @@ export function adoptEstimate(
     syncedOpIds: ops.map((op) => op.id),
     baseUpdatedAt: row.updatedAt ?? null,
     // Whatever the server holds, wholesale — this replaces the screen. The
-    // adopted plan's bytes are not on this device, so it renders from the
-    // synced URL until someone replaces the image.
-    plan,
+    // overlays it draws against are the property's and are fetched by id, so
+    // adopting an estimate from another device brings its take-off without
+    // needing any image bytes to have travelled with it.
+    plan: planFrom(row.plan),
     visit: visitFrom(row.visit),
     updatedAt: row.updatedAt ?? new Date().toISOString(),
   });
-  // The estimate being replaced is not coming back on this device; its image
-  // would otherwise sit in IndexedDB for ever with nothing referencing it.
-  if (previousImage && previousImage !== plan.imageId) {
-    void deletePlanImage(previousImage);
-  }
 }
 
 /** Start a fresh estimate. The old one is only gone once it has synced. */
 export function clearEstimate() {
-  // The queue still holds the upload, so a plan drawn offline and cleared
-  // before coverage returns still reaches storage; only the local copy goes.
-  const image = getSnapshot().estimate.plan.imageId;
+  // Nothing to clean up: the overlay images belong to the property, not to
+  // this estimate, and the next estimate on the same yard wants them.
   persist(emptyEstimate());
-  if (image) void deletePlanImage(image);
 }
 
 export function updateSettings(patch: Partial<EstimatorSettings>) {
