@@ -22,6 +22,17 @@ export const dynamic = "force-dynamic";
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 
+/**
+ * How many sessions to ask Upright for before filtering.
+ *
+ * The filter runs HERE, not there, so asking for exactly what the caller wants
+ * loses every match that falls outside the newest page. Nine of the 48 surveys
+ * on the project sit outside the newest 50 sessions and were invisible in the
+ * picker until this. Upright caps the page at 200, which covers every session
+ * that exists today with room to spare.
+ */
+const SCAN_LIMIT = 200;
+
 export async function GET(request: Request) {
   const cfg = serverConfig();
   if (!cfg) {
@@ -46,7 +57,7 @@ export async function GET(request: Request) {
 
   let res: Response;
   try {
-    res = await uprightApi(cfg, `/sessions?limit=${limit}`);
+    res = await uprightApi(cfg, `/sessions?limit=${SCAN_LIMIT}`);
   } catch {
     return NextResponse.json(
       { ok: false, error: "Could not reach Upright." },
@@ -60,8 +71,10 @@ export async function GET(request: Request) {
     );
   }
 
+  // Trimmed after filtering, so `limit` means "this many usable sessions"
+  // rather than "this many rows, some of which you cannot choose".
   return NextResponse.json({
     ok: true,
-    sessions: sessionsFrom(await res.json(), need),
+    sessions: sessionsFrom(await res.json(), need).slice(0, limit),
   });
 }
