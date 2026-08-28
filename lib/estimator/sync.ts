@@ -141,6 +141,9 @@ function toRow(estimate: Estimate, proposal: Proposal) {
       // than only re-read. The image itself is not here — it goes to storage
       // through /api/plan-image, and this carries the id that finds it.
       plan: estimate.plan,
+      // The transcript and what was read from it, so a visit survives the
+      // device it was typed on.
+      visit: estimate.visit,
       rendered: proposal.lines.map((l) => ({
         item_id: l.item.id,
         label: l.label,
@@ -178,7 +181,15 @@ export function queueSave(estimate: Estimate, proposal: Proposal) {
   // measure a site, with nothing linked to an assembly yet, are still a
   // morning's work that must not be lost with the tab.
   const hasPlan = estimate.plan.shapes.length > 0 || !!estimate.plan.imageId;
-  if (estimate.ops.length === 0 && proposal.lines.length === 0 && !hasPlan) return;
+  const hasVisit = estimate.visit.transcript.length > 0;
+  if (
+    estimate.ops.length === 0 &&
+    proposal.lines.length === 0 &&
+    !hasPlan &&
+    !hasVisit
+  ) {
+    return;
+  }
 
   const owed = pendingOps(estimate);
   // A pull merges and therefore changes the store, which would otherwise
@@ -195,6 +206,9 @@ export function queueSave(estimate: Estimate, proposal: Proposal) {
     // relinked to another assembly would look like nothing changed and never
     // be written.
     estimate.plan,
+    // The visit owes no ops either: a dismissed finding or a pasted paragraph
+    // would otherwise look like nothing changed and never be written.
+    estimate.visit,
   ]);
   if (owed.length === 0 && fingerprint === lastQueued) return;
   lastQueued = fingerprint;
@@ -310,6 +324,8 @@ export interface RemoteEstimate {
     propertyId: number | null;
     /** Shapes and scale as the server holds them; validated on the way in. */
     plan: unknown;
+    /** Transcript and findings, likewise validated on the way in. */
+    visit: unknown;
     updatedAt: string | null;
   } | null;
   ops: TapOp[];

@@ -169,7 +169,7 @@ interface RowShape {
   total_sell?: number;
   subtotal_cost?: number;
   /** The projection blob. Carries the map take-off alongside the lines. */
-  lines?: { plan?: unknown } | null;
+  lines?: { plan?: unknown; visit?: unknown } | null;
   updated_at?: string;
 }
 
@@ -202,6 +202,7 @@ function toClientRow(row: RowShape) {
     // Rides in the `lines` jsonb the row already has, so the map take-off
     // needs no column of its own. The client validates it shape by shape.
     plan: row.lines?.plan ?? null,
+    visit: row.lines?.visit ?? null,
     updatedAt: row.updated_at ?? null,
   };
 }

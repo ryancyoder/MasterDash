@@ -29,6 +29,7 @@ now the whole app, at the root.
     lib/estimator/assemblies.ts  bucket maths
     lib/estimator/plan.ts     the map take-off: geometry and load maths
     lib/estimator/planImage.ts  plan images, device first, uploaded later
+    lib/estimator/visit.ts    the site visit: findings and their validation
     app/api/                  the routes that hold the service key
 
 ---
@@ -257,6 +258,58 @@ it is `quick_tiles`, whose ordering column is an integer `sort_order` rather
 than the view's derived `ordering` string. `quick_tiles_kind_shape` also
 requires a `page` row to carry a non-null `page`, which is what makes the tile
 open the take-off instead of an empty level.
+
+### Visit: reading the job off the transcript
+
+The **Visit** tile holds what was said on site. Paste the transcript, press
+**Read the visit**, and it comes back as a list of tiles with counts.
+
+**The tile menu is what makes this work.** `quick_tile_menu` exists so that
+something other than the app can learn the vocabulary — the `tap_key` each tile
+commits and the units one tap buys. Handing that to the model is what turns
+"about twenty yards of mulch" into three taps of `mat:mulch` rather than a
+number somebody has to translate later. The same is done for assemblies, so a
+bed described as a whole job becomes buckets.
+
+Findings come back in five kinds, and only two of them are answers:
+
+| Kind | What it is |
+|---|---|
+| **On the grid** | Named, and a tile prices it. Add what you agreed to. |
+| **Needs a number** | Named, but the quantity was too vague to commit. The count is a proposal. |
+| **Usually goes with it** | Not said, but the named work normally needs it. A prompt, never an assumption. |
+| **Nothing prices this** | Named with nothing in the catalog to price it — the retaining wall. Quote it by hand. |
+| **Worth knowing** | Gate widths, slope, where the dog is. Kept with the estimate, never priced. |
+
+**Nothing is added on its own.** Every row waits for a tap, and carries the
+sentence it came from — a transcript records the whole conversation, including
+the patio that got ruled out and the wall that was only floated, and a tap
+nobody made is very hard to notice later. Accepting a row is **one op** at the
+full count, so three loads of mulch is one entry in the log to undo, not three.
+
+The badge counts only rows a tap can resolve. A note about the gate and a wall
+the catalog cannot price both stay on the page, but counting them would leave
+the badge stuck at a number that never goes down.
+
+**Keys are checked, not trusted.** A `tap_key` the model invented would tap an
+item the proposal then silently drops — invisible, and so the one failure worth
+spending code on. The route validates every key against the menu it just sent,
+and a match that loses its key is demoted to "nothing prices this" so the
+sentence stays in front of the estimator instead of vanishing with the row.
+
+Extraction needs signal and an `ANTHROPIC_API_KEY` on the deployment; the
+transcript saves and syncs either way, so a visit typed with no bars is read
+later rather than lost. Like the plan, the visit merges as a scalar — newest
+wins, whole — and rides in the row's `lines` jsonb.
+
+Its tile needs a `quick_tiles` row, for the same reason the plan's does:
+
+```sql
+insert into quick_tiles
+  (tile_id, parent_id, label, sort_order, kind, page, glyph, color)
+values
+  ('group:visit', null, 'Visit', 11, 'page', 'visit', '🗒️', '#8b5cf6');
+```
 
 ### Offline, and saving
 

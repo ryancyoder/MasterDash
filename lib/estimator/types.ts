@@ -9,6 +9,7 @@
 //    tile is never a dead end and drilling down is never required.
 
 import type { PlanState } from "./plan";
+import type { VisitState } from "./visit";
 
 export type ItemSource = "material" | "equipment" | "service" | "synthetic";
 
@@ -65,7 +66,7 @@ export interface TileNode {
   /** Children too numerous to bundle; fetched on demand. */
   childSource?: { kind: "plants"; group: string; itemId: string };
   /** A level that is not a plain grid. */
-  page?: "assemblies" | "plan";
+  page?: "assemblies" | "plan" | "visit";
 }
 
 /**
@@ -214,6 +215,15 @@ export interface Estimate {
    * would.
    */
   plan: PlanState;
+  /**
+   * The site visit: the transcript, and what was read out of it.
+   *
+   * A document like the plan, and merged the same way — newest wins, whole.
+   * The findings are deliberately NOT a projection into taps: a transcript
+   * records what was discussed including the half that was ruled out, so
+   * every row waits for a decision rather than pricing itself.
+   */
+  visit: VisitState;
   updatedAt: string;
 }
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AssemblyPage from "@/components/estimator/AssemblyPage";
 import PlanPage from "@/components/estimator/PlanPage";
+import VisitPage from "@/components/estimator/VisitPage";
 import TileGrid from "@/components/estimator/TileGrid";
 import { formatMoneyShort, getItem } from "@/lib/estimator/catalog";
 import { loadPlants, plantsInGroup, type PlantRow } from "@/lib/estimator/plants";
@@ -28,6 +29,7 @@ import { usePhotos } from "@/lib/estimator/usePhotos";
 import { useCatalogPhotos } from "@/lib/estimator/catalogPhotos";
 import { useCatalogPrices } from "@/lib/estimator/catalogPrices";
 import { useHomeTiles } from "@/lib/estimator/tileTree";
+import { visitPendingCount } from "@/lib/estimator/visit";
 import { photoTarget } from "@/lib/estimator/photos";
 import TileOptionsSheet from "@/components/estimator/TileOptionsSheet";
 import {
@@ -324,6 +326,7 @@ export default function EstimatorPage() {
   const countFor = (node: TileNode): number => {
     if (node.page === "assemblies") return assemblyCount(estimate);
     if (node.page === "plan") return planShapeCount(estimate);
+    if (node.page === "visit") return visitPendingCount(estimate.visit);
     const locked = lockedFor(node);
     if (hasDepth(node)) {
       return rollupCount(estimate, subtreeItemIds(node)) + locked;
@@ -544,6 +547,7 @@ export default function EstimatorPage() {
 
   const onAssembliesPage = current?.page === "assemblies";
   const onPlanPage = current?.page === "plan";
+  const onVisitPage = current?.page === "visit";
 
   return (
     <main className="md-safe relative h-dvh w-full flex flex-col bg-bg overflow-hidden">
@@ -717,6 +721,8 @@ export default function EstimatorPage() {
       >
         {onPlanPage ? (
           <PlanPage estimate={estimate} settings={settings} />
+        ) : onVisitPage ? (
+          <VisitPage estimate={estimate} settings={settings} />
         ) : onAssembliesPage ? (
           <AssemblyPage
             assemblyId={openAssembly}
