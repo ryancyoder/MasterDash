@@ -239,17 +239,24 @@ The loads it implies stay out of `assemblyBuckets` for the matching reason from
 the other side: they are projected from the shapes on every read, so a pull
 that replays ops can never double-count them.
 
-**The tile itself lives in `quick_tile_menu` like every other.** The committed
-tree in `tree.ts` is only the offline floor — once Supabase serves a menu it
-replaces that tree wholesale, so a Plan row has to exist there or the tile is
-missing on any device that has been online:
+**The tile itself lives in the menu like every other.** The committed tree in
+`tree.ts` is only the offline floor — once Supabase serves a menu it replaces
+that tree wholesale, so a Plan row has to exist there or the tile is missing on
+any device that has been online. It is already inserted; this is the statement,
+for a rebuild or a second project:
 
 ```sql
-insert into quick_tile_menu
-  (tile_id, parent_id, label, kind, page, glyph, color, ordering)
+insert into quick_tiles
+  (tile_id, parent_id, label, sort_order, kind, page, glyph, color)
 values
-  ('group:plan', null, 'Plan', 'page', 'plan', '🗺️', '#0ea5e9', '0010');
+  ('group:plan', null, 'Plan', 10, 'page', 'plan', '🗺️', '#0ea5e9');
 ```
+
+Note the target: `quick_tile_menu` is a **view**, and the writable table beneath
+it is `quick_tiles`, whose ordering column is an integer `sort_order` rather
+than the view's derived `ordering` string. `quick_tiles_kind_shape` also
+requires a `page` row to carry a non-null `page`, which is what makes the tile
+open the take-off instead of an empty level.
 
 ### Offline, and saving
 
