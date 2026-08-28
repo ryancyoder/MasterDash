@@ -87,6 +87,15 @@ export interface PlanState {
   basemap: Basemap;
   /** Every corner on the plan, shared or not. */
   nodes: PlanNodes;
+  /**
+   * The Upright session whose elevation survey is drawn under the take-off.
+   *
+   * Per-estimate, and by SESSION rather than by property: only one session on
+   * the project carries a property_id, so a property-keyed join would find
+   * almost nothing. The label rides along so the card can name the visit
+   * instead of showing a uuid.
+   */
+  survey: { sessionId: string; label: string } | null;
   shapes: PlanShape[];
   /** Overlay ids switched off for this estimate. Absence means shown. */
   hiddenOverlayIds: string[];
@@ -97,6 +106,7 @@ export function emptyPlan(): PlanState {
     anchor: null,
     basemap: "satellite",
     nodes: {},
+    survey: null,
     shapes: [],
     hiddenOverlayIds: [],
   };

@@ -197,10 +197,21 @@ function planFrom(value: unknown): PlanState {
   if (!value || typeof value !== "object") return emptyPlan();
   const v = value as Record<string, unknown>;
   const { nodes, shapes } = topologyFrom(v);
+  const rawSurvey = (v.survey ?? null) as Record<string, unknown> | null;
   return {
     anchor: anchorFrom(v.anchor),
     basemap: v.basemap === "none" ? "none" : "satellite",
     nodes,
+    survey:
+      rawSurvey && typeof rawSurvey.sessionId === "string" && rawSurvey.sessionId
+        ? {
+            sessionId: rawSurvey.sessionId,
+            label:
+              typeof rawSurvey.label === "string" && rawSurvey.label
+                ? rawSurvey.label
+                : "Upright survey",
+          }
+        : null,
     shapes,
     hiddenOverlayIds: Array.isArray(v.hiddenOverlayIds)
       ? v.hiddenOverlayIds.filter((id): id is string => typeof id === "string")
@@ -433,6 +444,17 @@ export function setBasemap(basemap: Basemap) {
  * what anybody else sees of that yard — it is a preference about this screen,
  * not an edit to the layer.
  */
+/**
+ * Show one Upright session's elevation survey under the take-off, or none.
+ *
+ * A view preference on this estimate, not an edit to anything of Upright's.
+ * The survey is read-only here: it was measured on site and the estimator is
+ * laying beds out against it, not correcting it.
+ */
+export function setSurveySession(survey: { sessionId: string; label: string } | null) {
+  mutatePlan((plan) => ({ ...plan, survey }));
+}
+
 export function setOverlayHidden(overlayId: string, hidden: boolean) {
   mutatePlan((plan) => {
     const without = plan.hiddenOverlayIds.filter((id) => id !== overlayId);

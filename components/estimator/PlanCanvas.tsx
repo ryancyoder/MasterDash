@@ -18,6 +18,12 @@ import {
 } from "@/lib/estimator/geo";
 import type { Basemap, MapAnchor, MapOverlay } from "@/lib/estimator/mapLayers";
 import {
+  SURVEY_COLORS,
+  formatElevation,
+  type ElevationResult,
+  type SurveyKind,
+} from "@/lib/estimator/survey";
+import {
   measurementOf,
   pointsOf,
   sharedNodeIds,
@@ -164,6 +170,86 @@ function drawLabel(
   ctx.fillText(text, x, y);
 }
 
+export interface SurveyDot {
+  id: string;
+  kind: SurveyKind;
+  label: string;
+  at: LatLng;
+  placed: boolean;
+  hidden: boolean;
+  elevation: ElevationResult;
+}
+
+export interface SurveyRunLine {
+  id: string;
+  fromId: string;
+  toId: string;
+  runFt: number;
+  fallFt: number | null;
+  percent: number | null;
+  lowId: string | null;
+  flat: boolean;
+}
+
+export interface SurveyLayer {
+  points: SurveyDot[];
+  runs: SurveyRunLine[];
+}
+
+/**
+ * The survey glyphs, matching Upright's.
+ *
+ * An observation, an anchor and a target are different things and have to be
+ * tellable apart at a glance — deliberately not the same mark as a take-off
+ * corner, which is a different thing again. Legibility over bright turf comes
+ * from a drop shadow rather than from a box: a yard full of boxed labels is
+ * unreadable, which is a lesson Upright already paid for.
+ */
+function drawSurveyGlyph(
+  ctx: CanvasRenderingContext2D,
+  kind: SurveyKind,
+  x: number,
+  y: number,
+) {
+  const colour = SURVEY_COLORS[kind];
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.9)";
+  ctx.shadowBlur = 4;
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  if (kind === "observation") {
+    // Where you stood: a tripod over a spot.
+    ctx.arc(x, y - 4, 3.5, 0, Math.PI * 2);
+    ctx.moveTo(x, y - 0.5);
+    ctx.lineTo(x - 5, y + 7);
+    ctx.moveTo(x, y - 0.5);
+    ctx.lineTo(x + 5, y + 7);
+    ctx.moveTo(x, y - 0.5);
+    ctx.lineTo(x, y + 7);
+  } else if (kind === "anchor") {
+    // The shared datum: a benchmark triangle.
+    ctx.moveTo(x, y - 7);
+    ctx.lineTo(x + 6.5, y + 5);
+    ctx.lineTo(x - 6.5, y + 5);
+    ctx.closePath();
+  } else {
+    // What was sighted: the crosshair it was sighted through.
+    ctx.arc(x, y, 5.5, 0, Math.PI * 2);
+    ctx.moveTo(x - 9, y);
+    ctx.lineTo(x - 2, y);
+    ctx.moveTo(x + 2, y);
+    ctx.lineTo(x + 9, y);
+    ctx.moveTo(x, y - 9);
+    ctx.lineTo(x, y - 2);
+    ctx.moveTo(x, y + 2);
+    ctx.lineTo(x, y + 9);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** A round number of feet near the target width, for the scale bar. */
 function niceFeet(target: number): number {
   const pow = 10 ** Math.floor(Math.log10(target));
@@ -199,6 +285,7 @@ export default function PlanCanvas({
   onScalePointsChange,
   nodes,
   shapes,
+  survey,
   labelFor,
   tool,
   selectedShapeId,
@@ -239,6 +326,11 @@ export default function PlanCanvas({
   /** Every corner on the plan. Shapes hold ids into this; see plan.ts. */
   nodes: PlanNodes;
   shapes: PlanShape[];
+  /**
+   * Upright's elevation survey, already derived. Read-only here: it was
+   * measured on site and this screen lays beds out against it.
+   */
+  survey: SurveyLayer | null;
   /** The assembly name drawn under a shape's measurement, when it has one. */
   labelFor: (shape: PlanShape) => string | null;
   tool: PlanTool;
@@ -274,6 +366,8 @@ export default function PlanCanvas({
   const homedRef = useRef(false);
   /** The layer the view was last brought to, so it happens once per layer. */
   const focusedRef = useRef<string | null>(null);
+  /** The anchor the view is sitting on, so a change of property moves it. */
+  const anchoredRef = useRef<string | null>(null);
 
   // Live drag, held locally and committed on release. Writing every
   // pointermove to the estimate is a localStorage write and a full re-render
@@ -387,6 +481,9 @@ export default function PlanCanvas({
     for (const shape of shapes) {
       for (const v of pointsOf(shape, nodes)) pts.push(toWorld(v));
     }
+    for (const point of survey?.points ?? []) {
+      if (!point.hidden) pts.push(toWorld(point.at));
+    }
     for (const o of overlays) {
       const c = cornersWorld(georefCorners(o.georef));
       pts.push(c.tl, c.tr, c.bl, {
@@ -395,7 +492,7 @@ export default function PlanCanvas({
       });
     }
     return worldBounds(pts);
-  }, [shapes, nodes, overlays]);
+  }, [shapes, nodes, survey, overlays]);
 
   /**
    * Point the view at everything there is.
@@ -527,6 +624,9 @@ export default function PlanCanvas({
     [liveGeoref, aligning],
   );
 
+  /** Identifies the anchor's position, so a change of property is detectable. */
+  const anchorKey = anchor ? `${anchor.centre.lat},${anchor.centre.lng}` : null;
+
   /** Corners as they are right now — a live drag overrides the stored ones. */
   const liveNodes = useMemo(
     () => (dragNodes ? { ...nodes, ...dragNodes } : nodes),
@@ -555,6 +655,16 @@ export default function PlanCanvas({
     // under them, which is exactly what Upright's own map notes warn about.
     if (!homedRef.current && canvas.width && canvas.height) {
       homedRef.current = true;
+      placeView(canvas.width, canvas.height);
+      anchoredRef.current = anchorKey;
+    }
+
+    // Choosing a property moves the map. The first home happens before there
+    // is an anchor — the picker is on this screen — so without this the view
+    // stays on the fallback for ever and the yard is fifteen kilometres away.
+    // A deliberate act by the user, not a recentre out from under them.
+    if (anchorKey !== anchoredRef.current && canvas.width && canvas.height) {
+      anchoredRef.current = anchorKey;
       placeView(canvas.width, canvas.height);
     }
 
@@ -788,6 +898,119 @@ export default function PlanCanvas({
       }
     }
 
+    // 4. Upright's survey, over the take-off rather than under it: reading the
+    //    grade while laying beds out is the whole point of having it here, and
+    //    a filled polygon over a two-decimal number wins every time.
+    if (survey) {
+      const visible = survey.points.filter((p) => !p.hidden);
+      const at = new Map(visible.map((p) => [p.id, toCanvas(toWorld(p.at), t)]));
+
+      for (const run of survey.runs) {
+        const a = at.get(run.fromId);
+        const b = at.get(run.toId);
+        if (!a || !b) continue;
+        const measured = run.percent !== null;
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.9)";
+        ctx.shadowBlur = 4;
+        ctx.strokeStyle = measured ? "#7dd3fc" : "#64748b";
+        ctx.lineWidth = 2;
+        // A run to a point with no elevation yet draws dashed and says so,
+        // rather than inventing a grade.
+        ctx.setLineDash(measured ? [] : [6, 5]);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        if (measured) {
+          // The arrow points DOWNHILL — the way water runs, which is the
+          // reason to draw one on a landscape site at all. A run level within
+          // 0.05% gets a bar instead of an arrowhead.
+          const low = run.lowId ? at.get(run.lowId) : null;
+          const high = low === a ? b : a;
+          if (low && high) {
+            const ang = Math.atan2(low.y - high.y, low.x - high.x);
+            const mx = (a.x + b.x) / 2;
+            const my = (a.y + b.y) / 2;
+            ctx.beginPath();
+            if (run.flat) {
+              ctx.moveTo(mx - 6 * Math.sin(ang), my + 6 * Math.cos(ang));
+              ctx.lineTo(mx + 6 * Math.sin(ang), my - 6 * Math.cos(ang));
+            } else {
+              ctx.moveTo(mx + 8 * Math.cos(ang), my + 8 * Math.sin(ang));
+              ctx.lineTo(
+                mx + 8 * Math.cos(ang) - 9 * Math.cos(ang - 0.42),
+                my + 8 * Math.sin(ang) - 9 * Math.sin(ang - 0.42),
+              );
+              ctx.moveTo(mx + 8 * Math.cos(ang), my + 8 * Math.sin(ang));
+              ctx.lineTo(
+                mx + 8 * Math.cos(ang) - 9 * Math.cos(ang + 0.42),
+                my + 8 * Math.sin(ang) - 9 * Math.sin(ang + 0.42),
+              );
+            }
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+
+        drawLabel(
+          ctx,
+          measured
+            ? `${run.percent!.toFixed(1)}% · ${run.fallFt!.toFixed(2)}' over ${Math.round(run.runFt)}'`
+            : "not measured",
+          (a.x + b.x) / 2,
+          (a.y + b.y) / 2 - 14,
+          measured ? "#7dd3fc" : "#94a3b8",
+        );
+      }
+
+      // Survey points cluster: an observation, the anchor and the first target
+      // are often within a couple of feet of each other, and three labels on
+      // one spot are less readable than one. A label that would land on top of
+      // one already drawn is dropped — the glyph still shows, so nothing
+      // disappears, and zooming in separates them.
+      const claimed: { x0: number; y0: number; x1: number; y1: number }[] = [];
+      ctx.font = "bold 14px ui-sans-serif, system-ui, sans-serif";
+      const claim = (text: string, x: number, y: number) => {
+        const w = ctx.measureText(text).width / 2 + 3;
+        const box = { x0: x - w, y0: y - 9, x1: x + w, y1: y + 9 };
+        if (
+          claimed.some(
+            (c) => box.x0 < c.x1 && box.x1 > c.x0 && box.y0 < c.y1 && box.y1 > c.y0,
+          )
+        ) {
+          return false;
+        }
+        claimed.push(box);
+        return true;
+      };
+
+      const ordered = [
+        ...visible.filter((p) => p.kind === "anchor"),
+        ...visible.filter((p) => p.kind !== "anchor"),
+      ];
+      for (const point of ordered) {
+        const p = at.get(point.id);
+        if (!p) continue;
+        drawSurveyGlyph(ctx, point.kind, p.x, p.y);
+        // Glyph plus at most one line, per Upright: a yard full of labelled
+        // pins is unreadable. The name shows only while the point is
+        // unplaced, which is the one moment identity matters more than the
+        // number — after that the number is all anybody wants.
+        const text =
+          point.elevation.state === "unplaced"
+            ? `${point.label} · place pin`
+            : point.kind === "observation"
+              ? ""
+              : formatElevation(point.elevation);
+        if (text && claim(text, p.x, p.y + 19)) {
+          drawLabel(ctx, text, p.x, p.y + 19, SURVEY_COLORS[point.kind]);
+        }
+      }
+    }
+
     // The shape being drawn. No rubber band to the cursor — there is no cursor
     // on a touch screen, and a line chasing the last tap is noise.
     if (pending.length > 0) {
@@ -880,6 +1103,7 @@ export default function PlanCanvas({
     }
   }, [
     shapes,
+    survey,
     liveNodes,
     shapePoints,
     shared,
@@ -901,6 +1125,7 @@ export default function PlanCanvas({
     transformFor,
     placeView,
     focusOverlay,
+    anchorKey,
     bumpAssets,
     viewVersion,
   ]);

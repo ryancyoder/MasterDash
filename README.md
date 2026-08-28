@@ -31,6 +31,7 @@ now the whole app, at the root.
     lib/estimator/plan.ts     the map take-off: shapes and load maths
     lib/estimator/tiles.ts    the satellite basemap, as tiles
     lib/estimator/mapLayers.ts   georeferenced overlays, and the anchor
+    lib/estimator/survey.ts   Upright's elevations, derived not stored
     lib/estimator/planImage.ts  layer images, device first, uploaded later
     lib/estimator/visit.ts    the site visit: findings and their validation
     lib/server/upright.ts      the Upright session, read through its own API
@@ -374,6 +375,64 @@ it, the same way an empty job name never un-names this estimate.
 The loads it implies stay out of `assemblyBuckets` for the matching reason: they
 are projected from the shapes on every read, so a pull that replays ops can
 never double-count them.
+
+#### Upright's elevation survey, as a layer
+
+**SURVEY → Show** puts an Upright grade survey under the take-off: the anchor,
+the positions it was shot from, every target with its height above the anchor,
+and any slope runs. This is what the whole move to lat/lng was for — the survey
+was already in WGS84, so putting it on this map is a join rather than a
+conversion.
+
+Chosen **by session**, not by property, because that is what the data supports:
+48 sessions carry survey points and exactly one carries a `property_id`. The
+picker lists sessions that actually have points — deliberately not the same
+filter as the transcript picker, since of those 48 only 9 also have audio. Most
+grade work is shot without recording anything, and a single "is this session any
+use" test would have hidden 39 surveys.
+
+It is **read-only**. It was measured on site with the anchor cancellation that
+makes it mean anything; this screen lays beds out against it rather than
+correcting it. Drag a pin in Upright and the numbers here follow, because
+neither app stores an elevation.
+
+**Elevation is derived, never stored** — `upright_elevation_points` holds
+positions, `upright_elevation_shots` holds sightings, and the figure is worked
+out on every read. Two sightings from the *same* position cancel the device's
+own height, so a target is `d_t·tan(θ_t) − d_a·tan(θ_a)` and no instrument
+height is stored anywhere. An anchor sighting taken from one standing position
+can never be reused from another; a position without one contributes nothing.
+
+The two accuracy figures stay separate, as they do in Upright. **`repeat`**
+measures how steadily the iPad was held and nothing else — five shots at a pin
+dropped two feet off the mark will agree beautifully and all be wrong.
+**`agree`**, across observation positions, is the only figure that catches a
+mis-placed pin, which is why a single-observation point is labelled
+*unverified* rather than folded into one "confidence" number.
+
+Slope runs store only which two points they join; percent, fall and run are
+worked out at draw time. **The arrow points downhill**, the way water runs, and
+the percent is a magnitude because the arrow already carries the sign.
+
+Glyphs and colours are Upright's, unchanged: a green tripod for where you
+stood, a yellow benchmark triangle for the anchor, a red crosshair for a target.
+A thing that changed colour when it crossed into the estimator would break the
+one rule that makes a yard full of pins readable. Labels that would land on top
+of one already drawn are dropped — an observation, the anchor and the first
+target are often within a couple of feet, and three labels on one spot read as
+none. The glyph always stays, and zooming in separates them.
+
+**The maths is a port, and that is a debt.** It is defined by `elevationOf()`
+and `slopeOf()` in Upright's `index.html`; `lib/estimator/survey.ts` mirrors
+them. A second implementation can drift, and the honest fix is a derived
+endpoint on `upright-api` that both apps read — not done here because it would
+mean redeploying the Edge Function the field tool depends on. Until then the
+numbers are pinned by a test against a real three-observation survey off the
+project, so a drift fails an expectation instead of quietly mispricing a grade.
+The one deliberate difference: distances use MasterDash's WGS84 tangent plane
+where Upright uses haversine on a 6371 km sphere, which moves the answers by at
+most 0.019' on that survey — a quarter of an inch, against a field
+repeatability of ±0.1'.
 
 #### Anchoring, and the half of the properties with no coordinates
 

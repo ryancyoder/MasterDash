@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import PlanCanvas, { type PlanTool } from "@/components/estimator/PlanCanvas";
+import PlanCanvas, {
+  type PlanTool,
+  type SurveyLayer,
+} from "@/components/estimator/PlanCanvas";
 import {
   ASSEMBLY_MODELS,
   getAssembly,
@@ -38,9 +41,12 @@ import {
   deleteLayer,
   fetchLayers,
   fetchProperties,
+  fetchSurvey,
+  fetchSurveySessions,
   localOverlayUrl,
   saveLayer,
   type PropertyOption,
+  type UprightSurveySession,
 } from "@/lib/estimator/propertyLayers";
 import {
   addShape,
@@ -52,6 +58,7 @@ import {
   setBasemap,
   setOverlayHidden,
   setPlanAnchor,
+  setSurveySession,
   updateShape,
 } from "@/lib/estimator/store";
 import type { Estimate, EstimatorSettings } from "@/lib/estimator/types";
@@ -117,6 +124,8 @@ export default function PlanPage({
   /** Object URLs for overlays this device holds the bytes for. */
   const [localUrls, setLocalUrls] = useState<Record<string, string>>({});
   const [picking, setPicking] = useState(false);
+  const [survey, setSurvey] = useState<SurveyLayer | null>(null);
+  const [pickingSurvey, setPickingSurvey] = useState(false);
   /** The layer the gestures are acting on, if any. */
   const [aligningId, setAligningId] = useState<string | null>(null);
   /** Marking a dimension: layer gestures off, taps collect the two ends. */
@@ -187,6 +196,19 @@ export default function PlanPage({
       for (const url of minted) URL.revokeObjectURL(url);
     };
   }, [overlays]);
+
+  const surveySessionId = plan.survey?.sessionId ?? null;
+  useEffect(() => {
+    let live = true;
+    const load = surveySessionId ? fetchSurvey(surveySessionId) : Promise.resolve(null);
+    void load.then((result) => {
+      if (!live) return;
+      setSurvey(result ? ({ points: result.points, runs: result.runs } as SurveyLayer) : null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [surveySessionId]);
 
   /** Device copy first; the Storage URL is the fallback for a device that never held it. */
   const overlaySrc = useCallback(
@@ -507,6 +529,7 @@ export default function PlanPage({
           overlaySrc={overlaySrc}
           nodes={plan.nodes}
           shapes={plan.shapes}
+          survey={survey}
           labelFor={labelFor}
           tool={tool}
           selectedShapeId={selectedId}
@@ -532,6 +555,12 @@ export default function PlanPage({
             estimate={estimate}
             picking={picking}
             onPicking={setPicking}
+          />
+          <SurveyCard
+            chosen={plan.survey}
+            layer={survey}
+            picking={pickingSurvey}
+            onPicking={setPickingSurvey}
           />
           {overlays.length > 0 && (
             <LayersCard
@@ -752,6 +781,146 @@ function AnchorCard({
           }`}
         >
           {ANCHOR_BLURB[anchor.source]}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Upright's elevation survey, as a layer.
+ *
+ * Chosen by session rather than by property because that is what the data
+ * supports: 48 sessions carry survey points and one carries a property_id. The
+ * list is the sessions that actually have points — not the same set as the
+ * ones with audio, since most grade work is shot without recording anything.
+ *
+ * Read-only. It was measured on site with the anchor cancellation that makes
+ * it mean something; this screen lays beds out against it rather than
+ * correcting it.
+ */
+function SurveyCard({
+  chosen,
+  layer,
+  picking,
+  onPicking,
+}: {
+  chosen: { sessionId: string; label: string } | null;
+  layer: SurveyLayer | null;
+  picking: boolean;
+  onPicking: (v: boolean) => void;
+}) {
+  const [rows, setRows] = useState<UprightSurveySession[] | null>(null);
+
+  useEffect(() => {
+    if (!picking) return;
+    let live = true;
+    void fetchSurveySessions().then((r) => {
+      if (live) setRows(r);
+    });
+    return () => {
+      live = false;
+    };
+  }, [picking]);
+
+  if (picking) {
+    return (
+      <div className="rounded-2xl border border-accent bg-surface p-3">
+        <span className="text-[0.65rem] font-bold tracking-widest text-muted">
+          UPRIGHT SURVEY
+        </span>
+        <div className="mt-2 flex max-h-56 flex-col gap-1 overflow-y-auto md-scroll">
+          {rows === null ? (
+            <p className="text-xs text-muted">Looking…</p>
+          ) : rows.length === 0 ? (
+            <p className="text-xs leading-relaxed text-muted">
+              No sessions with survey points. Shoot grade in Upright and it
+              shows up here.
+            </p>
+          ) : (
+            rows.map((r) => {
+              const when = r.startedAt
+                ? new Date(r.startedAt).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })
+                : "undated";
+              return (
+                <button
+                  key={r.id}
+                  onClick={() => {
+                    setSurveySession({
+                      sessionId: r.id,
+                      label: r.propertyAddress
+                        ? `${r.propertyAddress} · ${when}`
+                        : `Survey · ${when}`,
+                    });
+                    onPicking(false);
+                  }}
+                  className="rounded-lg bg-surface2 px-2 py-2 text-left text-xs text-ink"
+                >
+                  <span className="block truncate font-bold">
+                    {r.propertyAddress ?? "Untagged session"}
+                  </span>
+                  <span className="text-[0.65rem] text-muted">
+                    {when} · {r.elevationPointCount} points
+                  </span>
+                </button>
+              );
+            })
+          )}
+        </div>
+        <button
+          onClick={() => onPicking(false)}
+          className="mt-2 w-full rounded-lg bg-surface2 py-2 text-xs font-bold text-muted"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  const measured =
+    layer?.points.filter((p) => p.elevation.state === "measured").length ?? 0;
+  const unplaced =
+    layer?.points.filter((p) => p.elevation.state === "unplaced").length ?? 0;
+
+  return (
+    <div className="rounded-2xl border border-edge bg-surface p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[0.65rem] font-bold tracking-widest text-muted">
+          SURVEY
+        </span>
+        <div className="flex items-center gap-2">
+          {chosen && (
+            <button
+              onClick={() => setSurveySession(null)}
+              className="text-xs font-bold text-[#fca5a5]"
+            >
+              Hide
+            </button>
+          )}
+          <button
+            onClick={() => onPicking(true)}
+            className="text-xs font-bold text-accent"
+          >
+            {chosen ? "Change" : "Show"}
+          </button>
+        </div>
+      </div>
+      <p className="mt-1 text-sm leading-snug text-ink">
+        {chosen?.label ?? "None"}
+      </p>
+      {chosen && layer && (
+        <p className="mt-0.5 text-[0.65rem] leading-tight text-muted">
+          {measured} measured
+          {layer.runs.length > 0 && ` · ${layer.runs.length} slope runs`}
+          {/* An unplaced pin is not a measurement, and saying so beats
+              quietly drawing it as though it were. */}
+          {unplaced > 0 && (
+            <span className="text-[#fbbf24]"> · {unplaced} still to place</span>
+          )}
         </p>
       )}
     </div>

@@ -110,22 +110,40 @@ function num(v: unknown): number {
 }
 
 /**
+ * What a caller wants a session to have before it is worth listing.
+ *
+ * Two different questions, and they do NOT pick out the same sessions. Of the
+ * 48 sessions carrying survey points on the project, 9 also have audio: most
+ * grade work is shot without recording anything. A single "is this session any
+ * use" filter would have hidden 39 surveys from the map.
+ */
+export type SessionNeed = "audio" | "survey";
+
+/**
  * Sessions worth offering, newest first.
  *
- * Sessions with no audio are dropped rather than listed as dead rows. They are
- * a real and common state — Upright's writes are fire-and-forget, so a visit
- * whose upload never landed still leaves a row — and Upright's own history
- * lists them because their photos and measures are still worth opening. Here
- * there is nothing to import from one, ever, so listing them would be a menu
- * of things that cannot be chosen.
+ * Sessions that cannot answer the question are dropped rather than listed as
+ * dead rows. A visit whose audio upload never landed is a real and common
+ * state — Upright's writes are fire-and-forget — and its own history lists
+ * those because the photos and measures are still worth opening. Here there
+ * would be nothing to take from one, so listing it would be a menu of things
+ * that cannot be chosen.
  */
-export function sessionsFrom(payload: unknown): UprightSession[] {
+export function sessionsFrom(
+  payload: unknown,
+  need: SessionNeed = "audio",
+): UprightSession[] {
   const rows =
     payload && typeof payload === "object" && Array.isArray((payload as { sessions?: unknown }).sessions)
       ? ((payload as { sessions: unknown[] }).sessions as RawSession[])
       : [];
   return rows
-    .filter((s) => typeof s.id === "string" && s.id && s.hasAudio === true)
+    .filter((s) => {
+      if (typeof s.id !== "string" || !s.id) return false;
+      return need === "survey"
+        ? num(s.elevationPointCount) > 0
+        : s.hasAudio === true;
+    })
     .map((s) => ({
       id: s.id as string,
       startedAt: str(s.startedAt),
