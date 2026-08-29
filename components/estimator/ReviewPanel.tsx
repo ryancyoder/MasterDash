@@ -21,6 +21,11 @@ import {
   type ReviewSession,
 } from "@/lib/estimator/review";
 import { fetchReviewSessions, type ReviewSessionRow } from "@/lib/estimator/reviewData";
+import {
+  eventLabel,
+  fetchPropertyPhotos,
+  type PhotoEvent,
+} from "@/lib/estimator/propertyPhotos";
 
 // The review half of the merged screen: the visit, replayed beside the plan.
 //
@@ -542,6 +547,7 @@ export function ReviewFilmstrip({
   onSeek,
   selectedId,
   onSelect,
+  propertyId,
 }: {
   session: ReviewSession | null;
   /** Grade frames from the survey shown on the canvas, if there is one. */
@@ -549,10 +555,64 @@ export function ReviewFilmstrip({
   audioMs: number;
   drift: number;
   onSeek: (ms: number) => void;
-  /** The picked frame, as `photo:<id>` or `grade:<id>`. */
+  /** The picked frame, as `photo:<id>`, `grade:<id>` or `event:<id>`. */
   selectedId: string | null;
-  onSelect: (key: string | null) => void;
+  /**
+   * The pick, and — for a property photograph — what it is.
+   *
+   * A session photo and a grade frame are both already in state upstairs, so
+   * the key alone is enough to find them. A property photograph is fetched
+   * here, on the first switch to it, so it travels with the pick rather than
+   * making the whole page hold a list nobody may ever look at.
+   */
+  onSelect: (
+    key: string | null,
+    frame?: { url: string; title: string; note: string | null },
+  ) => void;
+  /** The yard, for its own photographs. Null on an estimate with no job. */
+  propertyId: number | null;
 }) {
+  /*
+    TWO SOURCES, ONE RAIL.
+
+    "Visit" is this Upright session: one recording, its pins stamped against
+    its own audio. "Property" is the yard's whole photographic record, taken on
+    appointments and site visits over months — 754 of the 789 photographs on
+    the project, against a handful in Upright.
+
+    A SWITCH RATHER THAN ONE MERGED LIST, for now. They are held in different
+    tables with different ideas of time: a session photo has an offset into a
+    recording, an event photo has a wall-clock date and no recording to be an
+    offset into. Merging them today would mean inventing an order for the ones
+    that have none. The two are due to be integrated in the database, and both
+    halves already render as the same rail, so that is a merge rather than a
+    rewrite.
+  */
+  const [source, setSource] = useState<"visit" | "property">("visit");
+  const [events, setEvents] = useState<PhotoEvent[] | null>(null);
+
+  useEffect(() => {
+    if (source !== "property" || propertyId === null) return;
+    let live = true;
+    void fetchPropertyPhotos(propertyId).then((rows) => {
+      if (live) setEvents(rows);
+    });
+    return () => {
+      live = false;
+    };
+    // Fetched on the first switch, not on mount: most of the time nobody opens
+    // this, and it is a request per estimate that would never be looked at.
+  }, [source, propertyId]);
+
+  // A change of yard invalidates what was fetched. Cleared during render
+  // rather than in an effect, so one frame never shows another property's
+  // photographs under this one's heading.
+  const [lastProperty, setLastProperty] = useState(propertyId);
+  if (lastProperty !== propertyId) {
+    setLastProperty(propertyId);
+    setEvents(null);
+  }
+
   const live = useMemo(
     () => (session ? photoAt(session.photos, audioMs, drift) : null),
     [session, audioMs, drift],
@@ -561,10 +621,119 @@ export function ReviewFilmstrip({
     () => stripItems(session?.photos ?? [], frames, session?.startedAt ?? null),
     [session, frames],
   );
-  if (items.length === 0) return null;
+
+  // The switch only earns its place when there is somewhere to switch to.
+  const canSwitch = propertyId !== null;
+  if (items.length === 0 && !canSwitch) return null;
+
+  const switcher = canSwitch ? (
+    <div className="flex shrink-0 flex-col justify-center gap-1 border-r border-edge pr-2">
+      {([
+        ["visit", "Visit"],
+        ["property", "Property"],
+      ] as const).map(([value, label]) => (
+        <button
+          key={value}
+          onClick={() => setSource(value)}
+          aria-pressed={source === value}
+          className={`rounded-lg px-2 py-1 text-[0.65rem] font-bold ${
+            source === value ? "bg-accent text-black" : "bg-surface2 text-muted"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  ) : null;
+
+  if (source === "property") {
+    const groups = events ?? [];
+    return (
+      <div className="flex shrink-0 gap-2 overflow-x-auto border-t border-edge bg-bg px-3 py-2 md-scroll">
+        {switcher}
+        {events === null ? (
+          <p className="self-center px-2 text-xs text-muted">Looking…</p>
+        ) : groups.length === 0 ? (
+          <p className="self-center px-2 text-xs leading-relaxed text-muted">
+            No photographs of this yard yet. They arrive with the appointments
+            and site visits on the Sales Board.
+          </p>
+        ) : (
+          groups.map((e) => (
+            /* One box per visit, the way Upright's strip boxes a set: a
+               photograph is only worth much when you know which visit it is
+               from, and a flat rail of eighty frames says nothing about that. */
+            <div key={e.id} className="flex shrink-0 flex-col gap-1 rounded-xl border border-edge px-2 py-1">
+              <span className="truncate text-[0.6rem] font-bold tracking-wide text-muted">
+                {eventLabel(e)}
+                <span className="ml-1 opacity-60">{e.photos.length}</span>
+              </span>
+              <div className="flex gap-2">
+                {e.photos.map((ph) => {
+                  const key = `event:${ph.id}`;
+                  const isPicked = selectedId === key;
+                  return (
+                    <button
+                      key={ph.id}
+                      onClick={() =>
+                        onSelect(
+                          isPicked ? null : key,
+                          isPicked
+                            ? undefined
+                            : {
+                                url: ph.url,
+                                // The caption leads when somebody wrote one;
+                                // otherwise the visit is what identifies it.
+                                title: ph.caption?.trim() || eventLabel(e),
+                                note: ph.caption?.trim() ? eventLabel(e) : null,
+                              },
+                        )
+                      }
+                      title={ph.caption ?? eventLabel(e)}
+                      className={`relative h-16 w-[5.5rem] shrink-0 overflow-hidden rounded-lg border-2 ${
+                        isPicked ? "border-accent" : "border-transparent"
+                      }`}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={ph.url}
+                        alt={ph.caption ?? ""}
+                        loading="lazy"
+                        className="h-full w-full object-cover"
+                      />
+                      {ph.isVideo && (
+                        <span className="absolute left-1 top-1 rounded bg-black/70 px-1 text-[0.55rem] font-bold text-white">
+                          {/* Its thumbnail is the poster frame; the row is a clip. */}
+                          VIDEO
+                        </span>
+                      )}
+                      {ph.isOutlier && (
+                        <span
+                          title="Flagged as taken away from the site"
+                          className="absolute bottom-0 left-0 bg-[#f59e0b] px-1 text-[0.55rem] font-bold text-black"
+                        >
+                          off site
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex shrink-0 gap-2 overflow-x-auto border-t border-edge bg-bg px-3 py-2 md-scroll">
+      {switcher}
+      {items.length === 0 && (
+        <p className="self-center px-2 text-xs text-muted">
+          No photographs on this visit.
+        </p>
+      )}
       {items.map((item) => {
         // Only a photo pin can be "now": the playhead window is the same one
         // the map lights a pin with, and the two must never disagree.

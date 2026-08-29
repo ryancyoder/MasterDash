@@ -174,6 +174,18 @@ try {
     return r.fulfill({ contentType: "application/json",
       body: JSON.stringify({ ok: true, layers: [LAYER] }) });
   });
+  // Two visits to property 13, one typed and one not — which is the ordinary
+  // shape: 70 of the 120 events on file carry no event_type at all.
+  await page.route("**/api/property-photos**", (r) =>
+    r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, events: [
+      { id: "e1", name: null, type: "Appointment", startedAt: "2026-06-02T14:00:00Z", photos: [
+        { id: "p1", url: "https://cover.test/yard.png", caption: "Front bed", takenAt: "2026-06-02T14:05:00Z", isVideo: false, isOutlier: false },
+        { id: "p2", url: "https://cover.test/yard.png", caption: null, takenAt: "2026-06-02T14:09:00Z", isVideo: true, isOutlier: false },
+      ] },
+      { id: "e2", name: null, type: null, startedAt: "2026-03-11T14:00:00Z", photos: [
+        { id: "p3", url: "https://cover.test/yard.png", caption: null, takenAt: "2026-03-11T14:02:00Z", isVideo: false, isOutlier: true },
+      ] },
+    ] }) }));
   let imageUploads = 0;
   await page.route("**/api/plan-image**", (r) => {
     imageUploads++;
@@ -488,6 +500,54 @@ try {
   ok("unlocking puts the fit back", unlocked === null, JSON.stringify(unlocked));
   ok("and the button says so again",
     (await page.textContent('button[title="Fit the take-off"]')) === "Fit");
+
+  // 7c-iv. THE FILMSTRIP CAN SHOW THE YARD'S OWN PHOTOGRAPHS, BY VISIT.
+  //
+  // Upright has a handful; the Sales Board's appointments and site visits have
+  // 754 of the 789 photographs on the project. Two sources, one rail, and a
+  // switch rather than one merged list — see ReviewFilmstrip for why.
+  ok("the strip offers the property as a source",
+    (await page.locator('button:text-is("Property")').count()) === 1);
+  await page.click('button:text-is("Property")');
+  await page.waitForSelector("text=/Appointment/");
+  const strip = await page.evaluate(() => {
+    const rail = document.querySelector("div.md-scroll.overflow-x-auto");
+    const groups = [...(rail?.querySelectorAll("div.rounded-xl.border") ?? [])].map((g) => ({
+      label: g.querySelector("span")?.textContent ?? "",
+      frames: g.querySelectorAll("button").length,
+    }));
+    return { groups, badges: rail?.textContent ?? "" };
+  });
+  ok("the photographs are grouped by the visit they were taken on",
+    strip.groups.length === 2, JSON.stringify(strip.groups));
+  ok("newest visit first, and it names the day",
+    /Jun 2, 2026/.test(strip.groups[0].label), strip.groups[0].label);
+  ok("a typed visit says which, and an untyped one does not invent one",
+    /Appointment/.test(strip.groups[0].label) && !/Appointment/.test(strip.groups[1].label),
+    strip.groups.map((g) => g.label).join(" | "));
+  ok("each visit carries its own frames",
+    strip.groups[0].frames === 2 && strip.groups[1].frames === 1,
+    JSON.stringify(strip.groups));
+  ok("a video is badged, since its thumbnail is a poster and not the clip",
+    /VIDEO/.test(strip.badges));
+  ok("and one flagged off-site is marked rather than hidden",
+    /off site/.test(strip.badges));
+
+  // A pick has to show something. The property's photographs are fetched
+  // inside the strip, so the frame travels with the pick.
+  await page.locator('div.rounded-xl.border button').first().click();
+  await page.waitForTimeout(300);
+  const preview = await page.evaluate(() => {
+    const img = [...document.querySelectorAll("img")].find((i) => /cover\.test/.test(i.src));
+    return { shown: Boolean(img), body: document.body.textContent ?? "" };
+  });
+  ok("PICKING A PROPERTY PHOTOGRAPH PREVIEWS IT",
+    preview.shown && /Front bed/.test(preview.body), String(preview.shown));
+
+  await page.click('button:text-is("Visit")');
+  await page.waitForTimeout(200);
+  ok("and the switch goes back to the visit's own",
+    (await page.locator('div.rounded-xl.border').count()) === 0);
 
   // 7d. AND THE VISIT TAB LEADS WITH THIS YARD.
   //

@@ -192,7 +192,7 @@ tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 54 checks. A throw is reported as a failure rather than crashing
+is showing: 63 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
 
@@ -824,6 +824,62 @@ suite's reason to exist: `lib/estimator/visit.ts` had none). `test:board-ui`
 opens the picker and reads it: the yard heads the first group, only its own
 visits are under it, the toggle counts the rest, and a visit at another yard is
 still one tap away rather than filtered out of existence.
+
+#### The filmstrip's second source: the yard's own photographs
+
+The rail along the bottom showed one Upright session — its pins, stamped
+against its own audio. **Property** beside it shows the yard's whole
+photographic record instead, taken on the appointments and site visits that
+live on the Sales Board, **grouped by the visit it came from**.
+
+The difference in weight is the reason: Upright has 9 sessions and a handful of
+photographs; `deal_photos` has **789 rows, 754 of them hanging off an event**,
+with real yards carrying 20 to 53 pictures each.
+
+**THE JOIN GOES THROUGH THE EVENT, NOT THE PHOTO**, and that is measured rather
+than preferred. Of those 789 rows, 754 carry an `event_id` and 24 carry a
+`property_id` — and **not one carries both**. Reading `deal_photos.property_id`
+for this, which is the obvious thing to write, finds two dozen photographs and
+misses every one that matters. `events` is where the property lives (94 of 120
+events carry one), so the route reads the events first and fetches their photos
+by event id.
+
+**The type is missing more often than it is there.** 70 of the 120 events have
+no `event_type`, and they carry 461 of the photographs — the majority. So
+`eventLabel()` always leads with the **date**, which every event has and which
+is what tells two visits to the same yard apart, and adds the type only when
+the row actually says one. Labelling every group "Appointment" would be a guess
+printed as a fact on the commonest case. A name somebody typed beats the
+category, since it is the more specific of the two.
+
+**Newest visit first, but the photographs inside one stay in the order they
+were taken** — that order is the walk round the yard, and reversing it with the
+groups would shuffle away the one thing the sequence says. An undated frame
+goes last rather than first, where a `NaN` sorts by default and would open
+every group with the one picture nobody can place.
+
+**A video shows its poster, never the clip** — 15 of the rows are videos, and
+an `<img>` pointed at an mp4 is a broken thumbnail. **An off-site frame is
+marked, not hidden**: 42 rows are flagged `is_outlier`, and somebody took those
+pictures; the strip says so and leaves the judgement to a person.
+
+**A switch, not one merged list — for now.** The two sources are held in
+different tables with different ideas of time: a session photo has an offset
+into a recording, an event photo has a wall-clock date and no recording to be
+an offset into, so merging them today would mean inventing an order for the
+ones that have none. They are due to be integrated in the database; both halves
+already render as the same rail, so that will be a merge rather than a rewrite.
+
+**A pick has to show something.** In Review the preview column shows it. In
+Plan a session pin lights itself on the canvas — but an appointment photograph
+has no pin (its position is not read yet), so a picked one gets a preview card
+above the plan's cards rather than a tap that does nothing. It is fetched
+inside the strip, on the first switch to it, so the page never holds a list
+nobody may ask for; the frame travels with the pick.
+
+**Not done, and worth knowing:** `deal_photos` carries `latitude`/`longitude`,
+so these could be pins on the map like Upright's are. That is a bigger change
+than a rail and was not what was asked for.
 
 #### Locking the view
 

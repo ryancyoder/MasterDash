@@ -8,6 +8,12 @@
 // on screen is saying something different from the person you can hear.
 
 import {
+  eventLabel,
+  photoCount,
+  photoGroups,
+  type PhotoEvent,
+} from "../lib/estimator/propertyPhotos.ts";
+import {
   CLIP_SEEK_MIN_SEC,
   CLIP_SYNC_TOLERANCE_SEC,
   clipAt,
@@ -425,6 +431,73 @@ ok(
     "an unnamed failure still says something",
     playFailureMessage(null, null) === "The clip would not start.",
   );
+}
+
+{
+  console.log("\n--- the yard's own photographs, by the visit they came from ---");
+
+  const shot = (id: string, takenAt: string | null, over = {}) => ({
+    id, url: `https://x/${id}.jpg`, caption: null, takenAt,
+    isVideo: false, isOutlier: false, ...over,
+  });
+  const ev = (over: Partial<PhotoEvent> & { id: string }): PhotoEvent => ({
+    name: null, type: null, startedAt: null, photos: [], ...over,
+  });
+
+  // THE TYPE IS MISSING MORE OFTEN THAN NOT: 70 of the 120 events on the
+  // project have none, and they carry 461 of the photographs. The label has to
+  // survive that rather than calling everything an appointment.
+  ok("a visit with no type at all is still named by its day",
+    eventLabel(ev({ id: "1", startedAt: "2026-05-14T14:00:00Z" })) === "May 14, 2026",
+    eventLabel(ev({ id: "1", startedAt: "2026-05-14T14:00:00Z" })));
+  ok("a typed one says which",
+    /Appointment$/.test(eventLabel(ev({ id: "1", type: "Appointment", startedAt: "2026-05-14T14:00:00Z" }))));
+  // The name is what somebody typed, so it is the more specific of the two.
+  ok("and a named one leads with the name rather than the category",
+    eventLabel(ev({ id: "1", name: "Walkthrough", type: "Appointment", startedAt: "2026-05-14T14:00:00Z" }))
+      === "May 14, 2026 · Walkthrough");
+  ok("an undated visit says so rather than showing an Invalid Date",
+    eventLabel(ev({ id: "1" })) === "Undated");
+  ok("and a broken date is treated as no date",
+    eventLabel(ev({ id: "1", startedAt: "not a date" })) === "Undated");
+
+  const groups = photoGroups([
+    ev({ id: "old", startedAt: "2026-03-01T09:00:00Z",
+         photos: [shot("a", "2026-03-01T09:10:00Z"), shot("b", "2026-03-01T09:05:00Z")] }),
+    ev({ id: "new", startedAt: "2026-06-01T09:00:00Z", photos: [shot("c", "2026-06-01T09:00:00Z")] }),
+    // A visit nobody photographed is not a group with nothing in it.
+    ev({ id: "empty", startedAt: "2026-07-01T09:00:00Z" }),
+  ]);
+  ok("the newest visit leads, because that is why you opened this",
+    groups.map((g) => g.id).join(",") === "new,old", groups.map((g) => g.id).join(","));
+  // Within a visit the order is the walk round the yard, which means
+  // something; reversing it with the groups would shuffle it away.
+  ok("BUT THE PHOTOGRAPHS INSIDE ONE STAY IN THE ORDER THEY WERE TAKEN",
+    groups[1].photos.map((p) => p.id).join(",") === "b,a");
+  ok("a visit nobody photographed is not a group",
+    !groups.some((g) => g.id === "empty"));
+  ok("and the count is across all of them", photoCount(groups) === 3);
+
+  // NaN sorts to the front by default, which would open every group with the
+  // one frame nobody can place.
+  const undated = photoGroups([
+    ev({ id: "1", startedAt: "2026-03-01T09:00:00Z",
+         photos: [shot("x", null), shot("y", "2026-03-01T09:00:00Z")] }),
+  ]);
+  ok("an undated photograph goes last, not first",
+    undated[0].photos.map((p) => p.id).join(",") === "y,x");
+
+  ok("and undated visits fall to the end of the rail",
+    photoGroups([
+      ev({ id: "none", photos: [shot("a", null)] }),
+      ev({ id: "dated", startedAt: "2026-01-01T00:00:00Z", photos: [shot("b", null)] }),
+    ]).map((g) => g.id).join(",") === "dated,none");
+
+  // The input belongs to whoever fetched it.
+  const source = [ev({ id: "1", photos: [shot("b", "2026-01-02T00:00:00Z"), shot("a", "2026-01-01T00:00:00Z")] })];
+  photoGroups(source);
+  ok("grouping does not reorder its input",
+    source[0].photos.map((p) => p.id).join(",") === "b,a");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

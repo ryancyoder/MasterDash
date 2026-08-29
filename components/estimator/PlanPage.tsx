@@ -328,6 +328,17 @@ export default function PlanPage({
    * exactly as Upright's strip behaves. Two flags would eventually light both.
    */
   const [stripPick, setStripPick] = useState<string | null>(null);
+  /**
+   * The property photograph the strip picked, carried with the pick.
+   *
+   * The session's photos and the grade frames are already up here, so a key is
+   * enough to find them. The yard's own photographs are fetched inside the
+   * strip, on the first switch to them, so this page never holds a list it may
+   * never be asked for.
+   */
+  const [eventFrame, setEventFrame] = useState<
+    { url: string; title: string; note: string | null } | null
+  >(null);
   const selectedPhotoId = stripPick?.startsWith("photo:")
     ? stripPick.slice("photo:".length)
     : null;
@@ -442,6 +453,7 @@ export default function PlanPage({
   /** What the strip has picked, resolved to something the preview can show. */
   const pickedFrame = useMemo(() => {
     if (!stripPick) return null;
+    if (stripPick.startsWith("event:")) return eventFrame;
     if (selectedSurveyId) {
       const f = gradeFrames.find((g) => g.id === selectedSurveyId);
       return f ? { url: f.url, title: f.label, note: "Grade shot" } : null;
@@ -458,7 +470,7 @@ export default function PlanPage({
       title: tag ?? `Pin ${p.seq}`,
       note: tag ? [p.note, `Pin ${p.seq}`].filter(Boolean).join(" · ") : p.note,
     };
-  }, [stripPick, selectedSurveyId, selectedPhotoId, gradeFrames, visit]);
+  }, [stripPick, selectedSurveyId, selectedPhotoId, gradeFrames, visit, eventFrame]);
 
   /**
    * Attaching a photograph to the take-off it is a picture of.
@@ -1180,6 +1192,29 @@ export default function PlanPage({
             ))}
           </div>
 
+          {/*
+            A picked PROPERTY photograph, while the column is on the plan.
+
+            The strip is shared by both modes but the preview lives in Review,
+            and a session pin picked here still lights itself on the canvas —
+            so a pick has feedback either way. A photograph from an appointment
+            has no pin to light (its position is not read), so without this a
+            tap on one would do nothing visible at all. Additive: it sits above
+            the cards rather than moving them.
+          */}
+          {mode === "plan" && stripPick?.startsWith("event:") && eventFrame && (
+            <div className="shrink-0 overflow-hidden rounded-2xl border border-edge bg-surface">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={eventFrame.url} alt="" className="max-h-44 w-full object-cover" />
+              <div className="px-3 py-2">
+                <p className="text-xs font-bold text-ink">{eventFrame.title}</p>
+                {eventFrame.note && (
+                  <p className="text-[0.65rem] text-muted">{eventFrame.note}</p>
+                )}
+              </div>
+            </div>
+          )}
+
           {mode === "review" ? (
             <>
               <ReviewCard
@@ -1301,7 +1336,11 @@ export default function PlanPage({
         drift={drift}
         onSeek={seekMs}
         selectedId={stripPick}
-        onSelect={setStripPick}
+        onSelect={(key, frame) => {
+          setStripPick(key);
+          setEventFrame(frame ?? null);
+        }}
+        propertyId={estimate.propertyId}
       />
       <ReviewTransport
         session={visit}
