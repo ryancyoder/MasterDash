@@ -28,6 +28,15 @@ export interface BoardDeal {
   propertyAddress: string | null;
   lat: number | null;
   lng: number | null;
+  /**
+   * The property's cover photo, when somebody has chosen one.
+   *
+   * `properties.cover_photo_id` has existed all along and nothing in this app
+   * had ever read it. It is set on 8 of 102 properties, so it is a bonus on
+   * top of the satellite rather than a replacement for it -- see
+   * `tilePicture()` for the order and why.
+   */
+  coverUrl: string | null;
 }
 
 /** An estimate, as far as pairing cares. */
@@ -140,6 +149,37 @@ export function stageCounts(deals: BoardDeal[]): Record<BoardStage, number> {
   const out = Object.fromEntries(BOARD_STAGES.map((s) => [s, 0])) as Record<BoardStage, number>;
   for (const d of deals) if (isBoardStage(d.stage)) out[d.stage]++;
   return out;
+}
+
+/**
+ * What a job tile shows for a picture.
+ *
+ * A PHOTOGRAPH OF THE YARD BEATS A PICTURE OF ITS ROOF. Somebody walked up to
+ * that house and took that photo; recognising a job from it is instant in a
+ * way that recognising it from a satellite tile is not, and the satellite is
+ * additionally 1-2 years stale and can be feet out.
+ *
+ * But it is a chain, not a swap, because the coverage says so: 8 of 102
+ * properties carry a cover photo and 52 carry coordinates. Replacing the map
+ * with the photo would take the picture off 36 tiles to put one on 8. Two of
+ * the eight have no coordinates at all, so the photo is also the only way
+ * those get a picture rather than a glyph.
+ *
+ * `"none"` is the honest third case and the screen says WHICH problem it is —
+ * a property with no location on file, or a deal tied to no property at all.
+ *
+ * `photoBroken` is what the tile reports when the image will not load — a
+ * moved object, a bucket gone private, no signal. The chain then carries on
+ * from where it was rather than leaving a black square with a caption on it:
+ * a picture that fails is the same as not having one.
+ */
+export function tilePicture(
+  deal: BoardDeal,
+  photoBroken = false,
+): "photo" | "map" | "none" {
+  if (deal.coverUrl && !photoBroken) return "photo";
+  if (deal.lat !== null && deal.lng !== null) return "map";
+  return "none";
 }
 
 /** What a tile is called. The deal's own name, falling back to the address. */

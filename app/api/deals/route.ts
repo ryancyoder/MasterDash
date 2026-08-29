@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { configReport, rest, serverConfig } from "@/lib/server/supabase";
+import { configReport, publicObjectUrl, rest, serverConfig } from "@/lib/server/supabase";
 import { BOARD_STAGES, type BoardDeal, type BoardEstimate } from "@/lib/estimator/jobBoard";
 
 // The job board's data: live deals, where they are, and what has been priced.
@@ -26,10 +26,23 @@ interface DealRow {
   updated_at: string | null;
   created_at: string | null;
   property_id: number | null;
-  properties:
-    | { address: string | null; latitude: number | null; longitude: number | null }
-    | { address: string | null; latitude: number | null; longitude: number | null }[]
-    | null;
+  properties: PropertyRow | PropertyRow[] | null;
+}
+
+interface PropertyRow {
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  /** Chosen by hand in the Sales Board; null on most properties. */
+  cover_photo_id: number | null;
+}
+
+interface PhotoRow {
+  id: number;
+  storage_path: string;
+  media_type: string;
+  /** A video's still. `storage_path` on a video is the clip, not a picture. */
+  poster_path: string | null;
 }
 
 interface EstimateRow {
@@ -65,7 +78,8 @@ export async function GET() {
     rest(
       cfg,
       "Sales%20Board?select=id,deal_name,stage,value,proposal_number,next_action," +
-        "updated_at,created_at,property_id,properties(address,latitude,longitude)" +
+        "updated_at,created_at,property_id," +
+        "properties(address,latitude,longitude,cover_photo_id)" +
         `&stage=in.(${encodeURIComponent(stages)})&order=updated_at.desc&limit=300`,
     ),
     // Only what pairing needs. An estimate's lines are megabytes and the board
@@ -81,6 +95,45 @@ export async function GET() {
   }
 
   const rows = (await dealsRes.json()) as DealRow[];
+
+  /*
+    THE COVER PHOTOS, in a second read rather than a deeper embed.
+
+    PostgREST can follow `properties.cover_photo_id` into `deal_photos`, but
+    only by naming the foreign key constraint in the select — which puts a
+    schema detail nobody can see from here into a string, and breaks silently
+    if it is ever renamed. Two ids and one `in.()` is the same round trip and
+    reads as what it is.
+
+    It also fails independently: a photo read that does not answer leaves every
+    tile on the board with its satellite and its caption, exactly as before
+    this existed. Same rule as the estimate read below.
+  */
+  const coverIds = [
+    ...new Set(
+      rows
+        .map((r) => one(r.properties)?.cover_photo_id)
+        .filter((id): id is number => typeof id === "number"),
+    ),
+  ];
+  const covers = new Map<number, string>();
+  if (coverIds.length) {
+    const photoRes = await rest(
+      cfg,
+      `deal_photos?select=id,storage_path,media_type,poster_path&id=in.(${coverIds.join(",")})`,
+    );
+    if (photoRes.ok) {
+      for (const ph of (await photoRes.json()) as PhotoRow[]) {
+        // A video cover is its poster; the clip itself is not a picture, and
+        // an <img> pointed at an mp4 is a broken tile.
+        const path = ph.media_type === "video" ? ph.poster_path : ph.storage_path;
+        if (path) covers.set(ph.id, publicObjectUrl(cfg, "deal-photos", path));
+      }
+    } else {
+      console.warn("[deals] cover photos unavailable:", photoRes.status);
+    }
+  }
+
   const deals: BoardDeal[] = rows.map((r) => {
     const p = one(r.properties);
     return {
@@ -96,6 +149,8 @@ export async function GET() {
       propertyAddress: p?.address ?? null,
       lat: num(p?.latitude),
       lng: num(p?.longitude),
+      coverUrl:
+        p?.cover_photo_id != null ? (covers.get(p.cover_photo_id) ?? null) : null,
     };
   });
 

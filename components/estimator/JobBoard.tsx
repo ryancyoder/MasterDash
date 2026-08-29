@@ -5,6 +5,7 @@ import {
   BOARD_STAGES,
   boardTiles,
   stageCounts,
+  tilePicture,
   tileTitle,
   tileValue,
   type BoardDeal,
@@ -141,6 +142,14 @@ export default function JobBoard({
   const [estimates, setEstimates] = useState<BoardEstimate[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [stages, setStages] = useState<BoardStage[]>([]);
+  /**
+   * Deals whose cover photo would not load.
+   *
+   * Given the fire-and-forget world these photos come from, a row pointing at
+   * an object that has moved is a real prospect — and a tile that goes black
+   * is worse than one that never had a photograph.
+   */
+  const [brokenCovers, setBrokenCovers] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     let live = true;
@@ -240,7 +249,10 @@ export default function JobBoard({
             }}
           >
             {tiles.map((t) => {
-              const located = t.deal.lat !== null && t.deal.lng !== null;
+              // A photograph of the yard, then its roof from orbit, then a
+              // glyph. tilePicture() owns the order; see jobBoard.ts.
+              const picture = tilePicture(t.deal, brokenCovers.has(t.deal.id));
+              const located = picture !== "none";
               const isOpen =
                 (openDealId !== null && t.deal.id === openDealId) ||
                 (t.estimate !== null && t.estimate.clientId === openClientId);
@@ -282,9 +294,32 @@ export default function JobBoard({
                       : "inset 0 0 0 1px rgba(255,255,255,0.08)",
                   }}
                 >
-                  {located ? (
+                  {picture !== "none" ? (
                     <>
-                      <MapPreview lat={t.deal.lat!} lng={t.deal.lng!} />
+                      {picture === "photo" ? (
+                        /* Full-bleed, cropped from the centre: the grid's own
+                           treatment of a photographed tile, and a phone photo
+                           of a house is never square. */
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={t.deal.coverUrl ?? ""}
+                          alt=""
+                          draggable={false}
+                          loading="lazy"
+                          decoding="async"
+                          onError={() =>
+                            setBrokenCovers((set) => {
+                              if (set.has(t.deal.id)) return set;
+                              const next = new Set(set);
+                              next.add(t.deal.id);
+                              return next;
+                            })
+                          }
+                          className="absolute inset-0 h-full w-full object-cover"
+                        />
+                      ) : (
+                        <MapPreview lat={t.deal.lat!} lng={t.deal.lng!} />
+                      )}
                       {/* A scrim, not a dimmer — the same one the grid uses,
                           so a caption stays readable over bright turf. */}
                       <span className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-black/5" />

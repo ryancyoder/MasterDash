@@ -27,6 +27,12 @@ const chromium = pw.chromium ?? pw.default?.chromium;
 const PORT = 3111;
 const BASE = `http://127.0.0.1:${PORT}`;
 
+/** A 1x1 transparent PNG, standing in for a property's cover photograph. */
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = "") => {
   if (cond) { pass++; console.log(`PASS  ${name}`); }
@@ -36,18 +42,25 @@ const ok = (name, cond, detail = "") => {
 const DEALS = [
   { id: 1, name: "Kowalski regrade", stage: "Sent", value: 12400, proposalNumber: "P-1",
     nextAction: null, updatedAt: "2026-08-20T00:00:00Z", propertyId: 10,
-    propertyAddress: "12 Elm St", lat: 41.32, lng: -87.2 },
+    propertyAddress: "12 Elm St", lat: 41.32, lng: -87.2,
+    coverUrl: "https://cover.test/yard.png" },
   { id: 2, name: "Naples front bed", stage: "Sold", value: 900, proposalNumber: "P-2",
     nextAction: null, updatedAt: "2026-08-19T00:00:00Z", propertyId: 11,
-    propertyAddress: "2651 Naples Dr", lat: null, lng: null },
+    propertyAddress: "2651 Naples Dr", lat: null, lng: null, coverUrl: null },
   { id: 3, name: "Shop cleanup", stage: "Propose", value: null, proposalNumber: null,
     nextAction: null, updatedAt: "2026-08-18T00:00:00Z", propertyId: null,
-    propertyAddress: null, lat: null, lng: null },
+    propertyAddress: null, lat: null, lng: null, coverUrl: null },
   // Finished work is not on the board at all; the filter is server-side too,
   // so this checks the client does not let one through if one arrives.
   { id: 4, name: "Old job", stage: "Paid in Full", value: 100, proposalNumber: null,
     nextAction: null, updatedAt: "2026-08-25T00:00:00Z", propertyId: 12,
-    propertyAddress: "9 Old Rd", lat: 41.3, lng: -87.1 },
+    propertyAddress: "9 Old Rd", lat: 41.3, lng: -87.1, coverUrl: null },
+  // A cover photo whose object has moved. The tile must fall back to the
+  // satellite rather than going black under its caption.
+  { id: 5, name: "Broken cover", stage: "Sent", value: null, proposalNumber: null,
+    nextAction: null, updatedAt: "2026-08-17T00:00:00Z", propertyId: 13,
+    propertyAddress: "5 Gone Ln", lat: 41.31, lng: -87.15,
+    coverUrl: "https://cover.test/missing.png" },
 ];
 // One estimate, at the property of deal 1, which has exactly one deal — the
 // only shape the property fallback accepts.
@@ -114,6 +127,10 @@ try {
   await page.route("**/api/estimates**", (r) =>
     r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, estimates: [], estimate: null, ops: [] }) }));
   await page.route("**server.arcgisonline.com/**", (r) => r.abort());
+  // The one cover photo that exists, and the one that does not.
+  await page.route("**cover.test/yard.png", (r) =>
+    r.fulfill({ contentType: "image/png", body: PNG }));
+  await page.route("**cover.test/missing.png", (r) => r.fulfill({ status: 404, body: "" }));
 
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("main");
@@ -121,7 +138,7 @@ try {
   // 1. A tablet holding nothing lands on the board, not on the grid.
   await page.waitForSelector("main button[data-deal]", { timeout: 15000 });
   const first = await tileTexts(page);
-  ok("an untouched estimate lands on the board", first.length === 3, `${first.length} tiles`);
+  ok("an untouched estimate lands on the board", first.length === 4, `${first.length} tiles`);
   ok("and finished work is not on it", !first.join(" ").includes("Old job"));
   ok("the header says JOBS", (await page.textContent("header"))?.includes("JOBS") === true);
   ok("the totals pill is not on the board", (await page.$('a[href="/proposal"]')) === null);
@@ -140,6 +157,34 @@ try {
   ok("a deal with no property says that instead",
     first[2].includes("not tied to a property"), first[2]);
 
+  // 4b. THE PICTURE, and its fallback chain.
+  //
+  // A photograph of the yard beats its roof from orbit; a property without one
+  // falls back to the satellite; and a cover photo whose object has moved must
+  // fall back too rather than leaving a black square under a caption.
+  await page.waitForTimeout(900);
+  const pictures = await page.$$eval("main button[data-deal]", (els) =>
+    Object.fromEntries(els.map((el) => [
+      el.dataset.deal,
+      {
+        cover: el.querySelector('img[src*="cover.test"]')?.getAttribute("src") ?? null,
+        mapTiles: el.querySelectorAll('img[src*="World_Imagery"]').length,
+        glyph: /\u{1F3E1}/u.test(el.textContent ?? ""),
+      },
+    ])),
+  );
+  ok("a property with a cover photo shows it",
+    pictures["1"].cover === "https://cover.test/yard.png", JSON.stringify(pictures["1"]));
+  ok("AND NOT the satellite as well — one picture per tile",
+    pictures["1"].mapTiles === 0, `${pictures["1"].mapTiles} map tiles`);
+  ok("a located property without one still gets its satellite",
+    pictures["5"] !== undefined && pictures["3"].mapTiles === 0);
+  ok("a cover photo that 404s falls back to the satellite, not to black",
+    pictures["5"].cover === null && pictures["5"].mapTiles > 0,
+    JSON.stringify(pictures["5"]));
+  ok("and a tile with neither still shows the glyph",
+    pictures["3"].glyph === true, JSON.stringify(pictures["3"]));
+
   // 5. Filter chips. The first tap on one means "only this".
   await page.click("text=/^Sold 1$/");
   await page.waitForFunction(
@@ -152,8 +197,8 @@ try {
   ok("a second chip adds to it", (await tileTexts(page)).length === 2);
   await page.click("button:text-is('All')");
   await page.waitForFunction(
-    () => document.querySelectorAll("main button[data-deal]").length === 3);
-  ok("and All puts them back", (await tileTexts(page)).length === 3);
+    () => document.querySelectorAll("main button[data-deal]").length === 4);
+  ok("and All puts them back", (await tileTexts(page)).length === 4);
 
   // 5b. THE TILE IS THE GRID'S TILE.
   //
@@ -198,7 +243,7 @@ try {
   ok("and the totals pill is back", (await page.$('a[href="/proposal"]')) !== null);
   await page.click("button:text-is('Jobs')");
   await page.waitForSelector("main button[data-deal]");
-  ok("Jobs opens the board again", (await tileTexts(page)).length === 3);
+  ok("Jobs opens the board again", (await tileTexts(page)).length === 4);
 
   // 7. Opening a deal with no estimate names the estimate after it and leaves.
   await page.click("main button[data-deal] >> text=Shop cleanup");

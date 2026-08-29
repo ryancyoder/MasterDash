@@ -13,6 +13,7 @@ import {
   estimateForDeal,
   isBoardStage,
   isUnstarted,
+  tilePicture,
   stageCounts,
   tileTitle,
   tileValue,
@@ -30,7 +31,7 @@ function ok(name: string, cond: boolean, detail = "") {
 const deal = (over: Partial<BoardDeal> & { id: number }): BoardDeal => ({
   name: null, stage: "Sent", value: null, proposalNumber: null, nextAction: null,
   updatedAt: "2026-08-01T00:00:00Z", propertyId: null, propertyAddress: null,
-  lat: null, lng: null, ...over,
+  lat: null, lng: null, coverUrl: null, ...over,
 });
 const est = (over: Partial<BoardEstimate> & { clientId: string }): BoardEstimate => ({
   dealId: null, propertyId: null, jobName: null, updatedAt: null, ...over,
@@ -153,6 +154,28 @@ const est = (over: Partial<BoardEstimate> & { clientId: string }): BoardEstimate
   ok("a drawn shape counts as work", !isUnstarted({ ...blank, plan: { shapes: [{}] } }));
   ok("a transcript counts as work", !isUnstarted({ ...blank, visit: { transcript: "we walked the yard" } }));
   ok("and no visit at all is fine", isUnstarted({ ...blank, visit: undefined }));
+}
+
+{
+  console.log("\n--- what a tile shows for a picture ---");
+  const yard = { lat: 41.32, lng: -87.2 };
+  ok("a cover photo beats the satellite",
+    tilePicture(deal({ id: 1, ...yard, coverUrl: "https://x/cover.jpg" })) === "photo");
+  ok("the satellite is what a property without one falls back to",
+    tilePicture(deal({ id: 2, ...yard })) === "map");
+  // Two of the eight properties carrying a cover photo have no coordinates, so
+  // this is not only a nicer picture -- it is the only picture those get.
+  ok("and a cover photo shows even where there are no coordinates",
+    tilePicture(deal({ id: 3, coverUrl: "https://x/cover.jpg" })) === "photo");
+  ok("with nothing at all, the tile says so rather than drawing a grey box",
+    tilePicture(deal({ id: 4 })) === "none");
+  ok("half a coordinate is not a coordinate",
+    tilePicture(deal({ id: 5, lat: 41.32, lng: null })) === "none");
+  // A row pointing at a moved object is a real prospect here.
+  ok("a cover photo that will not load falls through to the satellite",
+    tilePicture(deal({ id: 6, ...yard, coverUrl: "https://x/gone.jpg" }), true) === "map");
+  ok("and to the glyph when there is no satellite either",
+    tilePicture(deal({ id: 7, coverUrl: "https://x/gone.jpg" }), true) === "none");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

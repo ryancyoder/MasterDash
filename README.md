@@ -59,7 +59,9 @@ tile and an assembly tile sit in the same frame on consecutive screens, and two
 tile shapes in one app reads as two apps. So:
 
 - **The yard is the tile**, full-bleed under the grid's own scrim, exactly as a
-  photographed cultivar is.
+  photographed cultivar is. What that picture is comes from `tilePicture()`:
+  the **property's cover photograph**, then the satellite, then a glyph — see
+  below.
 - **A yard with nowhere to show falls back to a centred glyph**, which is what
   the grid does with a tile that has no photo. A tile with nothing in it reads
   as broken; a glyph reads as a picture that has not arrived. The sub-line
@@ -74,6 +76,51 @@ tile shapes in one app reads as two apps. So:
   the address, so the line spends itself on what a tap actually does — open
   work already done, or start it. Both lines are `line-clamp-2`, since a deal
   name is typed by a person and the tile is 128px on a small screen.
+
+### The picture: cover photo, then satellite, then glyph
+
+**A photograph of the yard beats a picture of its roof.** Somebody walked up to
+that house and took that photo; recognising a job from it is instant in a way
+that recognising it from a satellite tile is not — and per Upright's own
+settled notes the satellite is 1–2 years stale and can be feet out of position.
+`properties.cover_photo_id` has existed all along and nothing in this app had
+ever read it.
+
+**It is a chain, not a swap, and the coverage is why.** Measured on the live
+data: **8 of 102 properties carry a cover photo** and 52 carry coordinates; of
+the 90 deals on the board, **8 have a cover** and 44 have a satellite.
+Replacing the map with the photo would take the picture off 36 tiles to put one
+on 8. So the photo wins where there is one and the map keeps the rest.
+
+**Two of those eight properties have no coordinates at all**, so the cover
+photo is not only the nicer picture there — it is the only picture those tiles
+get. That is the argument for reading the column even at 8%.
+
+**A cover photo that will not load falls through the chain**, to the satellite
+and then to the glyph. These photos come from the same fire-and-forget world
+Upright's do; a row pointing at an object that has moved is a real prospect,
+and a tile that goes black under its caption is worse than one that never had a
+photograph. `tilePicture(deal, photoBroken)` owns that, so the precedence is
+stated once and checked without a browser — and mutation-testing the guard
+turns checks red in both suites.
+
+**A video cover is its poster, never the clip.** `deal_photos` holds both, and
+an `<img>` pointed at an mp4 is a broken tile. None of the eight is a video
+today; the rule is in the route because the schema allows one.
+
+**The photos are read in a second request, not a deeper embed.** PostgREST can
+follow `properties.cover_photo_id` into `deal_photos`, but only by naming the
+foreign-key constraint in the select string — a schema detail invisible from
+the call site that would break silently if renamed. Two ids and one `in.()` is
+the same round trip and reads as what it is. It also fails independently: a
+photo read that does not answer leaves every tile with its satellite and its
+caption, exactly as before this existed.
+
+**Worth knowing before expecting much of it:** 19 more board deals have
+property photos with no cover chosen, and 29 more have photos on the deal
+itself. Widening to those would nearly quadruple the coverage — but it would
+put up a picture nobody chose, which could as easily be a close-up of a drain
+as a view of the house. Setting covers is the cheaper fix, and it is one field.
 
 **What is deliberately NOT borrowed is the drain.** The grid greys what is not
 on the job; every deal on this board is live, so draining the ones with no
@@ -138,14 +185,14 @@ in.
 **The pairing is not done in the route handler.** `/api/deals` returns deals
 and estimates as two lists and `jobBoard.ts` decides — that rule is a judgement
 about ambiguity rather than a query, and it is worth checking without a
-network. `npm run test:board` does exactly that, 37 checks.
+network. `npm run test:board` does exactly that, 44 checks.
 
 **And `npm run test:board-ui` reads the rendered screen**, because the pure
 tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 27 checks. A throw is reported as a failure rather than crashing
+is showing: 32 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
 
