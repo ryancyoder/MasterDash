@@ -59,7 +59,8 @@ import {
   type PlanShape,
   type ShapeKind,
 } from "@/lib/estimator/plan";
-import { shapesForPhoto } from "@/lib/estimator/photoLink";
+import { shapesForPhoto, type ShapePhotoLink } from "@/lib/estimator/photoLink";
+import { photoTakeoffLabel } from "@/lib/estimator/pendingTakeoff";
 import {
   addOverlayFromFile,
   deleteLayer,
@@ -127,12 +128,38 @@ const HINTS: Record<PlanTool, string> = {
   linear: "Tap along the run · Finish when done",
 };
 
+/**
+ * "Draw this bed" — an assembly and the photographs of the thing.
+ *
+ * The photographs are attached to the shape the moment it is finished, which
+ * is the whole point of arriving with one: the link that makes the take-off
+ * carry its own evidence is made without anybody being asked to make it.
+ */
+export interface PlanDrawIntent {
+  assemblyId: string;
+  /** area or linear, from the assembly's own unit of work. */
+  kind: ShapeKind;
+  label: string;
+  photos: ShapePhotoLink[];
+}
+
 export default function PlanPage({
   estimate,
   settings,
+  intent,
+  onIntentDone,
 }: {
   estimate: Estimate;
   settings: EstimatorSettings;
+  /**
+   * A take-off somebody tagged in the field and came here to draw.
+   *
+   * Carried in rather than read from the plan, because it is not part of the
+   * estimate — it is one navigation's worth of intent, and it dies the moment
+   * the shape is drawn or the tool is changed.
+   */
+  intent?: PlanDrawIntent | null;
+  onIntentDone?: () => void;
 }) {
   const { plan } = estimate;
   const [tool, setTool] = useState<PlanTool>("area");
@@ -383,7 +410,17 @@ export default function PlanPage({
       return f ? { url: f.url, title: f.label, note: "Grade shot" } : null;
     }
     const p = visit?.photos.find((x) => x.id === selectedPhotoId);
-    return p ? { url: p.url, title: `Pin ${p.seq}`, note: p.note } : null;
+    if (!p) return null;
+    // The tag leads where there is one: "Mulch Bed 2 · 1 of 3" says what the
+    // picture is OF, and "Pin 7" only says where it sits in the roll. Rebuilt
+    // from the rows rather than carried across, so it agrees with Upright's
+    // own label by construction rather than by both sides remembering to.
+    const tag = photoTakeoffLabel(p, visit!.photos);
+    return {
+      url: p.url,
+      title: tag ?? `Pin ${p.seq}`,
+      note: tag ? [p.note, `Pin ${p.seq}`].filter(Boolean).join(" · ") : p.note,
+    };
   }, [stripPick, selectedSurveyId, selectedPhotoId, gradeFrames, visit]);
 
   /**
@@ -410,6 +447,25 @@ export default function PlanPage({
   // the frame that armed it, so changing photo must disarm BEFORE anything
   // reads the flag. React's documented way to reset state when an input
   // changes, and the same pattern useReviewAudio uses to reset the playhead.
+  /*
+    Arm the tool for an intent, once, when it arrives.
+
+    Adjusted during render for the same reason the link arming is: the tool and
+    the assembly have to be set BEFORE anything reads them, and an effect would
+    render one frame with the intent present and the tool still on whatever it
+    was. React's documented way to reset state when an input changes.
+  */
+  const intentKey = intent ? `${intent.assemblyId}:${intent.label}` : null;
+  const [lastIntentKey, setLastIntentKey] = useState<string | null>(null);
+  if (intentKey && lastIntentKey !== intentKey) {
+    setLastIntentKey(intentKey);
+    setTool(intent!.kind);
+    setArmed((a) => ({ ...a, [intent!.kind]: intent!.assemblyId }));
+    setPending([]);
+  } else if (!intentKey && lastIntentKey !== null) {
+    setLastIntentKey(null);
+  }
+
   const armedFor = linkablePhoto?.photoId ?? null;
   const [lastArmedFor, setLastArmedFor] = useState(armedFor);
   if (lastArmedFor !== armedFor) {
@@ -620,10 +676,17 @@ export default function PlanPage({
   const finish = useCallback(() => {
     if (tool !== "area" && tool !== "linear") return;
     if (pending.length < (tool === "area" ? 3 : 2)) return;
-    addShape(tool, pending, armed[tool], smoothNew);
+    const shapeId = addShape(tool, pending, armed[tool], smoothNew);
+    // ARRIVING WITH AN INTENT MAKES THE LINK ITSELF. Somebody stood in the yard
+    // and said what this is; being asked to attach the photographs again, here,
+    // would be asking them to say it twice.
+    if (intent && armed[tool] === intent.assemblyId) {
+      for (const photo of intent.photos) linkPhotoToShape(shapeId, photo);
+      onIntentDone?.();
+    }
     setPending([]);
     setTool("select");
-  }, [tool, pending, armed, smoothNew]);
+  }, [tool, pending, armed, smoothNew, intent, onIntentDone]);
 
   const patchOverlay = useCallback(
     (id: string, patch: Partial<MapOverlay>) => {

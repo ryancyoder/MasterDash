@@ -15,6 +15,11 @@ import {
   type ShapePhotoLink,
 } from "../lib/estimator/photoLink.ts";
 import { topologyFrom, type PlanShape } from "../lib/estimator/plan.ts";
+import {
+  pendingTakeoffs,
+  photoTakeoffLabel,
+} from "../lib/estimator/pendingTakeoff.ts";
+import type { ReviewPhoto } from "../lib/estimator/review.ts";
 
 let pass = 0;
 let fail = 0;
@@ -154,6 +159,83 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     .shapes[0];
   ok("a shape stored without any reads as having none", none.photos === undefined,
      "every plan drawn before this feature is in exactly that state");
+}
+
+{
+  // Photographs a crew tagged in the field, grouped into things still to draw.
+  //
+  // The derivations here have to agree with Upright's, which computes the same
+  // labels from the same columns at the other end. Both are derived from the
+  // rows that exist, so neither can go stale -- but they can DISAGREE, and
+  // these checks are what pins the rules that stop that.
+  const shot = (
+    id: string, seq: number, over: Partial<ReviewPhoto> = {},
+  ): ReviewPhoto => ({
+    id, url: `${id}.jpg`, seq, offsetMs: seq * 1000, lat: 41.5, lng: -87.1,
+    note: null, headingDeg: null,
+    assemblyId: null, assemblyName: null, assemblyItem: null, ...over,
+  });
+  const mulch = (item: number) =>
+    ({ assemblyId: "mulch_bed_installation_standard", assemblyName: "Mulch Bed", assemblyItem: item });
+  const lawn = (item: number) =>
+    ({ assemblyId: "lawn_installation_standard", assemblyName: "Lawn", assemblyItem: item });
+
+  const visit = [
+    shot("a", 1, mulch(1)), shot("b", 2, mulch(1)), shot("c", 3, mulch(1)),
+    shot("d", 4, mulch(2)),
+    shot("e", 5, lawn(3)),
+    shot("f", 6),
+  ];
+
+  const pending = pendingTakeoffs(visit);
+  ok("untagged photographs are not things to draw", pending.length === 3,
+     "most photographs on any visit carry no tag at all");
+  ok("three photographs of one bed are ONE take-off", 
+     pending.find((t) => t.label === "Mulch Bed 1")?.photos.length === 3,
+     "the tile stays armed, so everything under it is the same bed");
+  ok("a second bed of the same type is its own take-off",
+     pending.some((t) => t.label === "Mulch Bed 2"));
+  ok("beds are numbered per assembly, not across the visit",
+     pending.find((t) => t.assemblyId === "lawn_installation_standard")?.label === "Lawn 1",
+     "the lawn was the third group started, but it is the first lawn");
+  ok("nothing is plotted with no shapes given", pending.every((t) => !t.plotted));
+
+  // The label Upright shows on the pin, rebuilt from the same rows.
+  ok("a bed with several photographs counts them",
+     photoTakeoffLabel(visit[1], visit) === "Mulch Bed 1 · 2 of 3");
+  ok("a bed with one photograph does not",
+     photoTakeoffLabel(visit[3], visit) === "Mulch Bed 2",
+     "'1 of 1' is noise");
+  ok("an untagged photograph has no label", photoTakeoffLabel(visit[5], visit) === null);
+
+  // DELETING RENUMBERS. This is the whole reason none of it is stored.
+  const minusFirstBed = visit.filter((p) => p.assemblyItem !== 1);
+  ok("deleting a bed moves the ones after it up",
+     pendingTakeoffs(minusFirstBed).some((t) => t.label === "Mulch Bed 1"),
+     "bed 2 becomes bed 1 rather than leaving the list starting at 2");
+  const minusOneShot = visit.filter((p) => p.id !== "b");
+  ok("deleting one photograph of a bed recounts the rest",
+     photoTakeoffLabel(minusOneShot[1], minusOneShot) === "Mulch Bed 1 · 2 of 2");
+
+  // Plotted means somebody has drawn it, and a placeholder for it would be a
+  // job asking to be done twice.
+  const drawn = withPhotoLink(shape("bed"), {
+    sessionId: "s1", photoId: "c", url: "c.jpg", label: "Pin 3",
+  });
+  const after = pendingTakeoffs(visit, [drawn]);
+  ok("attaching ANY of a bed's photographs marks it plotted",
+     after.find((t) => t.label === "Mulch Bed 1")?.plotted === true,
+     "you draw the bed once, from whichever photograph you were looking at");
+  ok("and leaves the others outstanding",
+     after.filter((t) => !t.plotted).length === 2);
+
+  // A half-written tag is not a tag. Upright writes all three columns together,
+  // but the row is nullable and an older photograph has none of them.
+  const broken = [
+    shot("x", 1, { assemblyId: "mulch_bed_installation_standard", assemblyName: null, assemblyItem: 1 }),
+    shot("y", 2, { assemblyId: "mulch_bed_installation_standard", assemblyName: "Mulch Bed", assemblyItem: null }),
+  ];
+  ok("a tag missing its name or its group key is ignored", pendingTakeoffs(broken).length === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

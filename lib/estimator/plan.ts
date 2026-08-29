@@ -323,6 +323,18 @@ export function assembliesForShape(
 }
 
 /**
+ * The kind of shape an assembly is measured by.
+ *
+ * The reverse of unitForShape(), and it is what lets a take-off tagged in the
+ * field arrive here already knowing whether it is a bed or a run. An assembly
+ * measured in tons (outcropping) has no shape of its own; it is drawn as an
+ * area, which is the shape somebody pacing out a rock garden would draw.
+ */
+export function shapeKindFor(unitOfWork: string): ShapeKind {
+  return unitOfWork === "ln_ft" ? "linear" : "area";
+}
+
+/**
  * Loads a measurement buys.
  *
  * Rounded UP, and never below one for a shape that measures anything at all:

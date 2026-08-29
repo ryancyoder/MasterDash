@@ -501,12 +501,20 @@ export function setOverlayHidden(overlayId: string, hidden: boolean) {
  * joined to the lawn beside it — at the tap, when the person drawing could see
  * what they were aiming at, rather than by a proximity guess made afterwards.
  */
+/**
+ * Returns the new shape's id, so a caller can act on what it just drew.
+ *
+ * The id is minted here rather than after the fact, because "the shape that
+ * was added last" is not a safe way to find it: another device's save can land
+ * between the two, and this store is shared.
+ */
 export function addShape(
   type: ShapeKind,
   points: PendingPoint[],
   assemblyId: string | null,
   smooth = false,
-) {
+): string {
+  const shapeId = planId("shape");
   mutatePlan((plan) => {
     const nodes = { ...plan.nodes };
     const vertices: string[] = [];
@@ -527,7 +535,7 @@ export function addShape(
       shapes: [
         ...plan.shapes,
         {
-          id: planId("shape"),
+          id: shapeId,
           type,
           vertices,
           ...(smooth ? { smoothVertices: [...vertices] } : {}),
@@ -537,6 +545,7 @@ export function addShape(
       ],
     };
   });
+  return shapeId;
 }
 
 /**

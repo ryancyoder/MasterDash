@@ -113,6 +113,11 @@ export async function GET(request: Request) {
         lng: finite(r.lng),
         note: str(r.note),
         headingDeg: finite(r.heading_deg),
+        // The take-off tag. Nullable throughout: tagging is a convenience laid
+        // over photo pins, and most photographs ever taken carry none.
+        assemblyId: str(r.assembly_id),
+        assemblyName: str(r.assembly_name),
+        assemblyItem: finite(r.assembly_item),
       };
     })
     .filter((p): p is ReviewPhoto => p !== null)

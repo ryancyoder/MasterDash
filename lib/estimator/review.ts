@@ -56,6 +56,16 @@ export interface ReviewPhoto {
   note: string | null;
   /** Which way the camera pointed. Evidence, never an input to a measurement. */
   headingDeg: number | null;
+  /**
+   * What the crew said this is a picture OF, tagged at the shutter in Upright.
+   *
+   * `assemblyItem` is the grouping key — which mulch bed of that visit — and
+   * several photographs of one bed share it. Nothing derived from it is
+   * stored: see `pendingTakeoff.ts`.
+   */
+  assemblyId: string | null;
+  assemblyName: string | null;
+  assemblyItem: number | null;
 }
 
 /** One utterance, as AssemblyAI separated it. */

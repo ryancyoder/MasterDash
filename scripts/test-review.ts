@@ -116,11 +116,15 @@ ok("before the first clip finds nothing", clipAt(clips, 1_000, 1) === null);
 
 // --- photos ---------------------------------------------------------------
 
+// Untagged, which is what almost every photograph ever taken is. The tag is
+// exercised in test-plan.ts, where the grouping lives.
+const untagged = { assemblyId: null, assemblyName: null, assemblyItem: null };
+
 const photos: ReviewPhoto[] = [
-  { id: "p1", url: "1.jpg", seq: 1, offsetMs: 5_000, lat: 41.5, lng: -87.1, note: null, headingDeg: null },
-  { id: "p2", url: "2.jpg", seq: 2, offsetMs: 6_200, lat: null, lng: null, note: null, headingDeg: null },
-  { id: "p3", url: "3.jpg", seq: 3, offsetMs: null, lat: 41.5, lng: -87.1, note: null, headingDeg: null },
-  { id: "p4", url: "4.jpg", seq: 4, offsetMs: 90_000, lat: 41.6, lng: -87.2, note: null, headingDeg: null },
+  { id: "p1", url: "1.jpg", seq: 1, offsetMs: 5_000, lat: 41.5, lng: -87.1, note: null, headingDeg: null, ...untagged },
+  { id: "p2", url: "2.jpg", seq: 2, offsetMs: 6_200, lat: null, lng: null, note: null, headingDeg: null, ...untagged },
+  { id: "p3", url: "3.jpg", seq: 3, offsetMs: null, lat: 41.5, lng: -87.1, note: null, headingDeg: null, ...untagged },
+  { id: "p4", url: "4.jpg", seq: 4, offsetMs: 90_000, lat: 41.6, lng: -87.2, note: null, headingDeg: null, ...untagged },
 ];
 
 ok("the nearest photo inside the window wins", photoAt(photos, 6_000, 1)?.id === "p2");
