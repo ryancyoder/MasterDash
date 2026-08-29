@@ -192,7 +192,7 @@ tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 32 checks. A throw is reported as a failure rather than crashing
+is showing: 37 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
 
@@ -764,6 +764,39 @@ sometimes a guess, and a take-off is worth what its anchor was worth. The card
 says which. `quick_estimates.property_id` has existed unused since the table was
 created; this is what finally fills it in.
 
+**The card STATES the yard; it no longer asks for it.** The property is settled
+two screens up, when the job is opened off the board — 86 of the 90 live deals
+carry a `property_id`, and the board has already read every one of their
+coordinates to draw the tile previews, so `openJob` sets the anchor from what
+the tile is already holding. No extra request, and nothing to pick. What used
+to greet a take-off was a PROPERTY card reading *Not chosen* with a **Choose**
+button on it: a question whose answer the board was holding all along.
+
+**Whoever chose it owns it.** With a deal attached the card names the job as
+the source and sends a correction back there. The picker survives for the one
+case nothing upstream covers — an estimate with no deal, which is what *Skip to
+estimator* and the 4 propertyless deals produce. There the plan really is the
+only place a yard can be named, and offering nothing would be a dead end.
+
+**`shouldAdoptAnchor()` is what keeps it from being destructive.** Nothing, and
+an anchor that never found the yard, are both improved by a property record. A
+**hand-placed pin or a survey anchor is not**: those were put there against an
+aligned plan, which is a better location than half the property rows on this
+project, and a geocoded street address must never quietly move a take-off off
+the beds it was drawn on. A *different* property replaces regardless — that is
+a different yard, and showing the wrong one is worse than losing a placement.
+
+**A property with no coordinates still attaches the estimate to the yard**; the
+map just has nowhere to open, which is what `fallback` says. 46 of those 86 are
+in that state, so it is the common case rather than an edge one.
+
+Both halves are pinned and mutation-tested: `test:plan` checks the two rules
+without a browser, and `test:board-ui` opens a job and reads the rendered card
+— that the plan already knows the yard, that it offers nothing to choose, and
+that it says where the answer came from. Breaking either half turns the run
+red, and the mutant's card reads exactly what this replaced: *PROPERTY ·
+Choose · Not chosen*.
+
 #### Placing a layer, and scaling it off the drawing
 
 **Place** on a layer puts the canvas into an alignment mode: one finger slides
@@ -1018,7 +1051,7 @@ npm run build
 npx eslint .
 
 npm run test:review     # the review screen's pure logic
-npm run test:plan       # the take-off's geometry
+npm run test:plan       # the take-off's geometry and the map anchor
 npm run test:board      # the job board's pairing and filtering
 npm run test:board-ui   # the job board in a real browser (needs playwright)
 ```

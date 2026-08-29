@@ -126,6 +126,10 @@ try {
   // committed tree when the catalog cannot be read, which is the point.
   await page.route("**/api/estimates**", (r) =>
     r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, estimates: [], estimate: null, ops: [] }) }));
+  await page.route("**/api/property-layers**", (r) =>
+    r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, layers: [] }) }));
+  await page.route("**/api/upright/**", (r) =>
+    r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, sessions: [], points: [] }) }));
   await page.route("**server.arcgisonline.com/**", (r) => r.abort());
   // The one cover photo that exists, and the one that does not.
   await page.route("**cover.test/yard.png", (r) =>
@@ -274,6 +278,42 @@ try {
   ok("while the others are not", other === "false", String(other));
   await page.click("text=Skip to estimator");
   await page.waitForSelector("text=Shop cleanup");
+
+  // 7c. AND THE PLAN VIEW NO LONGER ASKS WHICH YARD.
+  //
+  // The property is settled two screens up, when the job is opened. What used
+  // to greet a take-off was a PROPERTY card reading "Not chosen" with a
+  // Choose button on it — a question whose answer the board already held.
+  await page.click("button:text-is('Jobs')");
+  await page.waitForSelector("main button[data-deal]");
+  await page.click('main button[data-deal="5"]');
+  await page.waitForFunction(() => !document.querySelector("main button[data-deal]"));
+  // By its own tile, not by the word: "Plan" also matches Plants and Plant
+  // Allowance, and clicking those unfolds a folder instead of navigating. And
+  // it has to be a REAL click — the tiles commit on pointerup, so a synthetic
+  // el.click() dispatches an event nothing is listening for.
+  const planIndex = await page.$$eval("main button.aspect-square", (els) =>
+    els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
+  ok("the grid has a Plan tile to open", planIndex >= 0, String(planIndex));
+  await page.locator("main button.aspect-square").nth(planIndex).click();
+  await page.waitForSelector("text=PROPERTY", { timeout: 15000 });
+  const card = await page.evaluate(() => {
+    const label = [...document.querySelectorAll("span")]
+      .find((el) => el.textContent === "PROPERTY");
+    const box = label?.closest("div.rounded-2xl");
+    return {
+      text: box?.textContent ?? "",
+      buttons: [...(box?.querySelectorAll("button") ?? [])].map((b) => b.textContent ?? ""),
+    };
+  });
+  ok("the plan opens already knowing the yard",
+    /5 Gone Ln/.test(card.text), card.text);
+  ok("AND OFFERS NOTHING TO CHOOSE — the question was answered upstream",
+    !card.buttons.some((b) => /choose|change/i.test(b)), card.buttons.join("|"));
+  ok("it says where the answer came from",
+    /from the job/i.test(card.text), card.text);
+  ok("and that the anchor is the property's own record, not a guess",
+    /from the property record/i.test(card.text), card.text);
 
   // 8. Having chosen, a reload does NOT bounce back to the board.
   await page.reload({ waitUntil: "domcontentloaded" });

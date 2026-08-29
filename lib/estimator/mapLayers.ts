@@ -103,6 +103,56 @@ export function anchorIsReal(anchor: MapAnchor | null): boolean {
   return anchor !== null && anchor.source !== "fallback";
 }
 
+/**
+ * The anchor a property gives, for a property already chosen upstream.
+ *
+ * THE YARD IS NOT A QUESTION THE PLAN VIEW ASKS ANY MORE. It is settled when
+ * the job is opened off the board — 86 of the 90 live deals carry a
+ * `property_id`, and the board has already read every one of their coordinates
+ * to draw the previews — so asking again on the plan is asking a question that
+ * was answered two screens ago.
+ *
+ * A property with no coordinates still anchors the ESTIMATE to the right yard;
+ * the map just has nowhere to open, which is what `fallback` says. 46 of those
+ * 86 are in that state, so it is the common case rather than an edge one.
+ */
+export function anchorFromProperty(
+  propertyId: number,
+  address: string | null,
+  lat: number | null,
+  lng: number | null,
+  fallbackCentre: LatLng,
+): MapAnchor {
+  const located = typeof lat === "number" && typeof lng === "number";
+  return {
+    propertyId,
+    label: address,
+    centre: located ? { lat: lat!, lng: lng! } : fallbackCentre,
+    source: located ? "property" : "fallback",
+  };
+}
+
+/**
+ * Whether an anchor arriving from upstream should replace what is there.
+ *
+ * Nothing, and an anchor that never found the yard, are both improved by a
+ * property record. A HAND-PLACED PIN OR A SURVEY IS NOT: somebody put those
+ * there against an aligned plan, which is a better location than half the
+ * property rows on the project, and a geocoded street address must never
+ * quietly move a take-off off the beds it was drawn on.
+ *
+ * A different property replaces regardless — that is a different yard, and an
+ * estimate showing the wrong one is worse than losing a placement.
+ */
+export function shouldAdoptAnchor(
+  existing: MapAnchor | null,
+  propertyId: number,
+): boolean {
+  if (existing === null) return true;
+  if (existing.propertyId !== null && existing.propertyId !== propertyId) return true;
+  return existing.source === "fallback";
+}
+
 // --- Validation -----------------------------------------------------------
 // Overlays come back from the network, where the row could have been written
 // by the other app or by hand in the dashboard. A width of zero or a NaN

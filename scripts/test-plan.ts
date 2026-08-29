@@ -20,6 +20,11 @@ import {
   photoTakeoffLabel,
 } from "../lib/estimator/pendingTakeoff.ts";
 import type { ReviewPhoto } from "../lib/estimator/review.ts";
+import {
+  anchorFromProperty,
+  shouldAdoptAnchor,
+  type MapAnchor,
+} from "../lib/estimator/mapLayers.ts";
 
 let pass = 0;
 let fail = 0;
@@ -236,6 +241,44 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     shot("y", 2, { assemblyId: "mulch_bed_installation_standard", assemblyName: "Mulch Bed", assemblyItem: null }),
   ];
   ok("a tag missing its name or its group key is ignored", pendingTakeoffs(broken).length === 0);
+}
+
+{
+  console.log("\n--- the yard comes from the job, not from a picker ---");
+  const HEBRON = { lat: 41.32, lng: -87.2 };
+
+  const located = anchorFromProperty(35, "2658 Naples Dr", 41.46, -87.06, HEBRON);
+  ok("a property with coordinates anchors the map on them",
+    located.centre.lat === 41.46 && located.centre.lng === -87.06 && located.source === "property");
+  ok("and the card can name the yard rather than its row id",
+    located.label === "2658 Naples Dr" && located.propertyId === 35);
+
+  // 46 of the 86 board deals that carry a property are in this state, so it is
+  // the common case rather than an edge one.
+  const unlocated = anchorFromProperty(77, "590 N 50 W", null, null, HEBRON);
+  ok("a property with no coordinates still attaches the ESTIMATE to the yard",
+    unlocated.propertyId === 77 && unlocated.label === "590 N 50 W");
+  ok("but says the map has nowhere to open, rather than pretending",
+    unlocated.source === "fallback" && unlocated.centre === HEBRON);
+
+  const placed: MapAnchor = { propertyId: 35, label: "x", centre: HEBRON, source: "placed" };
+  const survey: MapAnchor = { propertyId: null, label: null, centre: HEBRON, source: "upright" };
+  const guess: MapAnchor = { propertyId: 35, label: "x", centre: HEBRON, source: "fallback" };
+  const real: MapAnchor = { propertyId: 35, label: "x", centre: HEBRON, source: "property" };
+
+  ok("nothing is improved by the property record", shouldAdoptAnchor(null, 35));
+  ok("and so is an anchor that never found the yard", shouldAdoptAnchor(guess, 35));
+  // A geocoded street address must never quietly move a take-off off the beds
+  // it was drawn on.
+  ok("A HAND-PLACED PIN IS NOT REPLACED", !shouldAdoptAnchor(placed, 35));
+  ok("nor is a survey anchor, which is the better location of the two",
+    !shouldAdoptAnchor(survey, 35));
+  ok("nor an anchor already on that property's own record",
+    !shouldAdoptAnchor(real, 35));
+  // A different yard is a different job; showing the wrong one is worse than
+  // losing a placement.
+  ok("but a DIFFERENT property replaces even a hand-placed pin",
+    shouldAdoptAnchor(placed, 46));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

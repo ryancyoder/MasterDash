@@ -20,12 +20,20 @@ import {
   adoptEstimate,
   attachDeal,
   clearEstimate,
+  getSnapshot,
   setJobName,
+  setPlanAnchor,
   tap,
   untap,
   updateSettings,
 } from "@/lib/estimator/store";
 import { fetchEstimate, flushAutosave } from "@/lib/estimator/sync";
+import {
+  anchorFromProperty,
+  shouldAdoptAnchor,
+  type MapAnchor,
+} from "@/lib/estimator/mapLayers";
+import { FALLBACK_CENTRE } from "@/lib/estimator/geo";
 import { isUnstarted, tileTitle, type BoardTile } from "@/lib/estimator/jobBoard";
 import { applyOrder, isArrangeable, levelKey } from "@/lib/estimator/tileOrder";
 import {
@@ -369,6 +377,34 @@ export default function EstimatorPage() {
   );
 
   /**
+   * Settle the yard while the job is being opened.
+   *
+   * THE PLAN VIEW USED TO ASK FOR THE PROPERTY, and by the time you reached it
+   * the answer had been chosen two screens ago: 86 of the 90 live deals carry
+   * a `property_id`, and the board has already read every one of their
+   * coordinates to draw the tile previews. So the anchor is set here, from
+   * what the tile is already holding — no extra request, and nothing to pick.
+   *
+   * `shouldAdoptAnchor()` is what keeps it from being destructive: a
+   * hand-placed pin or a survey anchor is a better location than half the
+   * property rows on this project, and a geocoded street address must not
+   * quietly move a take-off off the beds it was drawn on.
+   */
+  const adoptAnchor = (tile: BoardTile, existing: MapAnchor | null) => {
+    if (tile.deal.propertyId === null) return;
+    if (!shouldAdoptAnchor(existing, tile.deal.propertyId)) return;
+    setPlanAnchor(
+      anchorFromProperty(
+        tile.deal.propertyId,
+        tile.deal.propertyAddress,
+        tile.deal.lat,
+        tile.deal.lng,
+        FALLBACK_CENTRE,
+      ),
+    );
+  };
+
+  /**
    * Open a job off the board.
    *
    * Two cases, and the difference matters: a deal that already has an estimate
@@ -398,6 +434,7 @@ export default function EstimatorPage() {
           if (remote.estimate.dealId !== tile.deal.id) {
             attachDeal(tile.deal.id, tile.deal.propertyId);
           }
+          adoptAnchor(tile, getSnapshot().estimate.plan.anchor);
           setBoardIntent("closed");
           return;
         }
@@ -410,6 +447,7 @@ export default function EstimatorPage() {
       clearEstimate();
       attachDeal(tile.deal.id, tile.deal.propertyId);
       setJobName(tileTitle(tile.deal));
+      adoptAnchor(tile, null);
       setBoardIntent("closed");
     } catch (e) {
       setBoardNotice(`That job could not be opened: ${String(e)}`);

@@ -1339,6 +1339,18 @@ export default function PlanPage({
 /**
  * Which yard this is, and how well we know where it is.
  *
+ * IT STATES THE YARD; IT DOES NOT ASK FOR IT. The property is settled when the
+ * job is opened off the board — 86 of the 90 live deals carry a `property_id`
+ * — so by the time anyone reaches the plan the question was answered two
+ * screens ago, and a picker here is a second chance to disagree with the job.
+ * Whoever chose it owns it: with a deal attached the card names the job as the
+ * source and sends a correction back there.
+ *
+ * The picker is still here for the case nothing upstream covers: an estimate
+ * with no deal, which is what *Skip to estimator* and the 4 propertyless deals
+ * produce. There the plan IS the only place a yard can be named, and offering
+ * nothing would be a dead end.
+ *
  * The source is shown rather than hidden once a centre exists. Half the
  * properties on the project have coordinates and half do not, so an anchor is
  * sometimes a record and sometimes a guess, and a take-off is worth what its
@@ -1432,22 +1444,33 @@ function AnchorCard({
     );
   }
 
+  // The yard is the job's when a deal is attached, and this screen's when one
+  // is not. Only the second gives the plan anything to change.
+  const fromJob = estimate.dealId !== null && anchor?.propertyId != null;
+
   return (
     <div className="rounded-2xl border border-edge bg-surface p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[0.65rem] font-bold tracking-widest text-muted">
           PROPERTY
         </span>
-        <button
-          onClick={() => onPicking(true)}
-          className="text-xs font-bold text-accent"
-        >
-          {anchor ? "Change" : "Choose"}
-        </button>
+        {!fromJob && (
+          <button
+            onClick={() => onPicking(true)}
+            className="text-xs font-bold text-accent"
+          >
+            {anchor?.propertyId != null ? "Change" : "Choose"}
+          </button>
+        )}
       </div>
       <p className="mt-1 text-sm leading-snug text-ink">
         {anchor?.label ?? (anchor?.propertyId ? `#${anchor.propertyId}` : "Not chosen")}
       </p>
+      {fromJob && (
+        <p className="mt-0.5 text-[0.65rem] leading-tight text-muted">
+          From the job — open a different one on Jobs to change it.
+        </p>
+      )}
       {anchor?.source === "upright" && anchor.propertyId === null && (
         <p className="mt-0.5 text-[0.65rem] leading-tight text-muted">
           The map is on the survey — pick the property to attach the estimate.
