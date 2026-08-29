@@ -61,7 +61,9 @@ import {
   setBasemap,
   setOverlayHidden,
   setPlanAnchor,
+  setShapeSmooth,
   setSurveySession,
+  toggleVertexSmooth,
   updateShape,
 } from "@/lib/estimator/store";
 import type { Estimate, EstimatorSettings } from "@/lib/estimator/types";
@@ -116,6 +118,8 @@ export default function PlanPage({
    * cannot turn off stops being a help.
    */
   const [rightAngle, setRightAngle] = useState(true);
+  /** Round the corners of shapes drawn from here on. Off by default. */
+  const [smoothNew, setSmoothNew] = useState(false);
   /**
    * The shape being drawn, owned here rather than in the canvas. The canvas
    * reports taps; Finish, Undo and Cancel are buttons on this page, and a
@@ -305,10 +309,10 @@ export default function PlanPage({
   const finish = useCallback(() => {
     if (tool !== "area" && tool !== "linear") return;
     if (pending.length < (tool === "area" ? 3 : 2)) return;
-    addShape(tool, pending, armed[tool]);
+    addShape(tool, pending, armed[tool], smoothNew);
     setPending([]);
     setTool("select");
-  }, [tool, pending, armed]);
+  }, [tool, pending, armed, smoothNew]);
 
   const patchOverlay = useCallback(
     (id: string, patch: Partial<MapOverlay>) => {
@@ -430,6 +434,16 @@ export default function PlanPage({
           </button>
         ))}
         <div className="flex-1" />
+        <button
+          onClick={() => setSmoothNew((v) => !v)}
+          className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${
+            smoothNew ? "bg-accent text-black" : "bg-surface2 text-muted"
+          }`}
+          title={smoothNew ? "Curved edges: on" : "Curved edges: off"}
+          aria-label="Curved edges"
+        >
+          ◠
+        </button>
         <button
           onClick={() => setRightAngle((v) => !v)}
           className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${
@@ -582,7 +596,15 @@ export default function PlanPage({
       ) : (
         <p className="shrink-0 mb-2 text-[0.7rem] text-muted">
           {ready
-          ? `${HINTS[tool]}${rightAngle && tool !== "select" ? " · corners square up" : ""}`
+          ? `${HINTS[tool]}${
+              tool === "select"
+                ? ""
+                : smoothNew
+                  ? " · edges curve"
+                  : rightAngle
+                    ? " · corners square up"
+                    : ""
+            }`
           : "Choose the property first — the map has to open somewhere."}
         </p>
       )}
@@ -598,6 +620,7 @@ export default function PlanPage({
           survey={survey}
           surveySessionId={surveySessionId}
           rightAngle={rightAngle}
+          smoothNew={smoothNew}
           labelFor={labelFor}
           tool={tool}
           selectedShapeId={selectedId}
@@ -609,6 +632,7 @@ export default function PlanPage({
           onMergeNodes={mergeNodes}
           onLinkSurvey={linkNodeToSurvey}
           onInsertVertex={insertVertex}
+          onToggleVertexSmooth={toggleVertexSmooth}
           showMeasurements={showMeasurements}
           aligning={aligning}
           onAlignCommit={(georef: Georef) =>
@@ -1233,6 +1257,7 @@ function ShapeCard({
         )
       : 0;
   const unit = shape.type === "area" ? "sq ft" : "ln ft";
+  const isRounded = (shape.smoothVertices?.length ?? 0) > 0;
 
   /**
    * What the survey makes of this shape's corners.
@@ -1303,6 +1328,27 @@ function ShapeCard({
           </option>
         ))}
       </select>
+
+      <div className="mt-2 flex items-center gap-1.5">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setShapeSmooth(shape.id, !isRounded);
+          }}
+          className={`rounded-lg px-2.5 py-1 text-[0.65rem] font-bold ${
+            isRounded ? "bg-accent text-black" : "bg-surface2 text-ink"
+          }`}
+        >
+          {isRounded ? "Curved" : "Straight"}
+        </button>
+        {isRounded && (
+          // The per-corner control has no button of its own: tapping a corner
+          // of the selected shape on the map is the whole gesture.
+          <span className="text-[0.65rem] leading-tight text-muted">
+            tap a corner on the map to hold it sharp
+          </span>
+        )}
+      </div>
 
       {grade && (
         <p className="mt-1.5 text-[0.7rem] leading-snug text-muted">

@@ -478,6 +478,7 @@ export function addShape(
   type: ShapeKind,
   points: PendingPoint[],
   assemblyId: string | null,
+  smooth = false,
 ) {
   mutatePlan((plan) => {
     const nodes = { ...plan.nodes };
@@ -502,6 +503,7 @@ export function addShape(
           id: planId("shape"),
           type,
           vertices,
+          ...(smooth ? { smoothVertices: [...vertices] } : {}),
           color: nextShapeColor(plan.shapes.length),
           assemblyId,
         },
@@ -568,7 +570,14 @@ export function mergeNodes(fromId: string, intoId: string) {
         const deduped = repointed.filter(
           (id, i) => id !== repointed[(i + 1) % repointed.length],
         );
-        return { ...shape, vertices: deduped };
+        const smooth = (shape.smoothVertices ?? []).map((v) =>
+          v === fromId ? intoId : v,
+        );
+        return {
+          ...shape,
+          vertices: deduped,
+          ...(smooth.length ? { smoothVertices: [...new Set(smooth)] } : {}),
+        };
       })
       // A merge can take a triangle down to a two-corner ring, which is a line
       // pretending to be an area. Dropping it beats keeping something that
@@ -586,10 +595,23 @@ export function insertVertex(shapeId: string, index: number, at: LatLng): string
     if (!shape) return plan;
     const vertices = [...shape.vertices];
     vertices.splice(index, 0, id);
+    // If the side it split was rounded, the new corner is too — otherwise
+    // adding detail to a curve would put a kink in it.
+    const smooth = shape.smoothVertices ?? [];
+    const neighbours = [shape.vertices[index - 1], shape.vertices[index % shape.vertices.length]];
+    const rounded = neighbours.every((v) => v !== undefined && smooth.includes(v));
     return {
       ...plan,
       nodes: { ...plan.nodes, [id]: { at } },
-      shapes: plan.shapes.map((s) => (s.id === shapeId ? { ...s, vertices } : s)),
+      shapes: plan.shapes.map((s) =>
+        s.id === shapeId
+          ? {
+              ...s,
+              vertices,
+              ...(rounded ? { smoothVertices: [...smooth, id] } : {}),
+            }
+          : s,
+      ),
     };
   });
   return id;
@@ -622,11 +644,53 @@ export function detachShape(shapeId: string) {
       nodes,
       shapes: plan.shapes.map((s) =>
         s.id === shapeId
-          ? { ...s, vertices: s.vertices.map((v) => swap.get(v) ?? v) }
+          ? {
+              ...s,
+              vertices: s.vertices.map((v) => swap.get(v) ?? v),
+              ...(s.smoothVertices
+                ? { smoothVertices: s.smoothVertices.map((v) => swap.get(v) ?? v) }
+                : {}),
+            }
           : s,
       ),
     };
   });
+}
+
+/** Round every corner of a shape, or none of them. */
+export function setShapeSmooth(shapeId: string, smooth: boolean) {
+  mutatePlan((plan) => ({
+    ...plan,
+    shapes: plan.shapes.map((s) =>
+      s.id === shapeId
+        ? smooth
+          ? { ...s, smoothVertices: [...s.vertices] }
+          : { ...s, smoothVertices: [] }
+        : s,
+    ),
+  }));
+}
+
+/**
+ * Make one corner sharp, or round it again.
+ *
+ * The whole point of storing this per corner: a bed that runs straight along a
+ * drive and sweeps round the lawn is two sharp corners and the rest rounded.
+ */
+export function toggleVertexSmooth(shapeId: string, nodeId: string) {
+  mutatePlan((plan) => ({
+    ...plan,
+    shapes: plan.shapes.map((s) => {
+      if (s.id !== shapeId) return s;
+      const current = s.smoothVertices ?? [];
+      return {
+        ...s,
+        smoothVertices: current.includes(nodeId)
+          ? current.filter((v) => v !== nodeId)
+          : [...current, nodeId],
+      };
+    }),
+  }));
 }
 
 export function updateShape(id: string, patch: Partial<Omit<PlanShape, "id">>) {

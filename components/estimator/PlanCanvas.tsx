@@ -18,6 +18,7 @@ import {
   type WorldBounds,
   type WorldPoint,
 } from "@/lib/estimator/geo";
+import { smoothOutline } from "@/lib/estimator/curve";
 import type { Basemap, MapAnchor, MapOverlay } from "@/lib/estimator/mapLayers";
 import {
   SURVEY_COLORS,
@@ -27,6 +28,7 @@ import {
 } from "@/lib/estimator/survey";
 import {
   measurementOf,
+  outlineOf,
   pointsOf,
   positionsOf,
   sharedNodeIds,
@@ -307,6 +309,7 @@ export default function PlanCanvas({
   survey,
   surveySessionId,
   rightAngle,
+  smoothNew,
   labelFor,
   tool,
   selectedShapeId,
@@ -318,6 +321,7 @@ export default function PlanCanvas({
   onMergeNodes,
   onLinkSurvey,
   onInsertVertex,
+  onToggleVertexSmooth,
   showMeasurements,
 }: {
   /** Where to open when there is nothing drawn yet. */
@@ -357,6 +361,8 @@ export default function PlanCanvas({
   surveySessionId: string | null;
   /** Square up corners while drawing. Off is for the yards that are not. */
   rightAngle: boolean;
+  /** Round the shape being drawn, so the pending outline previews as a curve. */
+  smoothNew: boolean;
   /** The assembly name drawn under a shape's measurement, when it has one. */
   labelFor: (shape: PlanShape) => string | null;
   tool: PlanTool;
@@ -375,6 +381,8 @@ export default function PlanCanvas({
   onLinkSurvey: (nodeId: string, at: LatLng, link: NodeSurveyLink) => void;
   /** Splitting a side. Returns the new corner's id so the drag can continue. */
   onInsertVertex: (shapeId: string, index: number, at: LatLng) => string;
+  /** Tapping a corner of a rounded shape holds it sharp, or lets it round. */
+  onToggleVertexSmooth: (shapeId: string, nodeId: string) => void;
   showMeasurements: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -692,9 +700,27 @@ export default function PlanCanvas({
   const shared = useMemo(() => sharedNodeIds(shapes), [shapes]);
 
   /** Every corner's position, resolved once per draw rather than per shape. */
+  /** The corners — what you grab. */
   const shapePoints = useCallback(
     (shape: PlanShape) =>
       shape.vertices.map((id) => liveNodes[id]).filter((p): p is LatLng => !!p),
+    [liveNodes],
+  );
+
+  /**
+   * The edge — what the shape encloses, and what it is measured on.
+   *
+   * Rebuilt from the live corner positions so a curve follows a dragged corner
+   * as it moves, rather than snapping into shape when the finger lifts.
+   */
+  const shapeOutline = useCallback(
+    (shape: PlanShape) => {
+      const live: PlanNodes = {};
+      for (const id of shape.vertices) {
+        if (liveNodes[id]) live[id] = { at: liveNodes[id] };
+      }
+      return outlineOf(shape, live);
+    },
     [liveNodes],
   );
 
@@ -848,9 +874,10 @@ export default function PlanCanvas({
 
     // 3. The take-off.
     for (const shape of shapes) {
-      const points = shapePoints(shape);
-      const pts = points.map((v) => toCanvas(toWorld(v), t));
+      const pts = shapePoints(shape).map((v) => toCanvas(toWorld(v), t));
       if (pts.length < 2) continue;
+      // The line drawn is the outline; the dots drawn are the corners.
+      const edge = shapeOutline(shape).map((v) => toCanvas(toWorld(v), t));
       const selected = shape.id === selectedShapeId;
       ctx.strokeStyle = shape.color;
       ctx.lineWidth = selected ? 4 : 2.5;
@@ -858,8 +885,8 @@ export default function PlanCanvas({
       let anchorPt: Pt;
       if (shape.type === "area" && pts.length >= 3) {
         ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        pts.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
+        ctx.moveTo(edge[0].x, edge[0].y);
+        edge.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
         ctx.closePath();
         ctx.fillStyle = withAlpha(shape.color, selected ? 0.32 : 0.2);
         ctx.fill();
@@ -867,8 +894,8 @@ export default function PlanCanvas({
         anchorPt = centroid(pts);
       } else {
         ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        pts.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
+        ctx.moveTo(edge[0].x, edge[0].y);
+        edge.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
         ctx.stroke();
         anchorPt = pts[Math.floor(pts.length / 2)];
       }
@@ -919,12 +946,17 @@ export default function PlanCanvas({
           ctx.lineTo(m.x, m.y + 3);
           ctx.stroke();
         }
+        const rounded = new Set(shape.smoothVertices ?? []);
         pts.forEach((p, i) => {
           ctx.fillStyle = "#ffffff";
           ctx.strokeStyle = shape.color;
           ctx.lineWidth = 3;
           ctx.beginPath();
-          ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
+          if (rounded.size > 0 && !rounded.has(shape.vertices[i] ?? "")) {
+            ctx.rect(p.x - 7, p.y - 7, 14, 14);
+          } else {
+            ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
+          }
           ctx.fill();
           ctx.stroke();
           // A shared corner gets a ring around it. Dragging one moves every
@@ -1091,13 +1123,22 @@ export default function PlanCanvas({
     // on a touch screen, and a line chasing the last tap is noise.
     if (pending.length > 0) {
       const pts = pending.map((v) => toCanvas(toWorld(v.at), t));
+      // Preview the curve, not the chords — otherwise the shape changes the
+      // moment Finish is pressed, which is exactly when it should not.
+      const previewPath = smoothNew
+        ? smoothOutline(
+            pending.map((v) => v.at),
+            pending.map(() => true),
+            tool === "area" && pending.length >= 3,
+          ).map((v) => toCanvas(toWorld(v), t))
+        : pts;
       ctx.strokeStyle = "#22c55e";
       ctx.lineWidth = 3;
       ctx.setLineDash([8, 6]);
       if (pts.length > 1) {
         ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        pts.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
+        ctx.moveTo(previewPath[0].x, previewPath[0].y);
+        previewPath.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
         if (tool === "area" && pts.length >= 3) ctx.closePath();
         ctx.stroke();
       }
@@ -1234,6 +1275,8 @@ export default function PlanCanvas({
     nodes,
     liveNodes,
     shapePoints,
+    shapeOutline,
+    smoothNew,
     shared,
     snapTo,
     pending,
@@ -1389,7 +1432,18 @@ export default function PlanCanvas({
     // select: topmost shape under the finger, or nothing.
     for (let i = shapes.length - 1; i >= 0; i--) {
       const shape = shapes[i];
-      const pts = shapePoints(shape).map((v) => toCanvas(toWorld(v), t));
+      // A tap on a corner of the shape already selected toggles whether that
+      // corner rounds — the cheapest way to hold one side of a bed straight,
+      // and it needs no control of its own.
+      if (shape.id === selectedShapeId && (shape.smoothVertices?.length ?? 0) > 0) {
+        const corners = shapePoints(shape).map((v) => toCanvas(toWorld(v), t));
+        const hit = corners.findIndex((p) => dist(cp, p) <= VERTEX_GRAB_PX);
+        if (hit >= 0) {
+          onToggleVertexSmooth(shape.id, shape.vertices[hit]);
+          return;
+        }
+      }
+      const pts = shapeOutline(shape).map((v) => toCanvas(toWorld(v), t));
       if (shape.type === "area" && pointInPolygon(cp, pts)) {
         onSelectShape(shape.id);
         return;

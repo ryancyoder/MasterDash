@@ -27,6 +27,7 @@
 // instead of leaving a stale number behind.
 
 import type { AssemblyModel } from "./assemblies";
+import { smoothOutline } from "./curve";
 import { areaSqFt, latLngFrom, lengthFt, type LatLng } from "./geo";
 import type { Basemap, MapAnchor } from "./mapLayers";
 
@@ -91,6 +92,16 @@ export interface PlanShape {
    */
   vertices: string[];
   color: string;
+  /**
+   * Which of this shape's corners round, by node id. Absent or empty is a
+   * plain polygon, which is what most take-offs are.
+   *
+   * Per SHAPE rather than per node, because a corner shared with the lawn next
+   * door can perfectly well be a sweep on the bed's side and a hard corner on
+   * the lawn's — they agree about where the corner IS, which is all sharing
+   * ever claimed.
+   */
+  smoothVertices?: string[];
   /** The assembly this shape's measurement buys loads of. Null = unlinked. */
   assemblyId: string | null;
 }
@@ -238,15 +249,38 @@ export function pruneNodes(nodes: PlanNodes, shapes: PlanShape[]): PlanNodes {
 // --- Measurement ----------------------------------------------------------
 
 /**
+ * What the shape actually encloses: the corners, with any curves resolved.
+ *
+ * Everything downstream measures and draws THIS rather than the corner list,
+ * so a curved bed prices as the ground it covers rather than as the chords
+ * somebody tapped across it.
+ */
+export function outlineOf(shape: PlanShape, nodes: PlanNodes): LatLng[] {
+  const smooth = new Set(shape.smoothVertices ?? []);
+  if (smooth.size === 0) return pointsOf(shape, nodes);
+
+  const points: LatLng[] = [];
+  const flags: boolean[] = [];
+  for (const id of shape.vertices) {
+    const node = nodes[id];
+    if (!node) continue;
+    points.push(node.at);
+    flags.push(smooth.has(id));
+  }
+  return smoothOutline(points, flags, shape.type === "area");
+}
+
+/**
  * A shape's measurement in feet: square for an area, linear for a run.
  *
  * Derived on every read, from wherever the corners are now — which is what
  * makes dragging a shared corner correct the loads on BOTH shapes at once
- * rather than leaving one of them holding a stale number.
+ * rather than leaving one of them holding a stale number, and what makes
+ * rounding a bed's edge re-price it without anything else being touched.
  */
 export function measurementOf(shape: PlanShape, nodes: PlanNodes): number {
-  const points = pointsOf(shape, nodes);
-  return shape.type === "area" ? areaSqFt(points) : lengthFt(points);
+  const outline = outlineOf(shape, nodes);
+  return shape.type === "area" ? areaSqFt(outline) : lengthFt(outline);
 }
 
 /** The unit a shape can be linked against. */
@@ -356,10 +390,18 @@ export function topologyFrom(value: unknown): {
     // nothing and measures nothing, so it is dropped rather than kept as a
     // shape that quietly contributes zero loads.
     if (ids.length < (type === "area" ? 3 : 2)) continue;
+    // Only ids this shape actually has: a stale one would round nothing and
+    // sit in the list for ever.
+    const held = new Set(ids);
+    const smooth = (Array.isArray(r.smoothVertices) ? r.smoothVertices : []).filter(
+      (v): v is string => typeof v === "string" && held.has(v),
+    );
+
     shapes.push({
       id: r.id,
       type,
       vertices: ids,
+      ...(smooth.length ? { smoothVertices: smooth } : {}),
       color: typeof r.color === "string" && r.color ? r.color : SHAPE_COLORS[0],
       assemblyId:
         typeof r.assemblyId === "string" && r.assemblyId ? r.assemblyId : null,

@@ -29,6 +29,7 @@ now the whole app, at the root.
     lib/estimator/assemblies.ts  bucket maths
     lib/estimator/geo.ts      lat/lng, Web Mercator, and geodesic measurement
     lib/estimator/plan.ts     the map take-off: shapes and load maths
+    lib/estimator/curve.ts    curved bed edges, derived from the corners
     lib/estimator/tiles.ts    the satellite basemap, as tiles
     lib/estimator/mapLayers.ts   georeferenced overlays, and the anchor
     lib/estimator/survey.ts   Upright's elevations, derived not stored
@@ -473,6 +474,49 @@ gets stored is square on the ground, which is what a contractor is buying.
 
 Measured: a deliberately sloppy rectangle whose worst corner was 0.81° out came
 back at **90.000° on all four**.
+
+#### Curved edges
+
+A bed is rarely a polygon. **◠** in the toolbar rounds the edges of shapes
+drawn from then on, and the shape card flips an existing one between
+**Curved** and **Straight**.
+
+This is not cosmetic. A chord always cuts inside the arc it stands for, so a
+curve tapped as straight segments **under-reads** — and under-reading is how a
+job runs out of mulch. A circle tapped at eight points measures 90.0% of its
+true area as a polygon and 99.0% smoothed; the sweeping bed in testing came out
+20.9% larger curved than straight. That difference is material, not decorative.
+
+**The curve is derived, never stored.** The shape keeps the handful of corners
+somebody actually tapped and the outline is rebuilt from them on every read —
+so dragging a corner corrects the curve, the area and the load count together.
+Storing a tessellated outline would freeze a bed into forty points nobody
+placed and nobody could meaningfully move.
+
+**Centripetal Catmull-Rom**, and the parameterisation is the whole reason it
+works. A Catmull-Rom spline passes *through* its control points, which is what
+a bed edge needs — the estimator tapped where the bed goes, not where a handle
+goes. The uniform version overshoots badly on unevenly spaced points, throwing
+loops outside the shape, and points tapped by hand at a walking pace are never
+evenly spaced. Centripetal (α = 0.5) is provably free of cusps and
+self-intersection within a span, at no extra cost.
+
+Twelve points per span. Going to 96 moves a test circle's area by 0.03%, so
+twelve is effectively converged; what is left is the spline's fit, and that is
+bought by tapping another corner rather than by a bigger number here.
+
+**Corners can be held sharp, one at a time.** A span runs straight when *both*
+its ends are sharp and curves otherwise — which is what makes the common bed
+expressible: straight along a drive, swept round the lawn. Tap a corner of the
+selected shape on the map to hold it sharp; there is no control for it, because
+the gesture is the control. Sharp corners draw as squares and rounded ones as
+circles, and at a sharp corner the neighbouring point is clamped so the curve
+takes its tangent only from the side it is on — without that, a curve arriving
+at a corner would be bent by whatever lies beyond it and the corner would not
+look like one.
+
+Splitting a rounded side gives the new corner the side's roundness, so adding
+detail to a curve does not put a kink in it.
 
 #### Drawing a bed onto surveyed points
 
