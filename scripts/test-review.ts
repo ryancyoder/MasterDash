@@ -304,6 +304,19 @@ ok(
   );
   ok("no error is no message", clipErrorMessage(null) === null);
   ok("an unknown code still says something", clipErrorMessage(99) !== null);
+  ok(
+    "the decoder's own words are carried through when it left any",
+    clipErrorMessage(4, true, "DEMUXER_ERROR_COULD_NOT_OPEN")!.includes("DEMUXER_ERROR_COULD_NOT_OPEN"),
+    "Chrome names the failure; Safari leaves it empty, so nothing depends on it",
+  );
+  ok(
+    "an empty detail adds no empty brackets",
+    clipErrorMessage(4, true, "   ") === "This browser cannot play the clip's format.",
+  );
+  ok(
+    "and the HEVC line keeps the detail too",
+    clipErrorMessage(4, false, "Video codec not supported")!.includes("Safari"),
+  );
 }
 
 {

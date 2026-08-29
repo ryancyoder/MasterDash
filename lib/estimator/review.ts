@@ -453,20 +453,30 @@ export function clipErrorMessage(
   code: number | null | undefined,
   /** Whether this browser can decode HEVC. See `canPlayHevc()`. */
   canPlayHevc = true,
+  /**
+   * `MediaError.message`, when the browser filled one in.
+   *
+   * Chrome puts something specific there — `DEMUXER_ERROR_COULD_NOT_OPEN`,
+   * `Video codec not supported` — and it is the one part of this that came
+   * from the decoder rather than from a guess about what it meant. Safari
+   * leaves it empty, which is why nothing depends on it.
+   */
+  detail?: string | null,
 ): string | null {
+  const note = detail && detail.trim() ? ` (${detail.trim()})` : "";
   switch (code) {
     case 1:
-      return "The clip stopped loading.";
+      return `The clip stopped loading.${note}`;
     case 2:
-      return "The clip could not be fetched — check the connection.";
+      return `The clip could not be fetched — check the connection.${note}`;
     case 3:
-      return "The clip is damaged and cannot be decoded.";
+      return `The clip is damaged and cannot be decoded.${note}`;
     case 4:
       return canPlayHevc
-        ? "This browser cannot play the clip's format."
-        : "Recorded as HEVC, which this browser cannot decode. Open this session in Safari to watch it — newer clips play anywhere.";
+        ? `This browser cannot play the clip's format.${note}`
+        : `Recorded as HEVC, which this browser cannot decode. Open this session in Safari to watch it — newer clips play anywhere.${note}`;
     default:
-      return code == null ? null : "The clip could not be played.";
+      return code == null ? null : `The clip could not be played.${note}`;
   }
 }
 

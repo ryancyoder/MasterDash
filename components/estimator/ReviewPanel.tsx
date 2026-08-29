@@ -112,9 +112,28 @@ export function ReviewVideo({
     // clip that is merely slow all look exactly alike, and all three look like
     // a visit recorded with the camera switched off.
     const hevc = canPlayHevc();
-    const onError = () => setTrouble(clipErrorMessage(video.error?.code ?? null, hevc));
+    /*
+      AN ERROR OUTRANKS EVERYTHING, and it has to be a flag rather than just
+      the last call to setTrouble() to win.
+
+      The slow-clip probe below is a fetch, so its answer lands whole seconds
+      after it is asked — comfortably after a codec refusal has already been
+      reported. Without this it overwrote "recorded as HEVC" with "still
+      loading, the file is reachable", which is a strictly worse statement
+      about a clip that is never going to play, and it reads as progress.
+      Checking readyState was not enough: a refused clip sits at 0 forever,
+      which looks exactly like one that has not started.
+    */
+    let failed = false;
+    const onError = () => {
+      failed = true;
+      setTrouble(
+        clipErrorMessage(video.error?.code ?? null, hevc, video.error?.message ?? null),
+      );
+    };
     const onPlayable = () => {
       slowSaid = false;
+      failed = false;
       setTrouble(null);
     };
     video.addEventListener("error", onError);
@@ -128,6 +147,7 @@ export function ReviewVideo({
           shownClip = hit.clip.id;
           seeded = false;
           slowSaid = false;
+          failed = false;
           loadedAt = performance.now();
           setTrouble(null);
           video.src = hit.clip.url;
@@ -169,7 +189,7 @@ export function ReviewVideo({
         // Slow is a state, not a failure — but an unexplained black rectangle
         // is indistinguishable from a broken one, so after a few seconds it
         // says which it is, with the numbers that tell the two apart.
-        if (!slowSaid && video.readyState < 2 && performance.now() - loadedAt > CLIP_SLOW_MS) {
+        if (!failed && !slowSaid && video.readyState < 2 && performance.now() - loadedAt > CLIP_SLOW_MS) {
           slowSaid = true;
           const url = hit.clip.url;
           const buffered = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
@@ -179,18 +199,17 @@ export function ReviewVideo({
           // tell us about the preflight rather than about the clip.
           void fetch(url, { method: "HEAD" })
             .then((r) => {
-              if (shownClip !== null && videoRef.current?.readyState !== undefined &&
-                  videoRef.current.readyState < 2) {
-                const len = r.headers.get("content-length");
-                setTrouble(
-                  clipLoadingMessage(
-                    { ok: r.ok, status: r.status, bytes: len ? Number(len) : null },
-                    buffered,
-                  ),
-                );
-              }
+              if (failed || shownClip === null) return;
+              const len = r.headers.get("content-length");
+              setTrouble(
+                clipLoadingMessage(
+                  { ok: r.ok, status: r.status, bytes: len ? Number(len) : null },
+                  buffered,
+                ),
+              );
             })
             .catch((e: unknown) => {
+              if (failed || shownClip === null) return;
               setTrouble(
                 clipLoadingMessage(
                   { ok: false, status: 0, bytes: null, error: e instanceof Error ? e.message : "blocked" },
