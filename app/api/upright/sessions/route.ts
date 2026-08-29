@@ -49,6 +49,17 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const need: SessionNeed = url.searchParams.get("have") === "survey" ? "survey" : "audio";
+  /**
+   * Narrow to one property's visits.
+   *
+   * The review picker asks this: an estimate is for a yard, and the visit worth
+   * replaying beside it is a visit to that yard. Left off, the picker lists
+   * everything, which is still the right answer for the survey and transcript
+   * pickers — most sessions historically carry no property at all, and hiding
+   * them behind a tag nobody set would empty the list.
+   */
+  const askedProperty = parseInt(url.searchParams.get("property") || "", 10);
+  const property = Number.isInteger(askedProperty) && askedProperty > 0 ? askedProperty : null;
   const asked = parseInt(url.searchParams.get("limit") || "", 10);
   const limit = Math.min(
     Math.max(Number.isFinite(asked) ? asked : DEFAULT_LIMIT, 1),
@@ -73,8 +84,13 @@ export async function GET(request: Request) {
 
   // Trimmed after filtering, so `limit` means "this many usable sessions"
   // rather than "this many rows, some of which you cannot choose".
+  const all = sessionsFrom(await res.json(), need);
+  const scoped = property === null ? all : all.filter((s) => s.propertyId === property);
   return NextResponse.json({
     ok: true,
-    sessions: sessionsFrom(await res.json(), need).slice(0, limit),
+    sessions: scoped.slice(0, limit),
+    // So a picker that comes back empty can say WHY — "none tagged to this
+    // property" and "no sessions at all" need different answers from the user.
+    ...(property === null ? {} : { property, totalUnscoped: all.length }),
   });
 }

@@ -212,6 +212,27 @@ export interface SurveyLayer {
 }
 
 /**
+ * A photo pin from the visit being replayed.
+ *
+ * Not a survey point and drawn as a different thing: it measures nothing. It
+ * says a picture was taken here, and — where the compass was trusted — which
+ * way the camera was facing, which is what turns a yard full of "Pin 7" into
+ * something readable. Its position may be null upstream; only located photos
+ * reach the canvas.
+ */
+export interface PhotoDot {
+  id: string;
+  at: LatLng;
+  seq: number;
+  headingDeg: number | null;
+}
+
+/** An iPad's rear camera, roughly, and about as far as a GPS fix earns. */
+const PHOTO_FOV_DEG = 62;
+const PHOTO_CONE_M = 10;
+const PHOTO_COLOUR = "#f8fafc";
+
+/**
  * The survey glyphs, matching Upright's.
  *
  * An observation, an anchor and a target are different things and have to be
@@ -308,6 +329,12 @@ export default function PlanCanvas({
   shapes,
   survey,
   surveySessionId,
+  photos,
+  livePhotoId,
+  selectedPhotoId,
+  onSelectPhoto,
+  pinsDraggable,
+  onMovePin,
   rightAngle,
   smoothNew,
   labelFor,
@@ -359,6 +386,27 @@ export default function PlanCanvas({
   survey: SurveyLayer | null;
   /** Which session the shown survey is, so a link can record where it came from. */
   surveySessionId: string | null;
+  /** Located photo pins from the visit being replayed, if one is loaded. */
+  photos: PhotoDot[] | null;
+  /**
+   * The pin nearest the playhead. Lit, never centred on: the viewport must not
+   * be yanked out from under someone who is mid-drawing.
+   */
+  livePhotoId: string | null;
+  selectedPhotoId: string | null;
+  onSelectPhoto: (id: string | null) => void;
+  /**
+   * Whether survey points and photo pins can be dragged.
+   *
+   * True only while the column is showing Review. In Plan the survey is a
+   * reference to lay beds against, and a stray thumb that moved a shot point
+   * would silently change every elevation derived from it with nothing on
+   * screen to say so. Correcting the visit is what Review is for, so that is
+   * where the pins come alive.
+   */
+  pinsDraggable: boolean;
+  /** A corrected pin, on release. Writes back to Upright's own row. */
+  onMovePin: (kind: "survey" | "photo", id: string, at: LatLng) => void;
   /** Square up corners while drawing. Off is for the yards that are not. */
   rightAngle: boolean;
   /** Round the shape being drawn, so the pending outline previews as a curve. */
@@ -411,9 +459,12 @@ export default function PlanCanvas({
   const dragRef = useRef<
     | { kind: "vertex"; nodeId: string }
     | { kind: "shape"; base: Record<string, LatLng>; startWorld: WorldPoint }
+    | { kind: "pin"; pin: "survey" | "photo"; id: string }
     | { kind: "pan"; startX: number; startY: number; centre: WorldPoint }
     | null
   >(null);
+  /** A pin being corrected, held locally and committed on release. */
+  const [dragPin, setDragPin] = useState<{ id: string; at: LatLng } | null>(null);
   /**
    * Corners being dragged, by id, held locally and committed on release.
    *
@@ -1011,7 +1062,15 @@ export default function PlanCanvas({
     //    a filled polygon over a two-decimal number wins every time.
     if (survey) {
       const visible = survey.points.filter((p) => !p.hidden);
-      const at = new Map(visible.map((p) => [p.id, toCanvas(toWorld(p.at), t)]));
+      // A point being corrected follows the finger, and so does everything
+      // drawn from it — the slope runs it anchors move with it live, which is
+      // the whole reason elevations are derived rather than stored.
+      const at = new Map(
+        visible.map((p) => [
+          p.id,
+          toCanvas(toWorld(dragPin && dragPin.id === p.id ? dragPin.at : p.at), t),
+        ]),
+      );
 
       for (const run of survey.runs) {
         const a = at.get(run.fromId);
@@ -1210,6 +1269,68 @@ export default function PlanCanvas({
       });
     }
 
+    // 5. Photo pins from the visit being replayed, over the survey.
+    //
+    //    Deliberately not the survey's glyphs: a photo measures nothing, and
+    //    the two must never be confused at a glance. The wedge says which way
+    //    the camera was pointing, which is what makes a pin answer "what is
+    //    this a picture OF" rather than only "where was it taken from".
+    //
+    //    Faint for every pin, solid for the one the playhead is on. The wash
+    //    reads as coverage; the solid one answers what you are looking at.
+    if (photos && photos.length) {
+      for (const photo of photos) {
+        const live = photo.id === livePhotoId;
+        const picked = photo.id === selectedPhotoId;
+        const lit = live || picked;
+        const at = dragPin && dragPin.id === photo.id ? dragPin.at : photo.at;
+        const p = toCanvas(toWorld(at), t);
+
+        if (photo.headingDeg !== null) {
+          // A ground distance rather than a screen size, so the wedge scales
+          // with the map like everything else that claims to be on the earth.
+          const mPerWorld = metresPerWorldUnit(at.lat);
+          const rPx = mPerWorld > 0 ? (PHOTO_CONE_M / mPerWorld) * t.scale : 0;
+          if (rPx > 4) {
+            // Canvas angles run from +x anticlockwise in screen space; a
+            // compass bearing runs from north clockwise. Hence the -90.
+            const mid = ((photo.headingDeg - 90) * Math.PI) / 180;
+            const half = (PHOTO_FOV_DEG / 2) * (Math.PI / 180);
+            ctx.save();
+            ctx.fillStyle = withAlpha(PHOTO_COLOUR, lit ? 0.28 : 0.1);
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+            ctx.arc(p.x, p.y, rPx, mid - half, mid + half);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+          }
+        }
+
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.9)";
+        ctx.shadowBlur = 4;
+        ctx.fillStyle = lit ? PHOTO_COLOUR : withAlpha(PHOTO_COLOUR, 0.6);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, lit ? 7 : 5, 0, Math.PI * 2);
+        ctx.fill();
+        if (lit) {
+          ctx.strokeStyle = "#0f172a";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          // A ring, not a recentre: the playhead says which pin, never where
+          // the map should be looking.
+          ctx.strokeStyle = PHOTO_COLOUR;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 13, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+        if (lit) drawLabel(ctx, `Pin ${photo.seq}`, p.x, p.y - 20, PHOTO_COLOUR);
+      }
+    }
+
     // What a drop would land on. Drawn last so it sits over its target, and
     // named — "join" and "survey" are different acts and the word is the only
     // thing that says which one is about to happen.
@@ -1272,6 +1393,10 @@ export default function PlanCanvas({
   }, [
     shapes,
     survey,
+    photos,
+    livePhotoId,
+    selectedPhotoId,
+    dragPin,
     nodes,
     liveNodes,
     shapePoints,
@@ -1508,6 +1633,27 @@ export default function PlanCanvas({
     if (tool === "select") {
       const t = transformNow();
 
+      // 0. Correct a pin. Only while the column is showing Review, and first
+      //    in the order because these are drawn on top: in Review the pins ARE
+      //    the subject, and a bed corner linked to a shot point sits exactly
+      //    on it, so whichever is checked first is the one you can ever grab.
+      if (pinsDraggable) {
+        for (const photo of photos ?? []) {
+          if (dist(cp, toCanvas(toWorld(photo.at), t)) <= VERTEX_GRAB_PX) {
+            dragRef.current = { kind: "pin", pin: "photo", id: photo.id };
+            onSelectPhoto(photo.id);
+            return;
+          }
+        }
+        for (const point of survey?.points ?? []) {
+          if (point.hidden) continue;
+          if (dist(cp, toCanvas(toWorld(point.at), t)) <= VERTEX_GRAB_PX) {
+            dragRef.current = { kind: "pin", pin: "survey", id: point.id };
+            return;
+          }
+        }
+      }
+
       // 1. Grab a corner of any shape. What is grabbed is the CORNER, so a
       //    shared one carries every shape holding it.
       for (let i = shapes.length - 1; i >= 0; i--) {
@@ -1673,6 +1819,12 @@ export default function PlanCanvas({
 
     const cp = canvasPoint(e);
     const world = fromCanvas(cp, transformNow());
+    if (drag.kind === "pin") {
+      // No snapping. A corner is joined to other corners; a pin is a record of
+      // where something was, and there is nothing for it to be joined to.
+      setDragPin({ id: drag.id, at: toLatLng(world) });
+      return;
+    }
     if (drag.kind === "vertex") {
       setDragNodes({ [drag.nodeId]: toLatLng(world) });
       // Offered while the finger is still down, so a join is something you
@@ -1730,6 +1882,16 @@ export default function PlanCanvas({
     dragRef.current = null;
     pressRef.current = null;
 
+    // A corrected pin, once. This one leaves the app: it PATCHes Upright's own
+    // row, and unlike the local writes below it can fail, so the page reports
+    // that rather than leaving a correction that only ever existed on screen.
+    if (drag && drag.kind === "pin") {
+      const moved = dragPin;
+      setDragPin(null);
+      if (moved && press?.moved) onMovePin(drag.pin, drag.id, moved.at);
+      return;
+    }
+
     // One write per drag, on release, rather than one per move event.
     if (dragNodes && drag && drag.kind !== "pan") {
       const target = snapTo;
@@ -1767,6 +1929,7 @@ export default function PlanCanvas({
     dragRef.current = null;
     pressRef.current = null;
     setDragNodes(null);
+    setDragPin(null);
   }
 
   return (

@@ -10,6 +10,9 @@
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
+    // The zero-dependency test scripts import `../lib/**/*.ts` by path so
+    // `node --experimental-strip-types` can run them with no build step.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",

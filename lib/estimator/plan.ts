@@ -138,6 +138,18 @@ export interface PlanState {
    * instead of showing a uuid.
    */
   survey: { sessionId: string; label: string } | null;
+  /**
+   * The Upright session being replayed beside the plan.
+   *
+   * Separate from `survey` on purpose, even though both name a session and
+   * both are usually the same visit. They answer different questions and are
+   * chosen from different lists: a survey needs elevation points and most
+   * grade work is shot silently, while review needs master audio and most
+   * recorded visits carry no survey. Folding them into one field would mean
+   * choosing a visit to listen to could silently swap the measured grade the
+   * beds are being laid out against.
+   */
+  review: { sessionId: string; label: string } | null;
   shapes: PlanShape[];
   /** Overlay ids switched off for this estimate. Absence means shown. */
   hiddenOverlayIds: string[];
@@ -149,6 +161,7 @@ export function emptyPlan(): PlanState {
     basemap: "satellite",
     nodes: {},
     survey: null,
+    review: null,
     shapes: [],
     hiddenOverlayIds: [],
   };

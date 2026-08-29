@@ -2,9 +2,29 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PlanCanvas, {
+  type PhotoDot,
   type PlanTool,
   type SurveyLayer,
 } from "@/components/estimator/PlanCanvas";
+import {
+  ReviewCard,
+  ReviewColumn,
+  ReviewFilmstrip,
+  ReviewTransport,
+  ReviewVideo,
+} from "@/components/estimator/ReviewPanel";
+import { useReviewAudio } from "@/components/estimator/useReviewAudio";
+import {
+  driftScale,
+  locatedPhotoAt,
+  type ReviewSegment,
+  type ReviewSession,
+} from "@/lib/estimator/review";
+import {
+  fetchReviewSession,
+  fetchReviewTranscript,
+  movePoint,
+} from "@/lib/estimator/reviewData";
 import {
   ASSEMBLY_MODELS,
   getAssembly,
@@ -63,6 +83,7 @@ import {
   setOverlayHidden,
   setPlanAnchor,
   setShapeSmooth,
+  setReviewSession,
   setSurveySession,
   toggleVertexSmooth,
   updateShape,
@@ -219,6 +240,155 @@ export default function PlanPage({
       for (const url of minted) URL.revokeObjectURL(url);
     };
   }, [overlays]);
+
+  // --- the visit being replayed -------------------------------------------
+  //
+  // The column toggles between this and the plan's own cards; the canvas below
+  // is shared by both, which is the whole shape of the merged screen. Review
+  // is chosen and loaded independently of the survey — see PlanState.review
+  // for why the two are separate fields.
+  const [mode, setMode] = useState<"plan" | "review">("plan");
+  const [pickingReview, setPickingReview] = useState(false);
+  const [visit, setVisit] = useState<ReviewSession | null>(null);
+  const [segments, setSegments] = useState<ReviewSegment[]>([]);
+  const [transcriptStatus, setTranscriptStatus] = useState("none");
+  const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
+  /** Which of the canvas and the clip is big. The other becomes a mini pane. */
+  const [videoOnStage, setVideoOnStage] = useState(false);
+  /** A correction that did not save. Shown, never swallowed. */
+  const [pinError, setPinError] = useState<string | null>(null);
+
+  const reviewSessionId = plan.review?.sessionId ?? null;
+
+  // Changing the visit invalidates everything loaded for the last one.
+  // Adjusted during render rather than in an effect, so there is never a frame
+  // showing one visit's transcript against another's photographs.
+  const [lastVisitId, setLastVisitId] = useState(reviewSessionId);
+  if (lastVisitId !== reviewSessionId) {
+    setLastVisitId(reviewSessionId);
+    setSelectedPhotoId(null);
+    setPinError(null);
+    setVisit(null);
+    setSegments([]);
+    setTranscriptStatus("none");
+  }
+
+  useEffect(() => {
+    if (!reviewSessionId) return;
+    let live = true;
+    void fetchReviewSession(reviewSessionId).then((s) => {
+      if (live) setVisit(s);
+    });
+    void fetchReviewTranscript(reviewSessionId).then((t) => {
+      if (!live) return;
+      setSegments(t.segments);
+      setTranscriptStatus(t.status);
+    });
+    return () => {
+      live = false;
+    };
+  }, [reviewSessionId]);
+
+  // Destructured rather than kept as one object: the hook hands back a ref
+  // alongside plain values, and reading those off the object during render
+  // reads as touching a ref.
+  const {
+    ref: audioRef,
+    audioMs,
+    durationSec,
+    playing,
+    toggle: toggleAudio,
+    seekMs,
+    gainError,
+  } = useReviewAudio(visit?.audioUrl ?? null);
+  /**
+   * Wall-clock offsets onto the audio's clock.
+   *
+   * Derived from the file's real length against the session's wall length, so
+   * it settles only once metadata has loaded — until then it is 1, which is
+   * exactly the right answer for "we do not know yet".
+   */
+  const drift = useMemo(
+    () => driftScale(visit?.wallMs ?? null, durationSec),
+    [visit, durationSec],
+  );
+
+  /**
+   * Photo pins for the canvas.
+   *
+   * Only the located ones: a pin with no fix cannot be drawn on the earth,
+   * though it still belongs in the filmstrip, which is why the two lists are
+   * built from the same photos but filtered differently.
+   */
+  const photoDots = useMemo<PhotoDot[] | null>(() => {
+    if (!visit) return null;
+    return visit.photos
+      .filter((p) => p.lat !== null && p.lng !== null)
+      .map((p) => ({
+        id: p.id,
+        at: { lat: p.lat as number, lng: p.lng as number },
+        seq: p.seq,
+        headingDeg: p.headingDeg,
+      }));
+  }, [visit]);
+
+  const livePhotoId = useMemo(
+    () =>
+      visit
+        ? (locatedPhotoAt(visit.photos, audioMs, drift)?.id ?? null)
+        : null,
+    [visit, audioMs, drift],
+  );
+
+  /**
+   * A corrected pin, written back to Upright.
+   *
+   * Applied locally first so the pin stays where it was dropped rather than
+   * springing back while the round trip runs — then reported if the write
+   * fails, because a correction someone made deliberately and watched
+   * disappear is worse than one that never appeared to save.
+   */
+  const handleMovePin = useCallback(
+    (kind: "survey" | "photo", id: string, at: LatLng) => {
+      setPinError(null);
+      if (kind === "photo") {
+        setVisit((s) =>
+          s
+            ? {
+                ...s,
+                photos: s.photos.map((p) =>
+                  p.id === id ? { ...p, lat: at.lat, lng: at.lng } : p,
+                ),
+              }
+            : s,
+        );
+      } else {
+        setSurvey((cur) =>
+          cur
+            ? {
+                ...cur,
+                points: cur.points.map((p) => (p.id === id ? { ...p, at, placed: true } : p)),
+              }
+            : cur,
+        );
+      }
+      void movePoint(kind, id, at).then((res) => {
+        if (res.ok) return;
+        setPinError(res.error);
+        // Put it back: showing a pin where it is not is the failure this
+        // whole path exists to avoid.
+        const surveyId = plan.survey?.sessionId ?? null;
+        if (kind === "survey" && surveyId) {
+          void fetchSurvey(surveyId).then((r) => {
+            if (r) setSurvey({ points: r.points, runs: r.runs } as SurveyLayer);
+          });
+        } else if (reviewSessionId) {
+          void fetchReviewSession(reviewSessionId).then((s) => s && setVisit(s));
+        }
+      });
+    },
+    [reviewSessionId, plan.survey?.sessionId],
+  );
 
   const surveySessionId = plan.survey?.sessionId ?? null;
   const surveyLabel = plan.survey?.label ?? null;
@@ -611,6 +781,23 @@ export default function PlanPage({
       )}
 
       <div className="relative flex flex-1 min-h-0 gap-3">
+        {/*
+          The stage: the canvas and the clip, both mounted for the whole life
+          of the screen, swapping which of them is big by CSS alone.
+
+          Neither is ever unmounted or re-parented. A <video> put back into the
+          tree restarts from zero on iOS Safari, and the canvas would lose its
+          measured size and its view — so the swap moves geometry, not nodes.
+          This is the same trick Upright's review uses for the same reason.
+        */}
+        <div className="relative flex-1 min-h-0">
+        <div
+          className={
+            videoOnStage
+              ? "absolute bottom-3 left-3 z-20 flex h-32 w-48 overflow-hidden rounded-xl border border-edge shadow-lg"
+              : "absolute inset-0 flex"
+          }
+        >
         <PlanCanvas
           anchor={anchor}
           basemap={plan.basemap}
@@ -620,6 +807,12 @@ export default function PlanPage({
           shapes={plan.shapes}
           survey={survey}
           surveySessionId={surveySessionId}
+          photos={photoDots}
+          livePhotoId={livePhotoId}
+          selectedPhotoId={selectedPhotoId}
+          onSelectPhoto={setSelectedPhotoId}
+          pinsDraggable={mode === "review"}
+          onMovePin={handleMovePin}
           rightAngle={rightAngle}
           smoothNew={smoothNew}
           labelFor={labelFor}
@@ -643,6 +836,41 @@ export default function PlanPage({
           scalePoints={scalePoints}
           onScalePointsChange={setScalePoints}
         />
+
+        {/*
+          The clip for wherever the playhead is, over the canvas.
+
+          Mounted for the whole life of the screen and hidden with `hidden`,
+          NEVER rendered conditionally: unmounting a <video> and putting it
+          back restarts playback from zero on iOS Safari, which is the same
+          reason Upright's review swaps its panes by class. It only takes the
+          stage while Review is showing and a clip is actually running.
+        */}
+        </div>
+
+        <div
+          className={
+            videoOnStage
+              ? "absolute inset-0"
+              : "absolute bottom-3 left-3 z-20 h-32 w-48 overflow-hidden rounded-xl border border-edge shadow-lg"
+          }
+          hidden={mode !== "review" || !visit}
+        >
+          <ReviewVideo
+            session={visit}
+            drift={drift}
+            audioRef={audioRef}
+            visible
+          />
+          <button
+            onClick={() => setVideoOnStage((v) => !v)}
+            className="absolute right-2 top-2 z-30 rounded-lg bg-bg/90 px-2 py-1 text-[0.65rem] font-bold text-ink backdrop-blur"
+          >
+            {videoOnStage ? "Show map" : "Show video"}
+          </button>
+        </div>
+
+        </div>
 
         {/*
           The way in on a phone. Top right of the map, clear of the zoom
@@ -681,6 +909,59 @@ export default function PlanPage({
           >
             Close
           </button>
+
+          {/*
+            The one switch this screen turns on. The column is the only thing
+            that changes: the canvas, the filmstrip and the transport below are
+            shared, so the visit and the take-off are two readings of one yard
+            rather than two screens.
+          */}
+          <div className="flex shrink-0 gap-1 rounded-xl bg-surface2 p-1">
+            {(["review", "plan"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-bold capitalize ${
+                  mode === m ? "bg-accent text-black" : "text-muted"
+                }`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+
+          {mode === "review" ? (
+            <>
+              <ReviewCard
+                chosen={plan.review}
+                propertyId={estimate.propertyId ?? null}
+                picking={pickingReview}
+                onPicking={setPickingReview}
+                onChoose={setReviewSession}
+              />
+              {pinError && (
+                <p className="shrink-0 rounded-xl border border-[#fca5a5] bg-surface p-2 text-xs leading-relaxed text-[#fca5a5]">
+                  {pinError}
+                </p>
+              )}
+              {visit && (
+                <p className="shrink-0 px-1 text-[0.65rem] leading-relaxed text-muted">
+                  Drag a pin to correct where it sits. That writes back to
+                  Upright and every elevation derived from it moves with it.
+                </p>
+              )}
+              <ReviewColumn
+                session={visit}
+                segments={segments}
+                transcriptStatus={transcriptStatus}
+                audioMs={audioMs}
+                drift={drift}
+                playing={playing}
+                onSeek={seekMs}
+              />
+            </>
+          ) : (
+          <>
           <AnchorCard
             estimate={estimate}
             picking={picking}
@@ -733,8 +1014,39 @@ export default function PlanPage({
               />
             ))
           )}
+          </>
+          )}
         </aside>
       </div>
+
+      {/*
+        The filmstrip and the transport belong to the SCREEN, not to the
+        column — they stay put when the column switches to the plan's cards, so
+        the pictures of the yard and the playhead are still to hand while beds
+        are being drawn. That is what makes this one tool rather than two.
+
+        The <audio> is mounted here for the life of the screen and carries no
+        `src` attribute: the hook assigns it after setting crossOrigin, because
+        the wrong order is captured as a tainted source and plays silence.
+      */}
+      <ReviewFilmstrip
+        session={visit}
+        audioMs={audioMs}
+        drift={drift}
+        onSeek={seekMs}
+        selectedPhotoId={selectedPhotoId}
+        onSelectPhoto={setSelectedPhotoId}
+      />
+      <ReviewTransport
+        session={visit}
+        audioMs={audioMs}
+        durationSec={durationSec}
+        playing={playing}
+        onToggle={toggleAudio}
+        onSeek={seekMs}
+        gainError={gainError}
+      />
+      <audio ref={audioRef} preload="metadata" className="hidden" />
 
       {/*
         Finish / Undo / Cancel as buttons, present for the whole of a drawing

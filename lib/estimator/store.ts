@@ -199,6 +199,7 @@ function planFrom(value: unknown): PlanState {
   const v = value as Record<string, unknown>;
   const { nodes, shapes } = topologyFrom(v);
   const rawSurvey = (v.survey ?? null) as Record<string, unknown> | null;
+  const rawReview = (v.review ?? null) as Record<string, unknown> | null;
   return {
     anchor: anchorFrom(v.anchor),
     basemap: v.basemap === "none" ? "none" : "satellite",
@@ -211,6 +212,16 @@ function planFrom(value: unknown): PlanState {
               typeof rawSurvey.label === "string" && rawSurvey.label
                 ? rawSurvey.label
                 : "Upright survey",
+          }
+        : null,
+    review:
+      rawReview && typeof rawReview.sessionId === "string" && rawReview.sessionId
+        ? {
+            sessionId: rawReview.sessionId,
+            label:
+              typeof rawReview.label === "string" && rawReview.label
+                ? rawReview.label
+                : "Upright visit",
           }
         : null,
     shapes,
@@ -454,6 +465,17 @@ export function setBasemap(basemap: Basemap) {
  */
 export function setSurveySession(survey: { sessionId: string; label: string } | null) {
   mutatePlan((plan) => ({ ...plan, survey }));
+}
+
+/**
+ * Replay one Upright session beside the plan, or none.
+ *
+ * Sits next to `setSurveySession` and deliberately does not touch it: the
+ * visit you listen to and the survey you lay beds out against are chosen
+ * separately, because the two lists rarely hold the same sessions.
+ */
+export function setReviewSession(review: { sessionId: string; label: string } | null) {
+  mutatePlan((plan) => ({ ...plan, review }));
 }
 
 export function setOverlayHidden(overlayId: string, hidden: boolean) {
