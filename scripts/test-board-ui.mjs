@@ -128,8 +128,26 @@ try {
     r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, estimates: [], estimate: null, ops: [] }) }));
   await page.route("**/api/property-layers**", (r) =>
     r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, layers: [] }) }));
+  // Deal 5 sits on property 13. Two visits there, two somewhere else, one
+  // Upright has not tagged at all — which is the ordinary case on this data.
+  const SESSIONS = [
+    { id: "s1", startedAt: "2026-08-29T15:00:00Z", propertyId: 13, propertyAddress: "5 Gone Ln",
+      durationSeconds: 600, transcriptStatus: "completed", photoCount: 2, elevationPointCount: 0 },
+    { id: "s2", startedAt: "2026-08-28T15:00:00Z", propertyId: 10, propertyAddress: "12 Elm St",
+      durationSeconds: 300, transcriptStatus: "completed", photoCount: 1, elevationPointCount: 0 },
+    { id: "s3", startedAt: "2026-08-27T15:00:00Z", propertyId: null, propertyAddress: null,
+      durationSeconds: 200, transcriptStatus: "none", photoCount: 0, elevationPointCount: 0 },
+    { id: "s4", startedAt: "2026-08-26T15:00:00Z", propertyId: 13, propertyAddress: "5 Gone Ln",
+      durationSeconds: 900, transcriptStatus: "none", photoCount: 3, elevationPointCount: 0 },
+    { id: "s5", startedAt: "2026-08-25T15:00:00Z", propertyId: 11, propertyAddress: "2651 Naples Dr",
+      durationSeconds: 100, transcriptStatus: "error", photoCount: 0, elevationPointCount: 0 },
+  ];
   await page.route("**/api/upright/**", (r) =>
     r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, sessions: [], points: [] }) }));
+  // Registered AFTER the catch-all on purpose: Playwright tries routes in
+  // reverse registration order, so the general one would otherwise swallow it.
+  await page.route("**/api/upright/sessions**", (r) =>
+    r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, sessions: SESSIONS }) }));
   await page.route("**server.arcgisonline.com/**", (r) => r.abort());
   // The one cover photo that exists, and the one that does not.
   await page.route("**cover.test/yard.png", (r) =>
@@ -314,6 +332,57 @@ try {
     /from the job/i.test(card.text), card.text);
   ok("and that the anchor is the property's own record, not a guess",
     /from the property record/i.test(card.text), card.text);
+
+  // 7d. AND THE VISIT TAB LEADS WITH THIS YARD.
+  //
+  // Same nesting as the plan's property card: the yard is settled upstream, so
+  // "which visit" is a question inside an answer somebody already gave. It
+  // NARROWS RATHER THAN GATES — most sessions carry no property at all, and a
+  // hard filter would empty the picker and hide the usable transcripts.
+  await page.click("text=/^\u2039/");            // back out of the plan
+  await page.waitForSelector("main button.aspect-square");
+  const visitIndex = await page.$$eval("main button.aspect-square", (els) =>
+    els.findIndex((b) => /^\u{1F5D2}\u{FE0F}?Visit/u.test(b.textContent ?? "")));
+  ok("the grid has a Visit tile to open", visitIndex >= 0, String(visitIndex));
+  await page.locator("main button.aspect-square").nth(visitIndex).click();
+  await page.click("text=From Upright");
+  await page.waitForSelector("text=Transcript ready");
+
+  const picker = await page.evaluate(() => {
+    const sheet = document.querySelector("div.fixed.z-50 > div");
+    const groups = [...(sheet?.querySelectorAll("p.tracking-widest") ?? [])]
+      .map((p) => p.textContent ?? "");
+    const rows = [...(sheet?.querySelectorAll("div.rounded-2xl.border") ?? [])]
+      .map((d) => d.querySelector("p")?.textContent ?? "");
+    const toggle = [...(sheet?.querySelectorAll("button") ?? [])]
+      .map((b) => b.textContent ?? "")
+      .find((t) => /other session/i.test(t));
+    return { groups, rows, toggle };
+  });
+  ok("the picker heads the first group with the yard",
+    picker.groups[0] === "5 GONE LN", picker.groups.join(" | "));
+  ok("and shows ONLY this yard's visits under it",
+    picker.rows.length === 2 && picker.rows.every((r) => /Gone Ln/.test(r)),
+    picker.rows.join(" | "));
+  ok("the rest are behind a toggle that counts them",
+    /3 other sessions/.test(picker.toggle ?? ""), picker.toggle ?? "(none)");
+
+  await page.click("text=/other session/");
+  await page.waitForTimeout(200);
+  const opened = await page.evaluate(() => {
+    const sheet = document.querySelector("div.fixed.z-50 > div");
+    return [...(sheet?.querySelectorAll("div.rounded-2xl.border") ?? [])]
+      .map((d) => d.querySelector("p")?.textContent ?? "");
+  });
+  ok("A VISIT AT ANOTHER YARD IS STILL ONE TAP AWAY, not filtered out of existence",
+    opened.length === 5 && opened.some((r) => /Elm St/.test(r)), opened.join(" | "));
+  ok("and an untagged session is in that group rather than claimed for this yard",
+    opened.some((r) => /Untagged session/.test(r)), opened.join(" | "));
+
+  await page.click("button:text-is('Close')");
+  await page.waitForTimeout(200);
+  await page.click("text=/^\u2039/");
+  await page.waitForSelector("main button.aspect-square");
 
   // 8. Having chosen, a reload does NOT bounce back to the board.
   await page.reload({ waitUntil: "domcontentloaded" });

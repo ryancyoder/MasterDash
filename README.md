@@ -192,7 +192,7 @@ tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 37 checks. A throw is reported as a failure rather than crashing
+is showing: 43 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
 
@@ -797,6 +797,34 @@ that it says where the answer came from. Breaking either half turns the run
 red, and the mutant's card reads exactly what this replaced: *PROPERTY ·
 Choose · Not chosen*.
 
+#### And the visit picker leads with that yard
+
+Same nesting, one screen over. **From Upright** used to list every recorded
+session, newest first, with the right one somewhere in the middle — and by then
+the yard had been settled two screens up. It now heads the list with the visits
+to *this* property.
+
+**It narrows; it does not gate.** Of the 9 sessions on file, **4 carry a
+`property_id` at all**, and of the 3 with a finished transcript exactly **1** is
+tagged. A hard filter would empty the picker for nearly every job and hide the
+two usable transcripts outright — the same mistake as swapping a satellite for
+a cover photo 8 properties have. So the rest sit under **Show N other
+sessions**, one tap away, and that group opens by itself when this yard has
+none of its own: a panel whose only group is empty reads as a picker with
+nothing in it.
+
+**An untagged session goes with the others, and the wording is careful about
+why.** It is not known to be somewhere else; it is not known to be here.
+Upright's matcher exists to settle that from the pins, and until it has run the
+honest home is the group that says nothing either way — which the panel states
+in as many words.
+
+`npm run test:visit` covers the rule without a browser (9 checks, and the
+suite's reason to exist: `lib/estimator/visit.ts` had none). `test:board-ui`
+opens the picker and reads it: the yard heads the first group, only its own
+visits are under it, the toggle counts the rest, and a visit at another yard is
+still one tap away rather than filtered out of existence.
+
 #### Placing a layer, and scaling it off the drawing
 
 **Place** on a layer puts the canvas into an alignment mode: one finger slides
@@ -1053,6 +1081,7 @@ npx eslint .
 npm run test:review     # the review screen's pure logic
 npm run test:plan       # the take-off's geometry and the map anchor
 npm run test:board      # the job board's pairing and filtering
+npm run test:visit      # which visit, for a yard already chosen
 npm run test:board-ui   # the job board in a real browser (needs playwright)
 ```
 

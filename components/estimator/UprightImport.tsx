@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { VisitSource } from "@/lib/estimator/visit";
+import { useEffect, useMemo, useState } from "react";
+import { sessionsAtProperty, type VisitSource } from "@/lib/estimator/visit";
 
 /**
  * Pulling a site visit out of Upright.
@@ -17,11 +17,18 @@ import type { VisitSource } from "@/lib/estimator/visit";
  * an iPad in a truck — the address and the day — and the state of its
  * transcript, because that is the only thing that decides whether the row can
  * be used yet.
+ *
+ * IT LEADS WITH THIS YARD. The property is settled when the job is opened off
+ * the board, so which visit is a question nested inside an answer somebody
+ * already gave. It narrows rather than gates — see `sessionsAtProperty()` for
+ * the coverage that makes gating the wrong move — so everything else is one
+ * tap away under a group that says what it is.
  */
 
 interface UprightSession {
   id: string;
   startedAt: string | null;
+  propertyId: number | null;
   propertyAddress: string | null;
   durationSeconds: number | null;
   transcriptStatus: string | null;
@@ -106,11 +113,17 @@ async function fetchSessions(): Promise<{
 
 export default function UprightImport({
   hasTranscript,
+  propertyId,
+  propertyLabel,
   onImport,
   onClose,
 }: {
   /** Whether accepting a session would replace work already on the page. */
   hasTranscript: boolean;
+  /** The yard this estimate is for, chosen upstream. Null on one with no job. */
+  propertyId: number | null;
+  /** Its address, so the group names the yard rather than its row id. */
+  propertyLabel: string | null;
   onImport: (transcript: string, source: VisitSource) => void;
   onClose: () => void;
 }) {
@@ -119,6 +132,14 @@ export default function UprightImport({
   /** The row being acted on, so only its own button says so. */
   const [busyId, setBusyId] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  /**
+   * Whether the other sessions are showing.
+   *
+   * Open when this yard has none of its own — a panel whose only group is
+   * empty reads as a picker with nothing in it, which is exactly the failure
+   * the grouping is meant to avoid.
+   */
+  const [showOthers, setShowOthers] = useState(false);
 
   useEffect(() => {
     // Guarded because the sheet is closed by tapping the backdrop, which a
@@ -223,6 +244,79 @@ export default function UprightImport({
     }
   };
 
+  const { here, elsewhere } = useMemo(
+    () => sessionsAtProperty(sessions ?? [], propertyId),
+    [sessions, propertyId],
+  );
+
+  /**
+   * One session, drawn the same way in either group.
+   *
+   * A function rather than a component so it keeps `use`, `transcribe` and
+   * `busyId` by closure — the row is the same row wherever it is listed, and
+   * two copies of it would be two places for the Transcribe button to drift.
+   */
+  const row = (s: UprightSession) => {
+    const status = s.transcriptStatus ?? "none";
+    const ready = status === "completed";
+    const busy = busyId === s.id;
+    const bits = [
+      durationOf(s.durationSeconds),
+      s.photoCount > 0 ? `${s.photoCount} photo${s.photoCount === 1 ? "" : "s"}` : null,
+      s.elevationPointCount > 0 ? `${s.elevationPointCount} survey pts` : null,
+    ].filter(Boolean);
+    return (
+      <div key={s.id} className="rounded-2xl border border-edge bg-bg p-3">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-bold text-ink">
+              {s.propertyAddress ?? "Untagged session"}
+            </p>
+            <p className="text-[0.7rem] tabular-nums text-muted">
+              {[whenOf(s), ...bits].join(" \u00b7 ")}
+            </p>
+          </div>
+          {ready ? (
+            <button
+              onClick={() => use(s)}
+              disabled={busy}
+              className="shrink-0 rounded-lg bg-accent px-4 py-1.5 text-[0.7rem] font-bold text-black disabled:opacity-40"
+            >
+              {busy ? "\u2026" : "Use"}
+            </button>
+          ) : status === "processing" ? (
+            <button
+              onClick={() => use(s)}
+              disabled={busy}
+              className="shrink-0 rounded-lg bg-surface2 px-4 py-1.5 text-[0.7rem] font-bold text-ink disabled:opacity-40"
+            >
+              {busy ? "\u2026" : "Check"}
+            </button>
+          ) : (
+            <button
+              onClick={() => transcribe(s)}
+              disabled={busy}
+              className="shrink-0 rounded-lg bg-surface2 px-4 py-1.5 text-[0.7rem] font-bold text-ink disabled:opacity-40"
+            >
+              {busy ? "\u2026" : "Transcribe"}
+            </button>
+          )}
+        </div>
+        <p
+          className={`mt-1 text-[0.65rem] font-bold tracking-wide ${
+            ready
+              ? "text-accent"
+              : status === "error"
+                ? "text-[#fca5a5]"
+                : "text-muted"
+          }`}
+        >
+          {STATUS_TEXT[status] ?? status}
+        </p>
+      </div>
+    );
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/70"
@@ -271,75 +365,43 @@ export default function UprightImport({
               </p>
             )
           ) : (
-            <div className="flex flex-col gap-2">
-              {sessions.map((s) => {
-                const status = s.transcriptStatus ?? "none";
-                const ready = status === "completed";
-                const busy = busyId === s.id;
-                const bits = [
-                  durationOf(s.durationSeconds),
-                  s.photoCount > 0
-                    ? `${s.photoCount} photo${s.photoCount === 1 ? "" : "s"}`
-                    : null,
-                  s.elevationPointCount > 0
-                    ? `${s.elevationPointCount} survey pts`
-                    : null,
-                ].filter(Boolean);
-                return (
-                  <div
-                    key={s.id}
-                    className="rounded-2xl border border-edge bg-bg p-3"
-                  >
-                    <div className="flex items-start gap-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-bold text-ink">
-                          {s.propertyAddress ?? "Untagged session"}
-                        </p>
-                        <p className="text-[0.7rem] tabular-nums text-muted">
-                          {[whenOf(s), ...bits].join(" · ")}
-                        </p>
-                      </div>
-                      {ready ? (
-                        <button
-                          onClick={() => use(s)}
-                          disabled={busy}
-                          className="shrink-0 rounded-lg bg-accent px-4 py-1.5 text-[0.7rem] font-bold text-black disabled:opacity-40"
-                        >
-                          {busy ? "…" : "Use"}
-                        </button>
-                      ) : status === "processing" ? (
-                        <button
-                          onClick={() => use(s)}
-                          disabled={busy}
-                          className="shrink-0 rounded-lg bg-surface2 px-4 py-1.5 text-[0.7rem] font-bold text-ink disabled:opacity-40"
-                        >
-                          {busy ? "…" : "Check"}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => transcribe(s)}
-                          disabled={busy}
-                          className="shrink-0 rounded-lg bg-surface2 px-4 py-1.5 text-[0.7rem] font-bold text-ink disabled:opacity-40"
-                        >
-                          {busy ? "…" : "Transcribe"}
-                        </button>
-                      )}
-                    </div>
-                    <p
-                      className={`mt-1 text-[0.65rem] font-bold tracking-wide ${
-                        ready
-                          ? "text-accent"
-                          : status === "error"
-                            ? "text-[#fca5a5]"
-                            : "text-muted"
-                      }`}
-                    >
-                      {STATUS_TEXT[status] ?? status}
+            <>
+              {here.length > 0 && (
+                <p className="mb-2 text-[0.65rem] font-bold tracking-widest text-muted">
+                  {(propertyLabel ?? "THIS PROPERTY").toUpperCase()}
+                </p>
+              )}
+              <div className="flex flex-col gap-2">{here.map(row)}</div>
+
+              {elsewhere.length > 0 && here.length > 0 && (
+                <button
+                  onClick={() => setShowOthers((v) => !v)}
+                  className="mt-3 w-full rounded-xl bg-surface2 px-3 py-2 text-[0.7rem] font-bold text-muted"
+                >
+                  {showOthers ? "Hide" : "Show"} {elsewhere.length} other session
+                  {elsewhere.length === 1 ? "" : "s"}
+                </button>
+              )}
+
+              {elsewhere.length > 0 && (showOthers || here.length === 0) && (
+                <>
+                  {here.length > 0 && (
+                    <p className="mb-2 mt-3 text-[0.65rem] font-bold tracking-widest text-muted">
+                      EVERYWHERE ELSE
                     </p>
-                  </div>
-                );
-              })}
-            </div>
+                  )}
+                  {/* Most sessions carry no property at all, so this group is
+                      "not known to be here" rather than "known to be somewhere
+                      else". Said once, where it can be read. */}
+                  {here.length > 0 && (
+                    <p className="mb-2 text-[0.65rem] leading-tight text-muted">
+                      Including visits Upright has not tagged to a property yet.
+                    </p>
+                  )}
+                  <div className="flex flex-col gap-2">{elsewhere.map(row)}</div>
+                </>
+              )}
+            </>
           )}
         </div>
       </div>

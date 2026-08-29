@@ -242,3 +242,38 @@ export const KIND_COLOR: Record<FindingKind, string> = {
   unpriced: "#ef4444",
   note: "#78716c",
 };
+
+// --- Which visit, for a yard already chosen --------------------------------
+
+/**
+ * The sessions recorded at this estimate's yard, and everything else.
+ *
+ * The property is settled two screens up, when the job is opened off the
+ * board, so "which visit" is a question nested inside an answer somebody
+ * already gave — the same shape as the plan's property card. The picker leads
+ * with the visits to THIS yard instead of a flat list of everything Upright
+ * has, newest first, in which the right one is somewhere in the middle.
+ *
+ * BUT IT NARROWS, IT DOES NOT GATE, and the coverage is why. Of the 9 sessions
+ * on file, 4 carry a `property_id` at all, and of the 3 with a finished
+ * transcript exactly 1 is tagged. Filtering hard would empty the picker for
+ * nearly every job and hide the two usable transcripts outright — the same
+ * mistake as swapping the job tile's satellite for a cover photo 8 properties
+ * have. So the rest stay one tap away, and the group is labelled rather than
+ * hidden.
+ *
+ * An UNTAGGED session goes to `elsewhere`, which is worth being precise about:
+ * it is not known to be somewhere else, it is not known to be here. Upright's
+ * matcher exists to fix that from the pins, and until it has run on a session
+ * the honest place for it is the group that says nothing either way.
+ */
+export function sessionsAtProperty<T extends { propertyId: number | null }>(
+  sessions: readonly T[],
+  propertyId: number | null,
+): { here: T[]; elsewhere: T[] } {
+  if (propertyId === null) return { here: [], elsewhere: [...sessions] };
+  const here: T[] = [];
+  const elsewhere: T[] = [];
+  for (const s of sessions) (s.propertyId === propertyId ? here : elsewhere).push(s);
+  return { here, elsewhere };
+}

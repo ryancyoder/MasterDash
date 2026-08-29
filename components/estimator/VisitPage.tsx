@@ -275,6 +275,13 @@ export default function VisitPage({
       {importing && (
         <UprightImport
           hasTranscript={visit.transcript.trim().length > 0}
+          /* The yard, settled when the job was opened. The picker leads with
+             the visits to it rather than a flat list of everything Upright
+             has, in which the right one is somewhere in the middle. The label
+             comes off the map anchor, which is the only place the address is
+             kept. */
+          propertyId={estimate.propertyId}
+          propertyLabel={estimate.plan.anchor?.label ?? null}
           onImport={(text: string, source: VisitSource) =>
             setImportedTranscript(text, source)
           }
