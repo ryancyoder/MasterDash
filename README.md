@@ -434,6 +434,46 @@ where Upright uses haversine on a 6371 km sphere, which moves the answers by at
 most 0.019' on that survey — a quarter of an inch, against a field
 repeatability of ±0.1'.
 
+#### Squaring corners
+
+Beds and patios are mostly rectangles, and a rectangle tapped out by hand on a
+moving truck never is. **⊾** in the toolbar squares corners as they are placed;
+it is on by default and can be turned off, because some yards are not square
+and a snap you cannot switch off stops being a help.
+
+Two things happen, in this order:
+
+**Closing the rectangle.** Once three corners are down there is exactly one
+position for the fourth that makes both the corner at the last point and the
+corner back at the first square. It is marked on the map with a small box
+labelled *square*; tapping near it snaps to it, and the shape comes out a true
+rectangle rather than one that is 89.2° and measures accordingly.
+
+**Squaring one corner.** Otherwise the new edge is constrained to run at a
+multiple of 90° from the previous one — the tap sets how LONG the side is, the
+constraint sets which way it runs. That is the right split: which way a bed
+edge runs is a decision about the geometry, how long it is is a decision about
+the yard. Straight on is allowed, since a long side often gets tapped in two
+goes; doubling back is not, because that is never a corner.
+
+Both come **after** the corner and survey snaps, never before. Landing on a
+shot point says *this corner is there*, and squaring only says *this side runs
+that way* — a real position always wins over a tidy-up.
+
+The tolerance is in screen pixels (26), measured from where the squared corner
+would be to where the tap actually landed, so it means the same thing at every
+zoom and on a side of any length. Because there is no hover on a touch screen,
+the allowed directions are drawn as dashed guides from the last corner — the
+snap is something to aim at rather than something that happens to you.
+
+**It is the ground that is squared, not the screen.** The constraint is solved
+on the tangent plane at the corner. Mercator is conformal, so at site scale the
+two agree and the guides can be drawn in screen space — but the geometry that
+gets stored is square on the ground, which is what a contractor is buying.
+
+Measured: a deliberately sloppy rectangle whose worst corner was 0.81° out came
+back at **90.000° on all four**.
+
 #### Drawing a bed onto surveyed points
 
 A take-off corner drawn within 18 pixels of a shot point becomes **linked** to

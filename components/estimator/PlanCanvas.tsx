@@ -8,6 +8,8 @@ import {
   lengthFt,
   metresPerWorldUnit,
   padBounds,
+  squareClose,
+  squareCorner,
   toLatLng,
   toWorld,
   worldBounds,
@@ -82,6 +84,15 @@ const TAP_SLOP_PX = 10;
  * radius, so reaching for a corner and joining to one do not fight.
  */
 const SNAP_PX = 18;
+/**
+ * How near the square position a tap has to land to be squared.
+ *
+ * Looser than the corner snap, because this is a constraint on shape rather
+ * than a claim about a place: landing on a shot point says "this corner is
+ * there", and squaring says "this side runs that way", which is a judgement
+ * anyone tapping a rectangle has already made.
+ */
+const SQUARE_PX = 26;
 
 /**
  * Zoom, as canvas pixels per World unit.
@@ -295,6 +306,7 @@ export default function PlanCanvas({
   shapes,
   survey,
   surveySessionId,
+  rightAngle,
   labelFor,
   tool,
   selectedShapeId,
@@ -343,6 +355,8 @@ export default function PlanCanvas({
   survey: SurveyLayer | null;
   /** Which session the shown survey is, so a link can record where it came from. */
   surveySessionId: string | null;
+  /** Square up corners while drawing. Off is for the yards that are not. */
+  rightAngle: boolean;
   /** The assembly name drawn under a shape's measurement, when it has one. */
   labelFor: (shape: PlanShape) => string | null;
   tool: PlanTool;
@@ -640,6 +654,25 @@ export default function PlanCanvas({
 
   /** Identifies the anchor's position, so a change of property is detectable. */
   const anchorKey = anchor ? `${anchor.centre.lat},${anchor.centre.lng}` : null;
+
+  /**
+   * Where a squared corner could go, best first.
+   *
+   * Closing the rectangle comes first because it is the stronger claim — it
+   * makes BOTH ends square at once, and it is the thing somebody tapping out a
+   * bed is usually trying to do.
+   */
+  const squareOptions = useCallback((): LatLng[] => {
+    if (pending.length < 2) return [];
+    const prev2 = pending[pending.length - 2].at;
+    const prev = pending[pending.length - 1].at;
+    const out: LatLng[] = [];
+    if (tool === "area" && pending.length >= 3) {
+      const close = squareClose(pending[0].at, prev2, prev);
+      if (close) out.push(close);
+    }
+    return out;
+  }, [pending, tool]);
 
   /** Corner POSITIONS as they are right now — a live drag overrides the stored. */
   const liveNodes = useMemo(
@@ -1069,6 +1102,49 @@ export default function PlanCanvas({
         ctx.stroke();
       }
       ctx.setLineDash([]);
+
+      // Where a square corner would go. Drawn because on a touch screen there
+      // is no hover to preview it with — without this the snap would be a
+      // thing that happened to you rather than a thing you aimed at.
+      if (rightAngle && pts.length >= 2) {
+        const last = pts[pts.length - 1];
+        const prev = pts[pts.length - 2];
+        const len = Math.hypot(last.x - prev.x, last.y - prev.y);
+        if (len > 1) {
+          // Mercator is conformal, so a right angle on the ground is a right
+          // angle on screen; the guides can be drawn in screen space.
+          const ux = (last.x - prev.x) / len;
+          const uy = (last.y - prev.y) / len;
+          ctx.save();
+          ctx.strokeStyle = "rgba(125,211,252,0.5)";
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4, 6]);
+          for (const [dx, dy] of [
+            [ux, uy],
+            [-uy, ux],
+            [uy, -ux],
+          ]) {
+            ctx.beginPath();
+            ctx.moveTo(last.x, last.y);
+            ctx.lineTo(last.x + dx * 160, last.y + dy * 160);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        for (const option of squareOptions()) {
+          const q = toCanvas(toWorld(option), t);
+          ctx.save();
+          ctx.shadowColor = "rgba(0,0,0,0.9)";
+          ctx.shadowBlur = 4;
+          ctx.strokeStyle = "#7dd3fc";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(q.x - 8, q.y - 8, 16, 16);
+          ctx.restore();
+          drawLabel(ctx, "square", q.x, q.y - 20, "#7dd3fc");
+        }
+      }
+
       pts.forEach((p, i) => {
         // The first vertex is drawn large while an area is closeable, because
         // tapping it is how you close — the target has to look like one.
@@ -1161,6 +1237,8 @@ export default function PlanCanvas({
     shared,
     snapTo,
     pending,
+    rightAngle,
+    squareOptions,
     canvasSize,
     assetVersion,
     basemap,
@@ -1272,14 +1350,39 @@ export default function PlanCanvas({
         cp,
         pending.map((pt) => pt.nodeId).filter((id): id is string => id !== null),
       );
-      onPendingChange([
-        ...pending,
-        target === null
-          ? { at: ll, nodeId: null }
-          : target.kind === "node"
+      if (target !== null) {
+        onPendingChange([
+          ...pending,
+          target.kind === "node"
             ? { at: target.at, nodeId: target.nodeId }
             : { at: target.at, nodeId: null, survey: target.link },
-      ]);
+        ]);
+        return;
+      }
+
+      // Nothing to land on, so square the corner instead. After the place
+      // snaps, never before: a shot point is a measurement and a right angle
+      // is only a tidy-up, so a real position always wins.
+      // `squareClose` does not depend on where the tap landed — it is a fixed
+      // corner — so it is shared with the guides. `squareCorner` does, since
+      // the tap sets how long the side is.
+      const squared = rightAngle ? [...squareOptions()] : [];
+      if (rightAngle && pending.length >= 2) {
+        const corner = squareCorner(
+          pending[pending.length - 2].at,
+          pending[pending.length - 1].at,
+          ll,
+        );
+        if (corner) squared.push(corner);
+      }
+      for (const option of squared) {
+        if (dist(cp, toCanvas(toWorld(option), t)) <= SQUARE_PX) {
+          onPendingChange([...pending, { at: option, nodeId: null }]);
+          return;
+        }
+      }
+
+      onPendingChange([...pending, { at: ll, nodeId: null }]);
       return;
     }
 

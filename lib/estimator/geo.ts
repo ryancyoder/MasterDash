@@ -414,3 +414,107 @@ export function scaleToKnownDimension(
     centre: fromLocal({ e: centre.e * k, n: centre.n * k }, frame),
   };
 }
+
+// --- Square corners -------------------------------------------------------
+//
+// Beds and patios are mostly rectangles, and a rectangle tapped out by hand on
+// a moving truck is never square. Both of these work on the tangent plane at
+// the corner being placed, so "perpendicular" means perpendicular on the
+// GROUND — not on the screen, which is a different thing once Mercator has had
+// its way with the latitude.
+
+/** Unit vector, or null for a zero-length edge, which has no direction. */
+function unit(e: number, n: number): LocalPoint | null {
+  const len = Math.hypot(e, n);
+  return len > 1e-9 ? { e: e / len, n: n / len } : null;
+}
+
+/**
+ * Move `to` so the edge `at`→`to` is square to the edge `from`→`at`.
+ *
+ * The point is projected onto whichever of the allowed directions it is
+ * nearest, keeping how far along that direction it was — so a tap sets the
+ * LENGTH of the side and the constraint sets its bearing. That is the right
+ * split: which way a bed edge runs is a decision about the geometry, and how
+ * long it is is a decision about the yard.
+ *
+ * Allowed directions are the previous edge turned by 90°, 180° and 270°.
+ * Straight on (180°) is kept because a long side is often tapped in two goes;
+ * doubling back (0°) is not, since that is never a corner, only a mistake.
+ *
+ * Null when the previous edge has no length, or when the tap lies behind every
+ * allowed direction — projecting onto a ray that runs the other way would put
+ * the corner somewhere nobody tapped.
+ *
+ * A tap well off to the side still gets an answer, and should: it is the
+ * CALLER that decides whether the snapped position is near enough to what was
+ * tapped to use, in screen pixels, where the tolerance means the same thing at
+ * every zoom. This only says where the square corner would be.
+ */
+export function squareCorner(from: LatLng, at: LatLng, to: LatLng): LatLng | null {
+  const frame = localFrame(at);
+  const a = toLocal(from, frame);
+  const b = toLocal(at, frame);
+  const t = toLocal(to, frame);
+
+  const dir = unit(b.e - a.e, b.n - a.n);
+  if (!dir) return null;
+
+  const v = { e: t.e - b.e, n: t.n - b.n };
+  const candidates: LocalPoint[] = [
+    dir, // straight on
+    { e: -dir.n, n: dir.e }, // left
+    { e: dir.n, n: -dir.e }, // right
+  ];
+
+  let best: LocalPoint | null = null;
+  let bestOff = Infinity;
+  for (const c of candidates) {
+    const along = v.e * c.e + v.n * c.n;
+    if (along <= 0) continue;
+    // Perpendicular distance from the ray: how far the tap missed by.
+    const off = Math.abs(v.e * -c.n + v.n * c.e);
+    if (off < bestOff) {
+      bestOff = off;
+      best = { e: b.e + c.e * along, n: b.n + c.n * along };
+    }
+  }
+  return best ? fromLocal(best, frame) : null;
+}
+
+/**
+ * The corner that closes a rectangle exactly.
+ *
+ * Given the ring's first point and the last edge placed, there is exactly one
+ * position for the next corner that makes both the corner at `last` and the
+ * corner at `first` square: leave `last` perpendicular to the last edge, and
+ * arrive at `first` along it. Tapping near it snaps to it, and the shape comes
+ * out a true rectangle rather than one that is 89.4° and measures accordingly.
+ *
+ * Null only when the last edge has no direction. There is otherwise always an
+ * answer, including for shapes that were never going to be rectangles — a
+ * three-point zigzag has a fourth corner that would square it. Whether to
+ * offer it is the caller's call, made on how near the tap landed.
+ */
+export function squareClose(
+  first: LatLng,
+  previous: LatLng,
+  last: LatLng,
+): LatLng | null {
+  const frame = localFrame(last);
+  const p = toLocal(previous, frame);
+  const l = toLocal(last, frame);
+  const f = toLocal(first, frame);
+
+  const dir = unit(l.e - p.e, l.n - p.n);
+  if (!dir) return null;
+  const perp = { e: -dir.n, n: dir.e };
+
+  // Solving `last + s·perp = first + t·dir` for s. The two directions are
+  // orthogonal unit vectors by construction, so the determinant is always
+  // exactly 1 and there is no parallel case to guard: s is just how far the
+  // first point sits off the last edge's line.
+  const s = (f.n - l.n) * dir.e - (f.e - l.e) * dir.n;
+
+  return fromLocal({ e: l.e + perp.e * s, n: l.n + perp.n * s }, frame);
+}

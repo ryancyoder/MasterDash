@@ -111,6 +111,12 @@ export default function PlanPage({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showMeasurements, setShowMeasurements] = useState(true);
   /**
+   * Square corners up while drawing. On by default because beds and patios
+   * are mostly rectangles; off because some yards are not, and a snap you
+   * cannot turn off stops being a help.
+   */
+  const [rightAngle, setRightAngle] = useState(true);
+  /**
    * The shape being drawn, owned here rather than in the canvas. The canvas
    * reports taps; Finish, Undo and Cancel are buttons on this page, and a
    * button needs something to act on.
@@ -425,6 +431,16 @@ export default function PlanPage({
         ))}
         <div className="flex-1" />
         <button
+          onClick={() => setRightAngle((v) => !v)}
+          className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${
+            rightAngle ? "bg-accent text-black" : "bg-surface2 text-muted"
+          }`}
+          title={rightAngle ? "Square corners: on" : "Square corners: off"}
+          aria-label="Square corners"
+        >
+          ⊾
+        </button>
+        <button
           onClick={() => setShowMeasurements((v) => !v)}
           className="shrink-0 rounded-xl bg-surface2 px-3 py-2 text-xs font-bold text-muted"
           title={showMeasurements ? "Hide the numbers" : "Show the numbers"}
@@ -565,7 +581,9 @@ export default function PlanPage({
         </div>
       ) : (
         <p className="shrink-0 mb-2 text-[0.7rem] text-muted">
-          {ready ? HINTS[tool] : "Choose the property first — the map has to open somewhere."}
+          {ready
+          ? `${HINTS[tool]}${rightAngle && tool !== "select" ? " · corners square up" : ""}`
+          : "Choose the property first — the map has to open somewhere."}
         </p>
       )}
 
@@ -579,6 +597,7 @@ export default function PlanPage({
           shapes={plan.shapes}
           survey={survey}
           surveySessionId={surveySessionId}
+          rightAngle={rightAngle}
           labelFor={labelFor}
           tool={tool}
           selectedShapeId={selectedId}
