@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   PHOTO_WINDOW_MS,
   clipAt,
+  clipErrorMessage,
+  clipSeekTarget,
   fmtClock,
   photoAt,
   reviewLabel,
@@ -32,11 +34,16 @@ import { fetchReviewSessions, type ReviewSessionRow } from "@/lib/estimator/revi
  * React way to express "show the video instead of the canvas" — destroys and
  * recreates it on every swap, which restarts playback from zero on iOS Safari.
  * That is the same reason Upright's review swaps its panes by class and never
- * re-parents them. Both stages stay mounted; only `hidden` moves.
+ * re-parents them. Both stages stay mounted; only geometry moves.
  *
  * It also syncs OUTSIDE React. Keeping a clip in step with the audio needs a
  * check every frame, and putting a 60-per-second value through state would
  * re-render the page around it for no visible gain.
+ *
+ * What DOES go through state is what the pane says: whether there is a clip
+ * here at all, and what went wrong when there is one and it is not playing.
+ * Both change a handful of times in a visit, and neither can be read off the
+ * element by looking at it.
  */
 export function ReviewVideo({
   session,
@@ -52,6 +59,7 @@ export function ReviewVideo({
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [gap, setGap] = useState(true);
+  const [trouble, setTrouble] = useState<string | null>(null);
 
   const clips = useMemo(() => session?.clips ?? [], [session]);
 
@@ -61,48 +69,106 @@ export function ReviewVideo({
     if (!video || !audio) return;
     let raf = 0;
     let shownClip: string | null = null;
+    let seeded = false;
+    let loadedAt = 0;
+    let slowSaid = false;
+
+    // The element's own complaints. Without these every failure on this path
+    // is a black rectangle: a 404, a codec this browser will not decode and a
+    // clip that is merely slow all look exactly alike, and all three look like
+    // a visit recorded with the camera switched off.
+    const onError = () => setTrouble(clipErrorMessage(video.error?.code ?? null));
+    const onPlayable = () => {
+      slowSaid = false;
+      setTrouble(null);
+    };
+    video.addEventListener("error", onError);
+    video.addEventListener("loadeddata", onPlayable);
+    video.addEventListener("canplay", onPlayable);
 
     const tick = () => {
       const hit = clipAt(clips, audio.currentTime * 1000, drift);
       if (hit) {
         if (shownClip !== hit.clip.id) {
           shownClip = hit.clip.id;
+          seeded = false;
+          slowSaid = false;
+          loadedAt = performance.now();
+          setTrouble(null);
           video.src = hit.clip.url;
         }
-        // Only nudge when it has actually slipped, and only once the file has
-        // metadata. Assigning currentTime every frame would re-seek
-        // continuously and stutter the picture; assigning it before
-        // HAVE_METADATA is a no-op in some browsers and throws in others, and
-        // a throw inside the frame loop would take the whole sync with it.
-        if (video.readyState >= 1 && Math.abs(video.currentTime - hit.withinSec) > 0.15) {
+
+        // SEEK RARELY, AND NEVER ON TOP OF A SEEK. These are MediaRecorder
+        // files with no seek index, so a seek is a scan; reissuing one every
+        // frame is how the picture stays black for a whole clip while
+        // everything else looks right. clipSeekTarget() holds that reasoning.
+        const target = clipSeekTarget(
+          {
+            readyState: video.readyState,
+            seeking: video.seeking,
+            currentTime: video.currentTime,
+            seeded,
+          },
+          hit.withinSec,
+        );
+        if (video.readyState >= 2) seeded = true;
+        if (target !== null) {
           try {
-            video.currentTime = hit.withinSec;
+            video.currentTime = target;
           } catch {
-            // Seek refused; the next frame tries again once it is ready.
+            // Refused; the tolerance will ask again once it is ready.
           }
         }
-        if (!audio.paused && video.paused) void video.play().catch(() => {});
+
+        if (!audio.paused && video.paused) {
+          void video.play().catch((e: unknown) => {
+            setTrouble(
+              e instanceof Error && e.name === "NotAllowedError"
+                ? "This browser blocked the clip from playing."
+                : "The clip would not start.",
+            );
+          });
+        }
         if (audio.paused && !video.paused) video.pause();
+
+        // Slow is a state, not a failure — but an unexplained black rectangle
+        // is indistinguishable from a broken one, so after a few seconds it
+        // says which it is.
+        if (!slowSaid && video.readyState < 2 && performance.now() - loadedAt > 4000) {
+          slowSaid = true;
+          setTrouble("Still loading the clip\u2026");
+        }
         setGap(false);
       } else {
         if (shownClip !== null) {
           shownClip = null;
+          seeded = false;
           video.pause();
           video.removeAttribute("src");
+          // Removing the attribute does not clear the picture; without this
+          // the last frame of the previous clip sits there through the gap,
+          // reading as footage of a moment that has no footage.
+          video.load();
+          setTrouble(null);
         }
         setGap(true);
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      video.removeEventListener("error", onError);
+      video.removeEventListener("loadeddata", onPlayable);
+      video.removeEventListener("canplay", onPlayable);
+    };
   }, [clips, drift, audioRef]);
 
   // The element carries its own geometry so the wrapper is never swapped out
   // from under it. Between clips the mini pane is dropped entirely rather than
   // sitting in the corner as an empty black box — but on the main stage the
   // gap is stated, because there the silence needs explaining.
-  const hideEmptyMini = gap && !onStage;
+  const hideEmptyMini = gap && !onStage && !trouble;
 
   return (
     <div
@@ -117,10 +183,25 @@ export function ReviewVideo({
       // the decode. This keeps it laid out and merely unseen.
       style={hideEmptyMini ? { visibility: "hidden" } : undefined}
     >
-      <video ref={videoRef} muted playsInline className="max-h-full max-w-full" hidden={gap} />
-      {gap && onStage && (
-        <p className="px-6 text-center text-sm text-muted">
-          No video at this point — the audio continues.
+      {/*
+        THE ELEMENT IS NEVER HIDDEN AND NEVER RESIZED, and that is the same
+        rule the wrapper above states rather than a second one. It used to
+        carry `hidden={gap}` — display:none, applied by React a frame AFTER
+        the loop had set the src and called play() on it. Whatever a given
+        engine does with a video hidden at exactly that moment, none of it is
+        worth finding out. It fills the pane instead and simply has no source
+        between clips, which paints nothing and lets the black through.
+      */}
+      <video
+        ref={videoRef}
+        muted
+        playsInline
+        preload="auto"
+        className="absolute inset-0 h-full w-full object-contain"
+      />
+      {(trouble || (gap && onStage)) && (
+        <p className="relative z-10 px-6 text-center text-sm text-muted">
+          {trouble ?? "No video at this point — the audio continues."}
         </p>
       )}
     </div>

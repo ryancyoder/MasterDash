@@ -8,7 +8,11 @@
 // on screen is saying something different from the person you can hear.
 
 import {
+  CLIP_SEEK_MIN_SEC,
+  CLIP_SYNC_TOLERANCE_SEC,
   clipAt,
+  clipErrorMessage,
+  clipSeekTarget,
   driftScale,
   fmtClock,
   locatedPhotoAt,
@@ -225,6 +229,71 @@ ok(
   gradeBadge("target", "Target 7") === "T7",
   "a deleted target must not renumber the ones after it",
 );
+
+{
+  // Keeping the picture on the playhead.
+  //
+  // These clips are MediaRecorder files: no seek index, so every seek is a
+  // scan. The bug this pins is not a crash — it is a seek reissued on every
+  // animation frame, which cancels the scan before it can land and leaves the
+  // pane black for a whole clip while the playhead, the gaps and the rail all
+  // carry on looking exactly right.
+  const at = (over: Partial<Parameters<typeof clipSeekTarget>[0]>) =>
+    ({ readyState: 4, seeking: false, currentTime: 0, seeded: true, ...over });
+
+  ok(
+    "no seek before there is a frame to seek to",
+    clipSeekTarget(at({ readyState: 1, seeded: false, currentTime: 0 }), 9) === null,
+    "readyState 1 is metadata only; a seek now is a request the file cannot serve",
+  );
+  ok(
+    "and none while a seek is already running",
+    clipSeekTarget(at({ seeking: true, currentTime: 0 }), 9) === null,
+    "this is the whole bug: reissuing cancels the scan that was about to land",
+  );
+  ok(
+    "arriving at a clip's start just plays it",
+    clipSeekTarget(at({ seeded: false }), 0.2) === null,
+  );
+  ok(
+    "the boundary is not a seek either",
+    clipSeekTarget(at({ seeded: false }), CLIP_SEEK_MIN_SEC) === null,
+  );
+  ok(
+    "but scrubbing into the middle of one does seek",
+    clipSeekTarget(at({ seeded: false }), 6.25) === 6.25,
+  );
+  ok(
+    "ordinary decode jitter is left alone",
+    clipSeekTarget(at({ currentTime: 4.0 }), 4.3) === null,
+    "0.3s out on a silent clip is invisible, and correcting it costs a scan",
+  );
+  ok(
+    "the old 150ms tolerance would have corrected that",
+    Math.abs(4.0 - 4.3) > 0.15 && CLIP_SYNC_TOLERANCE_SEC > 0.15,
+  );
+  ok(
+    "a real divergence is pulled back",
+    clipSeekTarget(at({ currentTime: 2 }), 7.5) === 7.5,
+  );
+  ok(
+    "including backwards, when the playhead is scrubbed back",
+    clipSeekTarget(at({ currentTime: 7.5 }), 2) === 2,
+  );
+  ok(
+    "a running clip that is not ready is never seeked",
+    clipSeekTarget(at({ readyState: 1, currentTime: 0 }), 7.5) === null,
+  );
+}
+
+{
+  // What the pane says when there is a clip and no picture.
+  ok("a fetch failure says to check the connection", clipErrorMessage(2)!.includes("connection"));
+  ok("an undecodable file says it is damaged", clipErrorMessage(3)!.includes("damaged"));
+  ok("an unsupported codec names the browser", clipErrorMessage(4)!.includes("format"));
+  ok("no error is no message", clipErrorMessage(null) === null);
+  ok("an unknown code still says something", clipErrorMessage(99) !== null);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

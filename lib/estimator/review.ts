@@ -361,3 +361,92 @@ export function stripItems(
     return a.offsetMs - b.offsetMs;
   });
 }
+
+// --- keeping the picture on the playhead ----------------------------------
+//
+// The clips are MediaRecorder output. That matters more than it sounds: a file
+// written by a MediaRecorder carries no seek index and, on iOS, no stated
+// duration either — it is a live stream that happened to be saved. A browser
+// can still seek in one, but only by scanning, and a scan of a 10 MB clip is
+// not a thing that finishes inside one animation frame.
+//
+// So a sync loop that assigns `currentTime` whenever the picture looks 150 ms
+// out will, on a real clip, cancel and reissue that scan sixty times a second.
+// The seek never lands, no frame is ever decoded, and the pane stays BLACK for
+// the whole clip while every other part of review — the playhead, the gaps
+// between clips, the rail — carries on looking perfectly correct.
+//
+// Hence: seek rarely, seek once, and never on top of a seek already running.
+
+/**
+ * How far into a clip the playhead may already be before arriving there needs
+ * a seek at all.
+ *
+ * Entering a clip normally means the playhead crossed its start, so the honest
+ * answer is nearly always "play it from the beginning" — which costs nothing
+ * and cannot fail. Only a scrub lands in the middle of one.
+ */
+export const CLIP_SEEK_MIN_SEC = 0.5;
+
+/**
+ * How far the picture may drift from the playhead before it is pulled back.
+ *
+ * These are silent clips of a yard. Half a second out is not a thing anyone can
+ * see, and every correction costs a scan — so the tolerance is set by what the
+ * seek costs, not by what a stopwatch would call synchronised.
+ */
+export const CLIP_SYNC_TOLERANCE_SEC = 0.5;
+
+/** What the `<video>` element reports about itself. */
+export interface ClipVideoState {
+  /** `HTMLMediaElement.readyState`. 2 is HAVE_CURRENT_DATA — a frame exists. */
+  readyState: number;
+  /** `HTMLMediaElement.seeking`. */
+  seeking: boolean;
+  /** `HTMLMediaElement.currentTime`, in seconds. */
+  currentTime: number;
+  /** True once this clip has been put on the frame it should be showing. */
+  seeded: boolean;
+}
+
+/**
+ * Where the clip should be seeked to, or null to leave it alone.
+ *
+ * Every `null` here is a case where seeking would either do nothing or undo
+ * itself, and the whole point is that "leave it alone" is the common answer.
+ */
+export function clipSeekTarget(v: ClipVideoState, withinSec: number): number | null {
+  // No frame yet. A seek issued now is a request the file cannot serve, and
+  // reissuing it next frame is what stops it ever completing.
+  if (v.readyState < 2) return null;
+  // Never stack a seek on a seek.
+  if (v.seeking) return null;
+  // Arriving at the clip. Playing from the start is free; seeking is not.
+  if (!v.seeded) return withinSec > CLIP_SEEK_MIN_SEC ? withinSec : null;
+  // Running. Correct a real divergence, ignore ordinary decode jitter.
+  return Math.abs(v.currentTime - withinSec) > CLIP_SYNC_TOLERANCE_SEC ? withinSec : null;
+}
+
+/**
+ * What a media error means, in words that say what to do about it.
+ *
+ * Every failure on this path is otherwise silent — a rejected fetch, an
+ * unsupported codec and a clip that is simply slow all look identical, which
+ * is to say they all look like a black rectangle. Naming them is the whole
+ * point: a black pane that says nothing is indistinguishable from a visit
+ * where the camera was off.
+ */
+export function clipErrorMessage(code: number | null | undefined): string | null {
+  switch (code) {
+    case 1:
+      return "The clip stopped loading.";
+    case 2:
+      return "The clip could not be fetched — check the connection.";
+    case 3:
+      return "The clip is damaged and cannot be decoded.";
+    case 4:
+      return "This browser cannot play the clip's format.";
+    default:
+      return code == null ? null : "The clip could not be played.";
+  }
+}
