@@ -90,6 +90,7 @@ import {
   setBasemap,
   setOverlayHidden,
   setPlanAnchor,
+  setPlanView,
   setShapeSmooth,
   setReviewSession,
   setSurveySession,
@@ -1039,6 +1040,8 @@ export default function PlanPage({
         >
         <PlanCanvas
           anchor={anchor}
+          savedView={plan.view}
+          onSaveView={setPlanView}
           basemap={plan.basemap}
           overlays={drawnOverlays}
           overlaySrc={overlaySrc}

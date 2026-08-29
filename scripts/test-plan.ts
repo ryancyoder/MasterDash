@@ -23,6 +23,9 @@ import type { ReviewPhoto } from "../lib/estimator/review.ts";
 import {
   anchorFromProperty,
   layersNeedingUpload,
+  metresPerPixel,
+  planViewFrom,
+  pxPerWorldFor,
   mergeLayerRows,
   shouldAdoptAnchor,
   visibleOverlays,
@@ -355,6 +358,45 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
 
   ok("a hidden layer still does not draw",
     visibleOverlays(remembered, ["L1"]).length === 0);
+}
+
+{
+  console.log("\n--- locking the map view ---");
+
+  // The scale is stored as a ground scale, never as the canvas's own
+  // pixels-per-world-unit: that is an internal convention, and persisting it
+  // would misread every saved view the day it changed.
+  const centre = { lat: 41.32, lng: -87.2 };
+  const px = 900_000;
+  const mpp = metresPerPixel(centre, px);
+  ok("a view's scale is metres per pixel: twice the zoom is half the ground",
+    Math.abs(metresPerPixel(centre, px * 2) - mpp / 2) < 1e-9,
+    `${mpp} vs ${metresPerPixel(centre, px * 2)}`);
+  // A yard on an iPad is a few centimetres to the pixel; the number has to be
+  // able to say so rather than being an opaque count.
+  ok("and a yard-scale view is a yard-scale number",
+    Math.abs(metresPerPixel(centre, pxPerWorldFor({ centre, metresPerPixel: 0.05 })) - 0.05) < 1e-9);
+  ok("and it round-trips back to the canvas's own scale",
+    Math.abs(pxPerWorldFor({ centre, metresPerPixel: mpp }) - px) < 1e-6,
+    String(pxPerWorldFor({ centre, metresPerPixel: mpp })));
+
+  // Same ground scale, different latitude: a degree of longitude is shorter
+  // further north, so the canvas number must differ while the view does not.
+  const north = { lat: 61.2, lng: -87.2 };
+  ok("the same ground scale means a different canvas scale further north",
+    pxPerWorldFor({ centre: north, metresPerPixel: mpp }) <
+      pxPerWorldFor({ centre, metresPerPixel: mpp }));
+
+  // It comes back out of localStorage, where an older build or a hand edit
+  // could have written anything. A zero scale divides the whole canvas
+  // transform by nothing.
+  ok("a stored view is re-validated", planViewFrom({ centre, metresPerPixel: 0.3 }) !== null);
+  ok("a zero scale is not a view", planViewFrom({ centre, metresPerPixel: 0 }) === null);
+  ok("nor a negative one", planViewFrom({ centre, metresPerPixel: -1 }) === null);
+  ok("nor a NaN", planViewFrom({ centre, metresPerPixel: Number.NaN }) === null);
+  ok("nor one with no centre", planViewFrom({ metresPerPixel: 0.3 }) === null);
+  ok("nor a centre that is not one", planViewFrom({ centre: { lat: "x" }, metresPerPixel: 0.3 }) === null);
+  ok("and null is no view, which is the fit", planViewFrom(null) === null);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -106,6 +106,30 @@ async function waitForServer() {
   throw new Error("server never came up");
 }
 
+/**
+ * Magenta pixels in the rendered canvas.
+ *
+ * The layer under test is an opaque magenta square, so this is both "is it
+ * drawn" and "how big is it" — which is how the view-lock check can tell a
+ * restored zoom from a fresh fit without reading a number the app stored. The
+ * scale bar is painted on the canvas too, so there is no text to read.
+ */
+const magentaCount = (page) =>
+  page.evaluate(() => {
+    const c = document.querySelector("canvas");
+    if (!c) return -1;
+    try {
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] > 150) n++;
+      }
+      return n;
+    } catch {
+      return -1;
+    }
+  });
+
 const tileTexts = (page) =>
   page.$$eval("main button[data-deal]", (els) => els.map((e) => e.textContent ?? ""));
 
@@ -400,24 +424,9 @@ try {
   // Read the RENDERED canvas, not a list. The layers panel listing a layer is
   // exactly what the bug did while the map stayed blank, so a DOM check would
   // have passed against the broken build.
-  const drawn = await page.evaluate(() => {
-    const c = document.querySelector("canvas");
-    if (!c) return { error: "no canvas" };
-    const ctx = c.getContext("2d");
-    const w = c.width, h = c.height;
-    let magenta = 0;
-    try {
-      const d = ctx.getImageData(0, 0, w, h).data;
-      for (let i = 0; i < d.length; i += 4) {
-        if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] > 150) magenta++;
-      }
-    } catch (e) {
-      return { error: String(e).slice(0, 80) };
-    }
-    return { magenta, pixels: w * h };
-  });
+  const drawn = await magentaCount(page);
   ok("A LAYER ADDED HERE IS PAINTED ON THE MAP AGAIN AFTER A FRESH MOUNT",
-    (drawn.magenta ?? 0) > 500, JSON.stringify(drawn));
+    drawn > 500, `${drawn} magenta pixels`);
 
   // The other half: its bytes go to Storage, so a second device can draw it
   // too. Retried on load rather than queued, so this happens on the way in.
@@ -426,6 +435,59 @@ try {
   ok("and the bytes are pushed to Storage, so it is not one iPad's secret",
     imageUploads > 0, `${imageUploads} uploads`);
   ok("with the row updated to say where they landed", layerSaves > 0, `${layerSaves} saves`);
+
+  // 7c-iii. THE VIEW CAN BE LOCKED, AND IT COMES BACK.
+  //
+  // The map fits everything drawn on every open, which walks further from the
+  // corner being worked on with each bed added. Locking says "open here".
+  // Zoom OUT, so the layer stays wholly on screen and its area shrinks by a
+  // measurable amount — the fit's own framing is what it must not come back to.
+  const zoomOut = page.locator('button[aria-label="Zoom out"]');
+  await zoomOut.click();
+  await zoomOut.click();
+  await page.waitForTimeout(300);
+  const zoomed = await magentaCount(page);
+  ok("zooming out really changes what is on the canvas",
+    zoomed > 100 && zoomed < drawn * 0.5, `${drawn} then ${zoomed}`);
+  const before = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.view ?? null);
+  ok("nothing is locked until it is asked for", before === null, JSON.stringify(before));
+
+  await page.click('button[aria-pressed][title*="Lock this view"]');
+  await page.waitForTimeout(300);
+  const locked = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.view ?? null);
+  ok("locking keeps a centre and a GROUND scale, not a canvas number",
+    locked !== null && typeof locked.metresPerPixel === "number" &&
+    locked.metresPerPixel > 0 && typeof locked.centre?.lat === "number",
+    JSON.stringify(locked));
+  ok("and Fit becomes the way back to it",
+    (await page.textContent('button[title="Back to the locked view"]')) === "Home");
+
+  // Leaving and coming back is a fresh mount, which is where the fit used to
+  // take over. Read the RENDERED scale bar rather than the stored numbers:
+  // what matters is that the map opens at the same zoom, not that a record of
+  // it survived.
+  await page.click("text=/^\u2039/");
+  await page.waitForSelector("main button.aspect-square");
+  const planIndex3 = await page.$$eval("main button.aspect-square", (els) =>
+    els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
+  await page.locator("main button.aspect-square").nth(planIndex3).click();
+  await page.waitForSelector('button[title="Back to the locked view"]', { timeout: 15000 });
+  await page.waitForTimeout(900);
+  const reopened = await magentaCount(page);
+  ok("THE PLAN REOPENS AT THE LOCKED VIEW, not at a fresh fit",
+    Math.abs(reopened - zoomed) < zoomed * 0.02, `${zoomed} locked, ${reopened} on return`);
+  ok("and that is not simply the fit by coincidence",
+    Math.abs(reopened - drawn) > drawn * 0.1, `${drawn} fitted, ${reopened} on return`);
+
+  await page.click('button[aria-pressed][title*="Unlock"]');
+  await page.waitForTimeout(300);
+  const unlocked = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.view ?? null);
+  ok("unlocking puts the fit back", unlocked === null, JSON.stringify(unlocked));
+  ok("and the button says so again",
+    (await page.textContent('button[title="Fit the take-off"]')) === "Fit");
 
   // 7d. AND THE VISIT TAB LEADS WITH THIS YARD.
   //

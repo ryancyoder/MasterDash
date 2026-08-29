@@ -19,7 +19,7 @@ import {
 } from "./photoLink";
 import { isLatLng, type LatLng } from "./geo";
 import { sharedNodeIds } from "./plan";
-import type { Basemap, MapAnchor } from "./mapLayers";
+import { planViewFrom, type Basemap, type MapAnchor, type PlanView } from "./mapLayers";
 import {
   emptyVisit,
   visitFrom,
@@ -207,6 +207,7 @@ function planFrom(value: unknown): PlanState {
   const rawReview = (v.review ?? null) as Record<string, unknown> | null;
   return {
     anchor: anchorFrom(v.anchor),
+    view: planViewFrom(v.view),
     basemap: v.basemap === "none" ? "none" : "satellite",
     nodes,
     survey:
@@ -436,8 +437,36 @@ function mutatePlan(fn: (plan: PlanState) => PlanState) {
  * say which. A take-off drawn against a hand-placed guess is worth exactly
  * what the guess was worth.
  */
+/**
+ * Move the map's anchor, and drop a locked view that is no longer about it.
+ *
+ * A locked view is a centre and a scale on ONE yard. Carry it to another and
+ * Home puts you back on the old property, which is a worse answer than the fit
+ * it replaced. Cleared only when the property actually changes — an anchor
+ * upgraded in place, a fallback centre replaced by the property's real
+ * coordinates, is still the same yard and keeps its home.
+ */
 export function setPlanAnchor(anchor: MapAnchor | null) {
-  mutatePlan((plan) => ({ ...plan, anchor }));
+  mutatePlan((plan) => ({
+    ...plan,
+    anchor,
+    view:
+      (plan.anchor?.propertyId ?? null) === (anchor?.propertyId ?? null)
+        ? plan.view
+        : null,
+  }));
+}
+
+/**
+ * Keep this view, or stop keeping one.
+ *
+ * The map fits to whatever is drawn every time it opens, which is the right
+ * answer for a yard nobody has seen and the wrong one for the corner somebody
+ * is halfway through: each new bed re-frames the view a little further from
+ * the work. Locking one says "open here", and null puts the fit back.
+ */
+export function setPlanView(view: PlanView | null) {
+  mutatePlan((plan) => ({ ...plan, view }));
 }
 
 /**

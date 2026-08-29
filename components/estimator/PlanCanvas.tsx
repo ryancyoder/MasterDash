@@ -19,7 +19,14 @@ import {
   type WorldPoint,
 } from "@/lib/estimator/geo";
 import { smoothOutline } from "@/lib/estimator/curve";
-import type { Basemap, MapAnchor, MapOverlay } from "@/lib/estimator/mapLayers";
+import {
+  metresPerPixel,
+  pxPerWorldFor,
+  type Basemap,
+  type MapAnchor,
+  type MapOverlay,
+  type PlanView,
+} from "@/lib/estimator/mapLayers";
 import {
   SURVEY_COLORS,
   formatElevation,
@@ -330,6 +337,8 @@ export default function PlanCanvas({
   basemap,
   overlays,
   overlaySrc,
+  savedView,
+  onSaveView,
   aligning,
   onAlignCommit,
   scaling,
@@ -367,6 +376,10 @@ export default function PlanCanvas({
   basemap: Basemap;
   /** Already filtered to what should draw, in z order. */
   overlays: MapOverlay[];
+  /** A view somebody locked. The map opens here instead of fitting. */
+  savedView: PlanView | null;
+  /** Lock the view passed, or unlock with null. */
+  onSaveView: (view: PlanView | null) => void;
   /** Object URL or public URL for an overlay's bytes, device copy first. */
   overlaySrc: (overlay: MapOverlay) => string | null;
   /**
@@ -595,15 +608,26 @@ export default function PlanCanvas({
   }, [shapes, nodes, survey, overlays]);
 
   /**
-   * Point the view at everything there is.
+   * Point the view at everything there is — or at the view somebody locked.
    *
    * Writes the ref and nothing else, so it can be called from inside the draw
    * pass for the opening view without a render just to record where the map
    * started.
+   *
+   * A LOCKED VIEW WINS OVER THE FIT, which is the whole feature: the fit is a
+   * good answer to "I have never seen this yard" and a poor one to "I was
+   * working on the top corner", since every bed drawn re-frames it a little
+   * further from the work.
    */
   const placeView = useCallback(
     (width: number, height: number) => {
       if (!width || !height) return;
+      if (savedView) {
+        viewRef.current.centre = toWorld(savedView.centre);
+        viewRef.current.pxPerWorld = pxPerWorldFor(savedView);
+        clampView();
+        return;
+      }
       const bounds = contentBounds();
       if (!bounds) {
         if (anchor) viewRef.current.centre = toWorld(anchor.centre);
@@ -618,7 +642,7 @@ export default function PlanCanvas({
       viewRef.current.pxPerWorld = Math.min(width / w, height / h);
       clampView();
     },
-    [anchor, clampView, contentBounds],
+    [anchor, clampView, contentBounds, savedView],
   );
 
   const fitToContent = useCallback(() => {
@@ -1999,11 +2023,52 @@ export default function PlanCanvas({
         </button>
         <button
           type="button"
-          title="Fit the take-off"
+          /* One button, one meaning: put the map back where it belongs.
+             WHERE that is depends on whether a view is locked, which is also
+             what makes a locked view reachable again after panning away —
+             without it the lock would be a home with no way back to it. */
+          title={savedView ? "Back to the locked view" : "Fit the take-off"}
           onClick={fitToContent}
           className="rounded-xl px-3 py-2 text-center text-xs font-bold text-muted"
         >
-          Fit
+          {savedView ? "Home" : "Fit"}
+        </button>
+        <button
+          type="button"
+          /*
+            LOCK THIS VIEW.
+
+            The map fits to everything drawn every time it opens, which is
+            right for a yard nobody has seen and wrong for the corner somebody
+            is halfway through — each new bed re-frames it a little further
+            from the work. Locking says "open here".
+
+            Panning and zooming still work while locked: a map you cannot move
+            is not a map. The lock is a HOME, not a cage, and the button beside
+            it is how you get back to it. Moving does not quietly rewrite it
+            either — unlock and lock again to move the home, which is two taps
+            and no guessing about when a stray pinch became a decision.
+          */
+          aria-pressed={savedView !== null}
+          title={
+            savedView
+              ? "Unlock — the map goes back to fitting the take-off"
+              : "Lock this view, so the map opens here"
+          }
+          onClick={() => {
+            if (savedView) {
+              onSaveView(null);
+              return;
+            }
+            const v = viewRef.current;
+            const centre = toLatLng(v.centre);
+            onSaveView({ centre, metresPerPixel: metresPerPixel(centre, v.pxPerWorld) });
+          }}
+          className={`flex h-10 w-10 items-center justify-center rounded-xl text-base ${
+            savedView ? "bg-accent text-black" : "bg-surface2 text-ink"
+          }`}
+        >
+          <span aria-hidden="true">{savedView ? "\u{1F512}" : "\u{1F513}"}</span>
         </button>
         <button
           type="button"

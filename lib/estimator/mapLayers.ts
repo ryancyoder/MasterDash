@@ -22,6 +22,8 @@
 
 import {
   isLatLng,
+  latLngFrom,
+  metresPerWorldUnit,
   type Georef,
   type LatLng,
 } from "./geo";
@@ -101,6 +103,51 @@ export const ANCHOR_BLURB: Record<MapAnchor["source"], string> = {
 /** An anchor good enough to draw a take-off against. */
 export function anchorIsReal(anchor: MapAnchor | null): boolean {
   return anchor !== null && anchor.source !== "fallback";
+}
+
+/**
+ * A view somebody chose to keep: where the map is looking, and how close in.
+ *
+ * The scale is stored as **metres per pixel**, not as the canvas's own
+ * `pxPerWorld`. That number is an internal convention — pixels per unit of a
+ * 0..1 Web Mercator world — so persisting it would tie a saved view to an
+ * implementation detail and misread every stored value the day it changed.
+ * Metres per pixel is a real ground scale: it means the same thing in a year,
+ * in a report, and on a canvas of a different size, where it correctly shows
+ * MORE of the yard rather than the same picture stretched.
+ */
+export interface PlanView {
+  centre: LatLng;
+  metresPerPixel: number;
+}
+
+/** The canvas's scale, as a ground scale. */
+export function metresPerPixel(centre: LatLng, pxPerWorld: number): number {
+  return metresPerWorldUnit(centre.lat) / pxPerWorld;
+}
+
+/** And back, at whatever latitude the view is now looking at. */
+export function pxPerWorldFor(view: PlanView): number {
+  return metresPerWorldUnit(view.centre.lat) / view.metresPerPixel;
+}
+
+/**
+ * A stored view, re-validated.
+ *
+ * It comes back out of localStorage, where it could have been written by an
+ * older build or edited by hand. A zero or a NaN scale divides the whole
+ * canvas transform by nothing and takes the map down with it, so a view that
+ * is not wholly sound is no view at all — the map then fits to the content,
+ * which is what it did before anybody locked anything.
+ */
+export function planViewFrom(value: unknown): PlanView | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const centre = latLngFrom(v.centre);
+  const mpp = v.metresPerPixel;
+  if (!centre) return null;
+  if (typeof mpp !== "number" || !Number.isFinite(mpp) || mpp <= 0) return null;
+  return { centre, metresPerPixel: mpp };
 }
 
 /**

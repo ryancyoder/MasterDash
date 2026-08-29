@@ -192,7 +192,7 @@ tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 46 checks. A throw is reported as a failure rather than crashing
+is showing: 54 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
 
@@ -824,6 +824,49 @@ suite's reason to exist: `lib/estimator/visit.ts` had none). `test:board-ui`
 opens the picker and reads it: the yard heads the first group, only its own
 visits are under it, the toggle counts the rest, and a visit at another yard is
 still one tap away rather than filtered out of existence.
+
+#### Locking the view
+
+The map fits everything drawn every time it opens. That is the right answer for
+a yard nobody has seen and the wrong one for the corner somebody is halfway
+through — every bed added re-frames the view a little further from the work, so
+the further along a take-off gets, the more of it you are looking at and the
+less of what you are doing.
+
+**The padlock beside Fit locks the current view**, and the plan opens there
+from then on. Tap it again to unlock and the fit comes back.
+
+**Panning and zooming still work while locked.** A map you cannot move is not a
+map. The lock is a *home*, not a cage — and **Fit becomes Home** while it is
+set, which is what makes the locked view reachable again after panning away.
+One button, one meaning: put the map back where it belongs; the lock decides
+where that is.
+
+**Moving does not quietly rewrite it.** Unlock and lock again to move the home
+— two taps, and no guessing about the moment a stray pinch became a decision.
+
+**The scale is stored as metres per pixel, not as the canvas's own
+`pxPerWorld`.** That is an internal convention — pixels per unit of a 0..1
+Web Mercator world — so persisting it would tie a saved view to an
+implementation detail and misread every stored value the day it changed. A
+ground scale means the same thing in a year, in a report, and on a canvas of a
+different size, where it correctly shows *more of the yard* rather than the
+same picture stretched. A locked yard view comes out around **0.22 m/px**,
+which is a number you can sanity-check by eye.
+
+**A locked view belongs to the yard it was locked at**, so `setPlanAnchor()`
+drops it when the property actually changes — carry it across and Home puts you
+back on the old property, which is worse than the fit it replaced. An anchor
+upgraded in place, a fallback centre replaced by the property's real
+coordinates, is still the same yard and keeps its home.
+
+**And the check reads the canvas.** The scale bar is painted there too, so
+there is no text to read and no stored number worth trusting — what matters is
+that the map *opens* at the same zoom. `test:board-ui` zooms out (so the test
+layer stays wholly on screen and its area shrinks measurably), locks, leaves,
+comes back, and counts the layer's magenta pixels. Against a build that ignores
+the saved view it reports **18,632 locked, 72,092 on return** — and 72,092 is
+exactly the fit's own framing.
 
 #### A layer has to survive leaving the view
 

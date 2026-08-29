@@ -29,7 +29,7 @@
 import type { AssemblyModel } from "./assemblies";
 import { smoothOutline } from "./curve";
 import { areaSqFt, latLngFrom, lengthFt, type LatLng } from "./geo";
-import type { Basemap, MapAnchor } from "./mapLayers";
+import type { Basemap, MapAnchor, PlanView } from "./mapLayers";
 import type { ShapePhotoLink } from "./photoLink";
 
 // Re-exported so a take-off's type and its photographs' type still read
@@ -138,6 +138,16 @@ export interface PendingPoint {
  */
 export interface PlanState {
   anchor: MapAnchor | null;
+  /**
+   * A view somebody locked: where the map opens, instead of fitting.
+   *
+   * Per-estimate rather than per-property, and that is the whole point of it.
+   * The fit is a good answer to "I have never seen this yard" and a poor one
+   * to "I was working on the top corner" — it re-frames everything drawn so
+   * far, so the more take-off there is the further it pulls away from the bit
+   * being worked on. Null means fit, which is what every estimate did before.
+   */
+  view: PlanView | null;
   basemap: Basemap;
   /** Every corner on the plan, shared or not. */
   nodes: PlanNodes;
@@ -170,6 +180,7 @@ export interface PlanState {
 export function emptyPlan(): PlanState {
   return {
     anchor: null,
+    view: null,
     basemap: "satellite",
     nodes: {},
     survey: null,
