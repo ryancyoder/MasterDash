@@ -19,6 +19,7 @@ import {
   type Georef,
   type LatLng,
 } from "@/lib/estimator/geo";
+import { SURVEY_COLORS, elevationFeet } from "@/lib/estimator/survey";
 import {
   ANCHOR_BLURB,
   anchorIsReal,
@@ -30,6 +31,7 @@ import {
   bucketsForMeasurement,
   measurementOf,
   sharedNodeIds,
+  surveyedCorners,
   workBought,
   type PendingPoint,
   type PlanNodes,
@@ -52,6 +54,7 @@ import {
   addShape,
   detachShape,
   insertVertex,
+  linkNodeToSurvey,
   mergeNodes,
   moveNodes,
   removeShape,
@@ -575,6 +578,7 @@ export default function PlanPage({
           nodes={plan.nodes}
           shapes={plan.shapes}
           survey={survey}
+          surveySessionId={surveySessionId}
           labelFor={labelFor}
           tool={tool}
           selectedShapeId={selectedId}
@@ -584,6 +588,7 @@ export default function PlanPage({
           onCloseArea={finish}
           onMoveNodes={moveNodes}
           onMergeNodes={mergeNodes}
+          onLinkSurvey={linkNodeToSurvey}
           onInsertVertex={insertVertex}
           showMeasurements={showMeasurements}
           aligning={aligning}
@@ -668,6 +673,7 @@ export default function PlanPage({
                 key={shape.id}
                 shape={shape}
                 nodes={plan.nodes}
+                survey={survey}
                 sharedCount={
                   shape.vertices.filter((v) => shared.has(v)).length
                 }
@@ -1174,6 +1180,7 @@ function LayersCard({
 function ShapeCard({
   shape,
   nodes,
+  survey,
   sharedCount,
   onDetach,
   settings,
@@ -1184,6 +1191,7 @@ function ShapeCard({
 }: {
   shape: PlanShape;
   nodes: PlanNodes;
+  survey: SurveyLayer | null;
   /** How many of this shape's corners another shape also holds. */
   sharedCount: number;
   onDetach: () => void;
@@ -1206,6 +1214,35 @@ function ShapeCard({
         )
       : 0;
   const unit = shape.type === "area" ? "sq ft" : "ln ft";
+
+  /**
+   * What the survey makes of this shape's corners.
+   *
+   * The fall across a bed is the number worth having: an area tells you how
+   * much mulch, and the fall tells you whether it drains. It is only reported
+   * when at least two corners are on shot points, because one measured corner
+   * and three guessed ones is not a grade.
+   */
+  const grade = useMemo(() => {
+    const linked = surveyedCorners(shape, nodes);
+    if (linked.length === 0) return null;
+    const heights: { label: string; ft: number }[] = [];
+    for (const { link } of linked) {
+      const point = survey?.points.find((p) => p.id === link.pointId);
+      const ft = point ? elevationFeet(point.elevation) : null;
+      if (ft !== null) heights.push({ label: link.label, ft });
+    }
+    if (heights.length < 2) {
+      return { corners: linked.length, measured: heights.length, fall: null };
+    }
+    const low = heights.reduce((a, b) => (b.ft < a.ft ? b : a));
+    const high = heights.reduce((a, b) => (b.ft > a.ft ? b : a));
+    return {
+      corners: linked.length,
+      measured: heights.length,
+      fall: { ft: high.ft - low.ft, from: high.label, to: low.label },
+    };
+  }, [shape, nodes, survey]);
 
   return (
     <div
@@ -1247,6 +1284,29 @@ function ShapeCard({
           </option>
         ))}
       </select>
+
+      {grade && (
+        <p className="mt-1.5 text-[0.7rem] leading-snug text-muted">
+          <span style={{ color: SURVEY_COLORS.target }}>◎</span>{" "}
+          {grade.corners} corner{grade.corners === 1 ? "" : "s"} surveyed
+          {grade.fall ? (
+            <>
+              {" · falls "}
+              <span className="font-bold text-ink">
+                {grade.fall.ft.toFixed(2)}&apos;
+              </span>
+              {` from ${grade.fall.from} to ${grade.fall.to}`}
+            </>
+          ) : grade.measured < 2 ? (
+            // One measured corner is a height, not a grade. Saying so beats
+            // reporting a fall of zero from a shape nobody levelled.
+            <span className="text-[#fbbf24]">
+              {" "}
+              · link a second corner for a fall
+            </span>
+          ) : null}
+        </p>
+      )}
 
       {sharedCount > 0 && (
         <p className="mt-1.5 flex items-center gap-1.5 text-[0.7rem] text-muted">

@@ -6,6 +6,7 @@ import {
   planId,
   pruneNodes,
   topologyFrom,
+  type NodeSurveyLink,
   type PendingPoint,
   type PlanShape,
   type PlanState,
@@ -487,7 +488,9 @@ export function addShape(
         continue;
       }
       const id = planId("n");
-      nodes[id] = point.at;
+      // A corner placed on a surveyed point keeps the link, so the shape can
+      // report a real elevation at that corner rather than a guess.
+      nodes[id] = { at: point.at, ...(point.survey ? { survey: point.survey } : {}) };
       vertices.push(id);
     }
     return {
@@ -516,14 +519,35 @@ export function addShape(
  * from where it now is.
  */
 export function moveNode(nodeId: string, at: LatLng) {
-  mutatePlan((plan) =>
-    plan.nodes[nodeId] ? { ...plan, nodes: { ...plan.nodes, [nodeId]: at } } : plan,
-  );
+  moveNodes({ [nodeId]: at });
 }
 
-/** Move several at once, for dragging a whole shape. */
+/**
+ * Move corners. Dragging one off a surveyed point BREAKS its link.
+ *
+ * It has to. The link says "this corner is on that shot point", and once the
+ * corner has been dragged somewhere else that is simply no longer true —
+ * keeping it would attach a measured elevation to a position nobody measured,
+ * which is the one failure mode worth spending code on here.
+ */
 export function moveNodes(moves: Record<string, LatLng>) {
-  mutatePlan((plan) => ({ ...plan, nodes: { ...plan.nodes, ...moves } }));
+  mutatePlan((plan) => {
+    const nodes = { ...plan.nodes };
+    for (const [id, at] of Object.entries(moves)) {
+      if (!nodes[id]) continue;
+      nodes[id] = { at };
+    }
+    return { ...plan, nodes };
+  });
+}
+
+/** Put a corner exactly on a surveyed point, and record that it is there. */
+export function linkNodeToSurvey(nodeId: string, at: LatLng, survey: NodeSurveyLink) {
+  mutatePlan((plan) =>
+    plan.nodes[nodeId]
+      ? { ...plan, nodes: { ...plan.nodes, [nodeId]: { at, survey } } }
+      : plan,
+  );
 }
 
 /**
@@ -564,7 +588,7 @@ export function insertVertex(shapeId: string, index: number, at: LatLng): string
     vertices.splice(index, 0, id);
     return {
       ...plan,
-      nodes: { ...plan.nodes, [id]: at },
+      nodes: { ...plan.nodes, [id]: { at } },
       shapes: plan.shapes.map((s) => (s.id === shapeId ? { ...s, vertices } : s)),
     };
   });

@@ -26,7 +26,9 @@ import {
 import {
   measurementOf,
   pointsOf,
+  positionsOf,
   sharedNodeIds,
+  type NodeSurveyLink,
   type PendingPoint,
   type PlanNodes,
   type PlanShape,
@@ -271,6 +273,12 @@ function shiftCentre(centre: LatLng, from: WorldPoint, to: WorldPoint): LatLng {
   return toLatLng({ x: c.x + (to.x - from.x), y: c.y + (to.y - from.y) });
 }
 
+/** What a tap or a drop would land on, if anything. */
+type SnapTarget =
+  | { kind: "node"; nodeId: string; at: LatLng }
+  | { kind: "survey"; at: LatLng; label: string; link: NodeSurveyLink }
+  | null;
+
 export type PlanTool = "select" | "area" | "linear";
 
 export default function PlanCanvas({
@@ -286,6 +294,7 @@ export default function PlanCanvas({
   nodes,
   shapes,
   survey,
+  surveySessionId,
   labelFor,
   tool,
   selectedShapeId,
@@ -295,6 +304,7 @@ export default function PlanCanvas({
   onCloseArea,
   onMoveNodes,
   onMergeNodes,
+  onLinkSurvey,
   onInsertVertex,
   showMeasurements,
 }: {
@@ -331,6 +341,8 @@ export default function PlanCanvas({
    * measured on site and this screen lays beds out against it.
    */
   survey: SurveyLayer | null;
+  /** Which session the shown survey is, so a link can record where it came from. */
+  surveySessionId: string | null;
   /** The assembly name drawn under a shape's measurement, when it has one. */
   labelFor: (shape: PlanShape) => string | null;
   tool: PlanTool;
@@ -345,6 +357,8 @@ export default function PlanCanvas({
   onMoveNodes: (moves: Record<string, LatLng>) => void;
   /** A corner dropped onto another becomes that corner. */
   onMergeNodes: (fromId: string, intoId: string) => void;
+  /** A corner dropped onto a shot point sits on it, and records that. */
+  onLinkSurvey: (nodeId: string, at: LatLng, link: NodeSurveyLink) => void;
   /** Splitting a side. Returns the new corner's id so the drag can continue. */
   onInsertVertex: (shapeId: string, index: number, at: LatLng) => string;
   showMeasurements: boolean;
@@ -387,8 +401,8 @@ export default function PlanCanvas({
    * the finger lifts.
    */
   const [dragNodes, setDragNodes] = useState<Record<string, LatLng> | null>(null);
-  /** The corner a drop would join to, highlighted while the finger is down. */
-  const [snapTo, setSnapTo] = useState<string | null>(null);
+  /** What a drop would land on, highlighted while the finger is down. */
+  const [snapTo, setSnapTo] = useState<SnapTarget>(null);
 
   /**
    * The layer's placement mid-gesture, held here and committed on release —
@@ -627,17 +641,27 @@ export default function PlanCanvas({
   /** Identifies the anchor's position, so a change of property is detectable. */
   const anchorKey = anchor ? `${anchor.centre.lat},${anchor.centre.lng}` : null;
 
-  /** Corners as they are right now — a live drag overrides the stored ones. */
+  /** Corner POSITIONS as they are right now — a live drag overrides the stored. */
   const liveNodes = useMemo(
-    () => (dragNodes ? { ...nodes, ...dragNodes } : nodes),
+    () => ({ ...positionsOf(nodes), ...(dragNodes ?? {}) }),
     [nodes, dragNodes],
+  );
+
+  /** Where each surveyed point is, when a survey is shown. Snap targets. */
+  const surveyTargets = useMemo(
+    () =>
+      (survey?.points ?? []).filter(
+        (p) => !p.hidden && p.elevation.state !== "unplaced",
+      ),
+    [survey],
   );
 
   const shared = useMemo(() => sharedNodeIds(shapes), [shapes]);
 
   /** Every corner's position, resolved once per draw rather than per shape. */
   const shapePoints = useCallback(
-    (shape: PlanShape) => pointsOf(shape, liveNodes),
+    (shape: PlanShape) =>
+      shape.vertices.map((id) => liveNodes[id]).filter((p): p is LatLng => !!p),
     [liveNodes],
   );
 
@@ -816,7 +840,7 @@ export default function PlanCanvas({
         anchorPt = pts[Math.floor(pts.length / 2)];
       }
 
-      const measurement = measurementOf(shape, liveNodes);
+      const measurement = measurementOf(shape, nodes);
       const label = labelFor(shape);
       if (showMeasurements && measurement > 0) {
         drawLabel(
@@ -840,6 +864,7 @@ export default function PlanCanvas({
       }
 
       const isShared = (i: number) => shared.has(shape.vertices[i] ?? "");
+      const linkAt = (i: number) => nodes[shape.vertices[i] ?? ""]?.survey ?? null;
 
       if (selected) {
         const segCount = shape.type === "area" ? pts.length : pts.length - 1;
@@ -896,6 +921,24 @@ export default function PlanCanvas({
           }
         });
       }
+
+      // A corner sitting on a shot point gets the survey's own colour, so a
+      // measured corner and a corner placed off an aerial are tellable apart
+      // without reading anything. Drawn for selected and unselected alike:
+      // whether the geometry is surveyed is a property of the shape, not of
+      // whatever happens to be selected.
+      pts.forEach((p, i) => {
+        if (!linkAt(i)) return;
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.9)";
+        ctx.shadowBlur = 3;
+        ctx.strokeStyle = SURVEY_COLORS.target;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, selected ? 13 : 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      });
     }
 
     // 4. Upright's survey, over the take-off rather than under it: reading the
@@ -1050,16 +1093,24 @@ export default function PlanCanvas({
       });
     }
 
-    // What a drop would join to. Drawn last so it sits over the corner it is
-    // about to consume.
-    if (snapTo && liveNodes[snapTo]) {
-      const p = toCanvas(toWorld(liveNodes[snapTo]), t);
-      ctx.strokeStyle = "#22c55e";
+    // What a drop would land on. Drawn last so it sits over its target, and
+    // named — "join" and "survey" are different acts and the word is the only
+    // thing that says which one is about to happen.
+    if (snapTo) {
+      const p = toCanvas(toWorld(snapTo.at), t);
+      const joining = snapTo.kind === "node";
+      ctx.strokeStyle = joining ? "#22c55e" : SURVEY_COLORS.target;
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(p.x, p.y, 17, 0, Math.PI * 2);
       ctx.stroke();
-      drawLabel(ctx, "join", p.x, p.y - 28, "#22c55e");
+      drawLabel(
+        ctx,
+        joining ? "join" : snapTo.label,
+        p.x,
+        p.y - 28,
+        joining ? "#22c55e" : SURVEY_COLORS.target,
+      );
     }
 
     // 4. A scale bar. On a plan image the zoom percentage was the honest
@@ -1104,6 +1155,7 @@ export default function PlanCanvas({
   }, [
     shapes,
     survey,
+    nodes,
     liveNodes,
     shapePoints,
     shared,
@@ -1141,22 +1193,44 @@ export default function PlanCanvas({
    * corner it just placed.
    */
   const snapCandidate = useCallback(
-    (cp: Pt, exclude: Iterable<string> = []): string | null => {
+    (cp: Pt, exclude: Iterable<string> = []): SnapTarget => {
       const t = transformNow();
       const skip = new Set(exclude);
-      let best: string | null = null;
+      let best: SnapTarget = null;
       let bestDist = SNAP_PX;
+
+      // Plan corners first, so a tie goes to joining two shapes — the more
+      // common act, and the one whose absence leaves a billable sliver.
       for (const [id, at] of Object.entries(liveNodes)) {
         if (skip.has(id)) continue;
         const d = dist(cp, toCanvas(toWorld(at), t));
         if (d <= bestDist) {
-          best = id;
+          best = { kind: "node", nodeId: id, at };
+          bestDist = d;
+        }
+      }
+
+      // Then surveyed points. Landing on one is how a bed corner stops being
+      // a guess off an aerial and becomes a corner somebody stood and shot.
+      for (const point of surveyTargets) {
+        const d = dist(cp, toCanvas(toWorld(point.at), t));
+        if (d < bestDist) {
+          best = {
+            kind: "survey",
+            at: point.at,
+            label: point.label,
+            link: {
+              sessionId: surveySessionId ?? "",
+              pointId: point.id,
+              label: point.label,
+            },
+          };
           bestDist = d;
         }
       }
       return best;
     },
-    [liveNodes, transformNow],
+    [liveNodes, surveyTargets, surveySessionId, transformNow],
   );
 
   function canvasPoint(e: React.PointerEvent): Pt {
@@ -1194,13 +1268,17 @@ export default function PlanCanvas({
       // how a bed comes to share its edge with the lawn beside it. Decided at
       // the tap, while the person drawing can see what they were aiming at,
       // rather than guessed from proximity once the shape is finished.
-      const nodeId = snapCandidate(
+      const target = snapCandidate(
         cp,
         pending.map((pt) => pt.nodeId).filter((id): id is string => id !== null),
       );
       onPendingChange([
         ...pending,
-        { at: nodeId ? (liveNodes[nodeId] ?? ll) : ll, nodeId },
+        target === null
+          ? { at: ll, nodeId: null }
+          : target.kind === "node"
+            ? { at: target.at, nodeId: target.nodeId }
+            : { at: target.at, nodeId: null, survey: target.link },
       ]);
       return;
     }
@@ -1501,11 +1579,15 @@ export default function PlanCanvas({
       const moved = dragNodes;
       setSnapTo(null);
       setDragNodes(null);
-      if (drag.kind === "vertex" && target) {
+      if (drag.kind === "vertex" && target?.kind === "node") {
         // Dropped onto another corner: land it exactly where the target
         // already is, then fold the two together.
-        onMoveNodes({ [drag.nodeId]: liveNodes[target] ?? moved[drag.nodeId] });
-        onMergeNodes(drag.nodeId, target);
+        onMoveNodes({ [drag.nodeId]: target.at });
+        onMergeNodes(drag.nodeId, target.nodeId);
+      } else if (drag.kind === "vertex" && target?.kind === "survey") {
+        // Dropped onto a shot point: land exactly on it and record that it is
+        // there, so the shape can report a measured elevation at this corner.
+        onLinkSurvey(drag.nodeId, target.at, target.link);
       } else {
         onMoveNodes(moved);
       }

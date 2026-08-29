@@ -47,7 +47,36 @@ export type ShapeKind = "area" | "linear";
  * joins and works the grade out at draw time, so dragging a pin corrects the
  * slope, which a stored percentage could not do.
  */
-export type PlanNodes = Record<string, LatLng>;
+export interface NodeSurveyLink {
+  /** The Upright session the point belongs to. */
+  sessionId: string;
+  pointId: string;
+  /** How it read when it was linked — "Target 4" — so a card can name it. */
+  label: string;
+}
+
+export interface PlanNode {
+  at: LatLng;
+  /**
+   * The surveyed point this corner was placed on, when it was placed on one.
+   *
+   * A LINK, not a derivation — the corner keeps its own position. That is the
+   * important distinction and it is not the tidier-looking choice. Deriving
+   * the position from the survey would mean a bed whose corners vanish when
+   * the survey is not loaded: it belongs to another app, it is fetched over
+   * the network, and the take-off has to draw and price with no signal. An
+   * estimate that needs a round trip to know where its own beds are is not an
+   * estimate.
+   *
+   * So the position is ours and the link is provenance: this corner is on a
+   * shot point, and therefore has a measured elevation. If the pin later moves
+   * in Upright the two disagree, and the honest thing is to SAY so rather than
+   * to follow silently or diverge silently.
+   */
+  survey?: NodeSurveyLink;
+}
+
+export type PlanNodes = Record<string, PlanNode>;
 
 export interface PlanShape {
   id: string;
@@ -71,6 +100,8 @@ export interface PendingPoint {
   at: LatLng;
   /** The existing corner this landed on, if it landed on one. */
   nodeId: string | null;
+  /** The surveyed point it landed on, if it landed on one of those instead. */
+  survey?: NodeSurveyLink;
 }
 
 /**
@@ -150,8 +181,28 @@ export function planId(prefix: string): string {
 export function pointsOf(shape: PlanShape, nodes: PlanNodes): LatLng[] {
   const out: LatLng[] = [];
   for (const id of shape.vertices) {
-    const at = nodes[id];
-    if (at) out.push(at);
+    const node = nodes[id];
+    if (node) out.push(node.at);
+  }
+  return out;
+}
+
+/** Just the positions, for the canvas — which draws and hit-tests on them. */
+export function positionsOf(nodes: PlanNodes): Record<string, LatLng> {
+  const out: Record<string, LatLng> = {};
+  for (const [id, node] of Object.entries(nodes)) out[id] = node.at;
+  return out;
+}
+
+/** The surveyed corners of one shape, in vertex order. */
+export function surveyedCorners(
+  shape: PlanShape,
+  nodes: PlanNodes,
+): { nodeId: string; link: NodeSurveyLink }[] {
+  const out: { nodeId: string; link: NodeSurveyLink }[] = [];
+  for (const id of shape.vertices) {
+    const link = nodes[id]?.survey;
+    if (link) out.push({ nodeId: id, link });
   }
   return out;
 }
@@ -180,7 +231,7 @@ export function sharedNodeIds(shapes: PlanShape[]): Set<string> {
 export function pruneNodes(nodes: PlanNodes, shapes: PlanShape[]): PlanNodes {
   const live = new Set(shapes.flatMap((s) => s.vertices));
   const out: PlanNodes = {};
-  for (const [id, at] of Object.entries(nodes)) if (live.has(id)) out[id] = at;
+  for (const [id, node] of Object.entries(nodes)) if (live.has(id)) out[id] = node;
   return out;
 }
 
@@ -246,6 +297,20 @@ export function workBought(buckets: number, bucketSize: number | null): number {
  * upgrade, which is right, because two corners that merely happened to be
  * drawn in the same spot were never the same corner.
  */
+function linkFrom(value: unknown): { survey: NodeSurveyLink } | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.sessionId !== "string" || !v.sessionId) return null;
+  if (typeof v.pointId !== "string" || !v.pointId) return null;
+  return {
+    survey: {
+      sessionId: v.sessionId,
+      pointId: v.pointId,
+      label: typeof v.label === "string" && v.label ? v.label : "surveyed point",
+    },
+  };
+}
+
 export function topologyFrom(value: unknown): {
   nodes: PlanNodes;
   shapes: PlanShape[];
@@ -254,9 +319,14 @@ export function topologyFrom(value: unknown): {
 
   const nodes: PlanNodes = {};
   if (v.nodes && typeof v.nodes === "object" && !Array.isArray(v.nodes)) {
-    for (const [id, at] of Object.entries(v.nodes as Record<string, unknown>)) {
-      const point = latLngFrom(at);
-      if (id && point) nodes[id] = point;
+    for (const [id, raw] of Object.entries(v.nodes as Record<string, unknown>)) {
+      if (!id) continue;
+      // Two shapes here: `{at, survey?}`, and the bare LatLng corners were
+      // stored as before there was anything to link them to.
+      const asNode = (raw ?? {}) as Record<string, unknown>;
+      const point = latLngFrom(asNode.at) ?? latLngFrom(raw);
+      if (!point) continue;
+      nodes[id] = { at: point, ...(linkFrom(asNode.survey) ?? {}) };
     }
   }
 
@@ -278,7 +348,7 @@ export function topologyFrom(value: unknown): {
       const point = latLngFrom(entry);
       if (!point) continue;
       const id = planId("n");
-      nodes[id] = point;
+      nodes[id] = { at: point };
       ids.push(id);
     }
 

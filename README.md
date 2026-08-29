@@ -434,6 +434,38 @@ where Upright uses haversine on a 6371 km sphere, which moves the answers by at
 most 0.019' on that survey — a quarter of an inch, against a field
 repeatability of ±0.1'.
 
+#### Drawing a bed onto surveyed points
+
+A take-off corner drawn within 18 pixels of a shot point becomes **linked** to
+it: the corner lands exactly on the surveyed position and records which point
+it is. Snapping works while drawing and by dropping an existing corner onto a
+point; the target is ringed and named while the finger is still down, so a
+join to another shape and a link to a survey are distinguishable before either
+happens. Linked corners are drawn ringed in the survey's own red.
+
+**A link, not a derivation — and that is the load-bearing choice.** Deriving
+the corner's position from the survey would be tidier and is wrong: the survey
+belongs to another app and arrives over the network, so a bed whose corners
+came from it would have no geometry when the survey is not loaded. The
+take-off has to draw and price with no signal. An estimate that needs a round
+trip to know where its own beds are is not an estimate.
+
+So the position is the estimate's and the link is provenance: *this corner is
+on a shot point, and therefore has a measured height*. If the pin later moves
+in Upright the two disagree, and the honest response is to say so rather than
+to follow silently or diverge silently.
+
+**Dragging a linked corner off its point breaks the link.** It has to — the
+link asserts the corner is on that point, and once it has been dragged
+elsewhere that is no longer true. Keeping it would attach a measured elevation
+to a position nobody measured.
+
+What this buys is on the shape card: **the fall across a shape**. An area tells
+you how much mulch; the fall tells you whether it drains. It is only reported
+once at least two corners are on shot points, because one measured corner and
+three guessed ones is a height, not a grade — a bed with one link says so and
+asks for a second rather than reporting a fall of zero.
+
 #### Anchoring, and the half of the properties with no coordinates
 
 The map has to open somewhere, so the estimate carries an anchor — which
