@@ -492,14 +492,12 @@ export default function JobBoard({
                     </span>
                   )}
 
-                  {/* The same pill on the other corner, tinted rather than
-                      white: a stage is a category, not a number. */}
-                  <span
-                    className="absolute top-2.5 left-2.5 px-1.5 py-0.5 rounded-full text-black text-[clamp(0.55rem,1vw,0.7rem)] font-bold shadow-[0_1px_4px_rgba(0,0,0,0.6)]"
-                    style={{ background: STAGE_TINT[t.stage] }}
-                  >
-                    {t.stage === "Project Management" ? "PM" : t.stage}
-                  </span>
+                  {/* NO STAGE PILL. The page is the stage — its chip is lit in
+                      the row above and every tile on the page shares it — so a
+                      badge repeating it on all of them says nothing and spends
+                      a corner of the picture doing it. It stays in the tile's
+                      label, where a reader coming to one tile out of context
+                      still gets it. */}
                 </button>
               );
             })}

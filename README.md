@@ -68,10 +68,12 @@ tile shapes in one app reads as two apps. So:
   still says *which* of the two problems it is — a property with no
   coordinates, or a deal tied to no property at all.
 - **The value wears the grid's badge** — top right, white, `tabular-nums` —
-  because that is the number this tile has instead of a count. The stage wears
-  the same pill on the other corner, tinted rather than white: a stage is a
-  category, not a number. (*Project Management* is **PM** there; the filter
-  chip has room for the whole thing and keeps it.)
+  because that is the number this tile has instead of a count. It is the only
+  thing on the picture: **the tile does not repeat its stage**, because the
+  page *is* the stage — its chip is lit in the row above and every tile on the
+  page shares it, so a badge saying it on all of them says nothing and spends a
+  corner of the photograph doing it. The stage stays in the tile's label, where
+  a reader coming to one tile out of context still gets it.
 - **One sub-line**, as the grid's tile has. On a located tile the picture is
   the address, so the line spends itself on what a tap actually does — open
   work already done, or start it. Both lines are `line-clamp-2`, since a deal
@@ -237,7 +239,7 @@ tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 78 checks. A throw is reported as a failure rather than crashing
+is showing: 81 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
 

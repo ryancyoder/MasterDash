@@ -264,6 +264,17 @@ try {
     first.slice(0, 2).join(" | "));
   ok("newest deal first", first[0].includes("Kowalski regrade"), first[0].slice(0, 40));
 
+  // The page IS the stage, so a badge repeating it on every tile says nothing
+  // and spends a corner of the picture doing it.
+  ok("A TILE DOES NOT REPEAT THE STAGE THE PAGE IS ALREADY ON",
+    !first.some((t) => /\bSent\b/.test(t)), first[0]);
+  ok("but it is still in the tile's label, for a reader out of context",
+    /Sent/.test(await page.$eval('main button[data-deal="1"]',
+      (el) => el.getAttribute("aria-label") ?? "")),
+    await page.$eval('main button[data-deal="1"]', (el) => el.getAttribute("aria-label") ?? ""));
+  ok("and the stage row still says which page this is",
+    (await page.$eval('button[aria-pressed="true"]', (b) => b.textContent ?? "")).includes("Sent"));
+
   // 3. The pairing reaches the screen, and says it was a guess.
   ok("a property-matched estimate is named as one",
     first[0].includes("matched by property"), first[0]);
