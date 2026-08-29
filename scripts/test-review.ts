@@ -13,12 +13,15 @@ import {
   fmtClock,
   locatedPhotoAt,
   photoAt,
+  gradeBadge,
   reviewLabel,
   segmentAt,
+  stripItems,
   wallToAudioMs,
   type ReviewClip,
   type ReviewPhoto,
   type ReviewSegment,
+  type GradeFrame,
 } from "../lib/estimator/review.ts";
 
 let pass = 0;
@@ -162,6 +165,65 @@ ok(
 ok(
   "and with neither it says so",
   reviewLabel({ name: null, propertyAddress: null, startedAt: null }) === "Untagged session · undated",
+);
+
+// --- the filmstrip: photo pins and grade frames together ------------------
+
+const frames: GradeFrame[] = [
+  { id: "a1", url: "a.jpg", kind: "anchor", label: "Anchor", capturedAt: "2026-08-01T10:00:20Z" },
+  { id: "o1", url: "o.jpg", kind: "observation", label: "Observation A", capturedAt: "2026-08-01T10:00:10Z" },
+  { id: "t2", url: "t2.jpg", kind: "target", label: "Target 2", capturedAt: "2026-08-01T10:00:30Z" },
+  { id: "t9", url: "t9.jpg", kind: "target", label: "Target 9", capturedAt: null },
+];
+const t0 = "2026-08-01T10:00:00Z";
+
+{
+  const strip = stripItems(photos, frames, t0);
+  ok(
+    "grade frames join the photo pins in one strip",
+    strip.some((i) => i.kind === "grade") && strip.some((i) => i.kind === "photo"),
+  );
+  ok("nothing is dropped", strip.length === photos.length + frames.length);
+  const timed = strip.filter((i) => i.offsetMs !== null).map((i) => i.offsetMs as number);
+  ok(
+    "and they interleave in capture order",
+    timed.every((v, i) => i === 0 || v >= timed[i - 1]),
+    JSON.stringify(timed),
+  );
+  ok(
+    "a frame's offset is rebuilt from the session start",
+    strip.find((i) => i.id === "o1")?.offsetMs === 10_000,
+  );
+  ok(
+    "an untimed frame sorts last rather than to zero",
+    strip[strip.length - 1].id === "t9",
+    "claiming it was the first thing that happened would be worse than saying nothing",
+  );
+  ok("an untimed frame keeps a null offset", strip.find((i) => i.id === "t9")?.offsetMs === null);
+  ok(
+    "an untimed PHOTO also sorts last",
+    strip.filter((i) => i.offsetMs === null).some((i) => i.id === "p3"),
+  );
+}
+
+{
+  // With no session start there is nothing to measure a frame against.
+  const strip = stripItems([], frames, null);
+  ok(
+    "no session start means no grade offsets at all",
+    strip.every((i) => i.offsetMs === null),
+  );
+  ok("but the frames are still listed", strip.length === frames.length);
+}
+
+ok("the anchor badges as A", gradeBadge("anchor", "Anchor") === "A");
+ok("an observation badges by its number", gradeBadge("observation", "Observation 2") === "O2");
+ok("a bare observation still badges", gradeBadge("observation", "Observation A") === "O");
+ok("a target takes its own number", gradeBadge("target", "Target 12") === "T12");
+ok(
+  "the number comes from the label, not the position",
+  gradeBadge("target", "Target 7") === "T7",
+  "a deleted target must not renumber the ones after it",
 );
 
 console.log(`\n${pass} passed, ${fail} failed`);

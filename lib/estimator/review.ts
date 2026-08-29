@@ -245,3 +245,109 @@ export function reviewLabel(s: {
   const title = s.name || s.propertyAddress || "Untagged session";
   return `${title} · ${when}`;
 }
+
+// --- the filmstrip --------------------------------------------------------
+//
+// Photo pins and grade frames are pictures of the same yard taken minutes
+// apart, so they share one strip in capture order. Upright merges them for
+// exactly that reason: a separate gallery for the survey frames would be an
+// odd split, and it tried one — a permanent photo-sized hole in the map was
+// worse than the problem it solved.
+//
+// A grade frame is the crosshair shot that every sighting captures. Without it
+// a yard full of "Target 3" is impossible to place afterwards, which is the
+// whole reason the frames exist.
+
+/** A frame captured while shooting grade, with the point it belongs to. */
+export interface GradeFrame {
+  id: string;
+  url: string;
+  kind: "observation" | "anchor" | "target";
+  label: string;
+  /** ISO timestamp the row was written, which is when the shot was taken. */
+  capturedAt: string | null;
+}
+
+export interface StripItem {
+  key: string;
+  kind: "photo" | "grade";
+  /** The photo id, or the elevation point id. */
+  id: string;
+  url: string;
+  /** Wall-clock ms from session start, or null when it cannot be placed. */
+  offsetMs: number | null;
+  /** `7` for a pin; `A`, `O`, `T2` for a grade frame. */
+  badge: string;
+  title: string;
+}
+
+/**
+ * The short code a grade frame is badged with.
+ *
+ * Upright's codes, so a frame reads the same in both apps: the anchor is the
+ * shared datum, an observation is where somebody stood, and targets are
+ * numbered. The number is taken from the label rather than from position in a
+ * list, because a deleted target must not renumber the ones after it.
+ */
+export function gradeBadge(kind: GradeFrame["kind"], label: string): string {
+  if (kind === "anchor") return "A";
+  const n = /(\d+)\s*$/.exec(label || "");
+  if (kind === "observation") return n ? `O${n[1]}` : "O";
+  return n ? `T${n[1]}` : "T";
+}
+
+/**
+ * Photo pins and grade frames in one strip, in capture order.
+ *
+ * A grade frame carries no offset of its own — an elevation point is a
+ * position and a set of sightings, not a moment — so its place on the timeline
+ * is rebuilt from when its row was written against the session start. That is
+ * an approximation and it is the same one Upright makes for an archived
+ * session; a frame with no timestamp keeps a null offset and simply cannot be
+ * seeked to, rather than being dropped or parked at zero.
+ *
+ * Anything without a time sorts last, in its own order. Putting it at the
+ * front would claim it was the first thing that happened.
+ */
+export function stripItems(
+  photos: ReviewPhoto[],
+  frames: GradeFrame[],
+  sessionStartedAt: string | null,
+): StripItem[] {
+  const t0 = sessionStartedAt ? Date.parse(sessionStartedAt) : NaN;
+  const items: StripItem[] = [];
+
+  for (const p of photos) {
+    items.push({
+      key: `photo:${p.id}`,
+      kind: "photo",
+      id: p.id,
+      url: p.url,
+      offsetMs: p.offsetMs,
+      badge: String(p.seq),
+      title: p.note || `Pin ${p.seq}`,
+    });
+  }
+
+  for (const f of frames) {
+    const shot = f.capturedAt ? Date.parse(f.capturedAt) : NaN;
+    const offsetMs =
+      Number.isFinite(shot) && Number.isFinite(t0) ? Math.max(0, shot - t0) : null;
+    items.push({
+      key: `grade:${f.id}`,
+      kind: "grade",
+      id: f.id,
+      url: f.url,
+      offsetMs,
+      badge: gradeBadge(f.kind, f.label),
+      title: f.label,
+    });
+  }
+
+  return items.sort((a, b) => {
+    if (a.offsetMs === null && b.offsetMs === null) return 0;
+    if (a.offsetMs === null) return 1;
+    if (b.offsetMs === null) return -1;
+    return a.offsetMs - b.offsetMs;
+  });
+}

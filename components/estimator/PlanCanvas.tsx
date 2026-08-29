@@ -193,6 +193,16 @@ export interface SurveyDot {
   placed: boolean;
   hidden: boolean;
   elevation: ElevationResult;
+  /**
+   * The frame captured when this point was shot, with the crosshair burned in.
+   *
+   * Every grade shot takes one, and it is what makes a survey placeable
+   * afterwards: a yard full of "Target 3" is impossible to match to the ground
+   * without the picture that was aimed at it.
+   */
+  photoUrl?: string | null;
+  /** When the shot was taken, so the frame can sit on the visit's timeline. */
+  capturedAt?: string | null;
 }
 
 export interface SurveyRunLine {
@@ -333,6 +343,7 @@ export default function PlanCanvas({
   livePhotoId,
   selectedPhotoId,
   onSelectPhoto,
+  selectedSurveyId,
   pinsDraggable,
   onMovePin,
   rightAngle,
@@ -395,6 +406,8 @@ export default function PlanCanvas({
   livePhotoId: string | null;
   selectedPhotoId: string | null;
   onSelectPhoto: (id: string | null) => void;
+  /** A survey point picked from the filmstrip, lit the way a photo pin is. */
+  selectedSurveyId: string | null;
   /**
    * Whether survey points and photo pins can be dragged.
    *
@@ -1162,6 +1175,18 @@ export default function PlanCanvas({
         const p = at.get(point.id);
         if (!p) continue;
         drawSurveyGlyph(ctx, point.kind, p.x, p.y);
+        // Picked from the filmstrip: a ring in the point's own colour, the
+        // same answer a photo pin gives. Tapping a grade frame is how you find
+        // the thing it was aimed at, so it has to be visible on the map.
+        if (point.id === selectedSurveyId) {
+          ctx.save();
+          ctx.strokeStyle = SURVEY_COLORS[point.kind];
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 15, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
         // Glyph plus at most one line, per Upright: a yard full of labelled
         // pins is unreadable. The name shows only while the point is
         // unplaced, which is the one moment identity matters more than the
@@ -1396,6 +1421,7 @@ export default function PlanCanvas({
     photos,
     livePhotoId,
     selectedPhotoId,
+    selectedSurveyId,
     dragPin,
     nodes,
     liveNodes,

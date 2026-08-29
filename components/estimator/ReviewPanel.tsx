@@ -8,6 +8,8 @@ import {
   photoAt,
   reviewLabel,
   segmentAt,
+  stripItems,
+  type GradeFrame,
   type ReviewSegment,
   type ReviewSession,
 } from "@/lib/estimator/review";
@@ -119,6 +121,7 @@ export function ReviewColumn({
   drift,
   playing,
   onSeek,
+  picked,
 }: {
   session: ReviewSession | null;
   segments: ReviewSegment[];
@@ -127,13 +130,32 @@ export function ReviewColumn({
   drift: number;
   playing: boolean;
   onSeek: (ms: number) => void;
+  /**
+   * A frame chosen from the strip, which outranks the playhead's own photo.
+   *
+   * Picking something and having the preview keep showing something else makes
+   * the tap look broken — and a grade frame often has no offset to seek to, so
+   * the preview is the ONLY place it can appear.
+   */
+  picked: { url: string; title: string; note: string | null } | null;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const current = useMemo(() => segmentAt(segments, audioMs), [segments, audioMs]);
-  const photo = useMemo(
+  const livePhoto = useMemo(
     () => (session ? photoAt(session.photos, audioMs, drift) : null),
     [session, audioMs, drift],
   );
+  const shown =
+    picked ??
+    (livePhoto
+      ? {
+          url: livePhoto.url,
+          title: `Pin ${livePhoto.seq}`,
+          note:
+            livePhoto.note ??
+            (livePhoto.lat === null ? "No position — taken before the GPS had a fix." : null),
+        }
+      : null);
 
   // Follow the playhead, but only while it is actually moving. Scrolling the
   // list under someone who has paused to read it is the more annoying failure.
@@ -143,7 +165,9 @@ export function ReviewColumn({
     el?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [current, playing]);
 
-  if (!session) {
+  // A survey with grade frames is worth showing even with no visit chosen, so
+  // the empty state waits until there is genuinely nothing to look at.
+  if (!session && !picked) {
     return (
       <p className="rounded-2xl border border-edge bg-surface p-3 text-xs leading-relaxed text-muted">
         Choose a visit to replay it here beside the plan.
@@ -154,22 +178,17 @@ export function ReviewColumn({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="shrink-0 overflow-hidden rounded-2xl border border-edge bg-surface">
-        {photo ? (
+        {shown ? (
           <>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={photo.url}
-              alt={photo.note || `Photo pin ${photo.seq}`}
+              src={shown.url}
+              alt={shown.title}
               className="aspect-[4/3] w-full object-cover"
             />
             <div className="px-3 py-2">
-              <p className="text-xs font-bold text-ink">Pin {photo.seq}</p>
-              {photo.note && <p className="mt-0.5 text-xs text-muted">{photo.note}</p>}
-              {photo.lat === null && (
-                <p className="mt-0.5 text-[0.65rem] text-muted">
-                  No position — taken before the GPS had a fix.
-                </p>
-              )}
+              <p className="text-xs font-bold text-ink">{shown.title}</p>
+              {shown.note && <p className="mt-0.5 text-xs text-muted">{shown.note}</p>}
             </div>
           </>
         ) : (
@@ -231,49 +250,65 @@ export function ReviewColumn({
  */
 export function ReviewFilmstrip({
   session,
+  frames,
   audioMs,
   drift,
   onSeek,
-  selectedPhotoId,
-  onSelectPhoto,
+  selectedId,
+  onSelect,
 }: {
   session: ReviewSession | null;
+  /** Grade frames from the survey shown on the canvas, if there is one. */
+  frames: GradeFrame[];
   audioMs: number;
   drift: number;
   onSeek: (ms: number) => void;
-  selectedPhotoId: string | null;
-  onSelectPhoto: (id: string | null) => void;
+  /** The picked frame, as `photo:<id>` or `grade:<id>`. */
+  selectedId: string | null;
+  onSelect: (key: string | null) => void;
 }) {
   const live = useMemo(
     () => (session ? photoAt(session.photos, audioMs, drift) : null),
     [session, audioMs, drift],
   );
-  if (!session || session.photos.length === 0) return null;
+  const items = useMemo(
+    () => stripItems(session?.photos ?? [], frames, session?.startedAt ?? null),
+    [session, frames],
+  );
+  if (items.length === 0) return null;
 
   return (
     <div className="flex shrink-0 gap-2 overflow-x-auto border-t border-edge bg-bg px-3 py-2 md-scroll">
-      {session.photos.map((p) => {
-        const isLive = live?.id === p.id;
-        const isPicked = selectedPhotoId === p.id;
+      {items.map((item) => {
+        // Only a photo pin can be "now": the playhead window is the same one
+        // the map lights a pin with, and the two must never disagree.
+        const isLive = item.kind === "photo" && live?.id === item.id;
+        const isPicked = selectedId === item.key;
         return (
           <button
-            key={p.id}
+            key={item.key}
             onClick={() => {
-              onSelectPhoto(isPicked ? null : p.id);
-              // A frame with no offset cannot move the playhead — it was never
-              // stamped against the timeline — but it can still be selected.
-              if (p.offsetMs !== null) onSeek(p.offsetMs * drift);
+              onSelect(isPicked ? null : item.key);
+              // An item with no offset cannot move the playhead — it was never
+              // stamped against the timeline — but it can still be picked.
+              if (item.offsetMs !== null) onSeek(item.offsetMs * drift);
             }}
-            title={p.note || `Pin ${p.seq}`}
+            title={item.title}
             className={`relative h-16 w-[5.5rem] shrink-0 overflow-hidden rounded-lg border-2 ${
               isPicked ? "border-accent" : isLive ? "border-ink" : "border-transparent"
             }`}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={p.url} alt={`Pin ${p.seq}`} className="h-full w-full object-cover" />
-            <span className="absolute bottom-0 left-0 bg-black/70 px-1 text-[0.6rem] font-bold text-white">
-              {p.seq}
-              {p.lat === null ? " ·" : ""}
+            <img src={item.url} alt={item.title} className="h-full w-full object-cover" />
+            <span
+              className={`absolute bottom-0 left-0 px-1 text-[0.6rem] font-bold ${
+                // A grade frame is a survey record, not a site photograph, and
+                // the badge is the only thing that says which at thumbnail size.
+                item.kind === "grade" ? "bg-[#f59e0b] text-black" : "bg-black/70 text-white"
+              }`}
+            >
+              {item.badge}
+              {item.offsetMs === null ? " ·" : ""}
             </span>
           </button>
         );

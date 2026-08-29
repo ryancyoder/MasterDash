@@ -17,6 +17,7 @@ import { useReviewAudio } from "@/components/estimator/useReviewAudio";
 import {
   driftScale,
   locatedPhotoAt,
+  type GradeFrame,
   type ReviewSegment,
   type ReviewSession,
 } from "@/lib/estimator/review";
@@ -252,7 +253,20 @@ export default function PlanPage({
   const [visit, setVisit] = useState<ReviewSession | null>(null);
   const [segments, setSegments] = useState<ReviewSegment[]>([]);
   const [transcriptStatus, setTranscriptStatus] = useState("none");
-  const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
+  /**
+   * What the filmstrip has picked, as `photo:<id>` or `grade:<id>`.
+   *
+   * One key rather than two pieces of state, because only one thing can be
+   * picked: selecting a grade frame has to clear a photo pin and the reverse,
+   * exactly as Upright's strip behaves. Two flags would eventually light both.
+   */
+  const [stripPick, setStripPick] = useState<string | null>(null);
+  const selectedPhotoId = stripPick?.startsWith("photo:")
+    ? stripPick.slice("photo:".length)
+    : null;
+  const selectedSurveyId = stripPick?.startsWith("grade:")
+    ? stripPick.slice("grade:".length)
+    : null;
   /** Which of the canvas and the clip is big. The other becomes a mini pane. */
   const [videoOnStage, setVideoOnStage] = useState(false);
   /** A correction that did not save. Shown, never swallowed. */
@@ -266,7 +280,7 @@ export default function PlanPage({
   const [lastVisitId, setLastVisitId] = useState(reviewSessionId);
   if (lastVisitId !== reviewSessionId) {
     setLastVisitId(reviewSessionId);
-    setSelectedPhotoId(null);
+    setStripPick(null);
     setPinError(null);
     setVisit(null);
     setSegments([]);
@@ -331,6 +345,39 @@ export default function PlanPage({
         headingDeg: p.headingDeg,
       }));
   }, [visit]);
+
+  /**
+   * The frames captured while shooting grade.
+   *
+   * They come from the SURVEY, not the visit — a grade frame belongs to an
+   * elevation point — so the strip shows them whenever a survey is loaded,
+   * whether or not that is the same session being replayed. Usually it is; the
+   * two are chosen separately and nothing forces them to agree.
+   */
+  const gradeFrames = useMemo<GradeFrame[]>(
+    () =>
+      (survey?.points ?? [])
+        .filter((p) => !p.hidden && p.photoUrl)
+        .map((p) => ({
+          id: p.id,
+          url: p.photoUrl as string,
+          kind: p.kind,
+          label: p.label,
+          capturedAt: p.capturedAt ?? null,
+        })),
+    [survey],
+  );
+
+  /** What the strip has picked, resolved to something the preview can show. */
+  const pickedFrame = useMemo(() => {
+    if (!stripPick) return null;
+    if (selectedSurveyId) {
+      const f = gradeFrames.find((g) => g.id === selectedSurveyId);
+      return f ? { url: f.url, title: f.label, note: "Grade shot" } : null;
+    }
+    const p = visit?.photos.find((x) => x.id === selectedPhotoId);
+    return p ? { url: p.url, title: `Pin ${p.seq}`, note: p.note } : null;
+  }, [stripPick, selectedSurveyId, selectedPhotoId, gradeFrames, visit]);
 
   const livePhotoId = useMemo(
     () =>
@@ -810,7 +857,8 @@ export default function PlanPage({
           photos={photoDots}
           livePhotoId={livePhotoId}
           selectedPhotoId={selectedPhotoId}
-          onSelectPhoto={setSelectedPhotoId}
+          onSelectPhoto={(id) => setStripPick(id ? `photo:${id}` : null)}
+          selectedSurveyId={selectedSurveyId}
           pinsDraggable={mode === "review"}
           onMovePin={handleMovePin}
           rightAngle={rightAngle}
@@ -958,6 +1006,7 @@ export default function PlanPage({
                 drift={drift}
                 playing={playing}
                 onSeek={seekMs}
+                picked={pickedFrame}
               />
             </>
           ) : (
@@ -1031,11 +1080,12 @@ export default function PlanPage({
       */}
       <ReviewFilmstrip
         session={visit}
+        frames={gradeFrames}
         audioMs={audioMs}
         drift={drift}
         onSeek={seekMs}
-        selectedPhotoId={selectedPhotoId}
-        onSelectPhoto={setSelectedPhotoId}
+        selectedId={stripPick}
+        onSelect={setStripPick}
       />
       <ReviewTransport
         session={visit}

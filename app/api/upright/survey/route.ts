@@ -48,6 +48,7 @@ interface RawPoint {
   placed?: unknown;
   hidden?: unknown;
   photoUrl?: unknown;
+  created_at?: unknown;
 }
 
 export async function GET(request: Request) {
@@ -88,6 +89,17 @@ export async function GET(request: Request) {
   };
 
   const photos = new Map<string, string>();
+  /**
+   * When each point was shot.
+   *
+   * Every grade shot captures a frame with the crosshair burned into it, and
+   * those frames belong in the filmstrip beside the photo pins — they are
+   * pictures of the same yard taken minutes apart. To sit on the timeline they
+   * need a time, and an elevation point carries no offset of its own, so it is
+   * rebuilt from `created_at` against the session start. That is what Upright
+   * does for an archived session, for the same reason.
+   */
+  const shotAt = new Map<string, string>();
   const points = (Array.isArray(body.elevationPoints) ? body.elevationPoints : [])
     .map((raw) => {
       const r = (raw ?? {}) as RawPoint;
@@ -101,6 +113,7 @@ export async function GET(request: Request) {
         return null;
       }
       if (typeof r.photoUrl === "string" && r.photoUrl) photos.set(r.id, r.photoUrl);
+      if (typeof r.created_at === "string" && r.created_at) shotAt.set(r.id, r.created_at);
       return {
         id: r.id,
         kind,
@@ -148,6 +161,7 @@ export async function GET(request: Request) {
     points: points.map((p) => ({
       ...p,
       photoUrl: photos.get(p.id) ?? null,
+      capturedAt: shotAt.get(p.id) ?? null,
       elevation: elevationOf(survey, p.id),
     })),
     runs: runs
