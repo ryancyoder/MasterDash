@@ -37,6 +37,8 @@ interface PhotoRow {
   event_id: number;
   storage_path: string;
   poster_path: string | null;
+  latitude: number | null;
+  longitude: number | null;
   media_type: string;
   caption: string | null;
   taken_at: string | null;
@@ -75,7 +77,8 @@ export async function GET(request: Request) {
   const ids = eventRows.map((e) => e.id).join(",");
   const photosRes = await rest(
     cfg,
-    `deal_photos?select=id,event_id,storage_path,poster_path,media_type,caption,taken_at,created_at,is_outlier` +
+    `deal_photos?select=id,event_id,storage_path,poster_path,media_type,caption,taken_at,` +
+      `created_at,is_outlier,latitude,longitude` +
       `&event_id=in.(${ids})&order=taken_at.asc&limit=${MAX_PHOTOS}`,
   );
   if (!photosRes.ok) {
@@ -94,4 +97,49 @@ export async function GET(request: Request) {
   );
 
   return NextResponse.json({ ok: true, events });
+}
+
+/**
+ * Put a photograph where somebody dropped it.
+ *
+ * The coordinate and the outlier flag move together: `is_outlier` is the mark
+ * on a fix that landed away from the site, and a person placing the frame on
+ * the yard has overruled that with a better answer. Leaving it set would keep
+ * the picture off the map it was only now put on.
+ */
+export async function PATCH(request: Request) {
+  const cfg = serverConfig();
+  if (!cfg) {
+    return NextResponse.json({ ok: false, error: "No Supabase credentials." }, { status: 503 });
+  }
+  let body: { photoId?: unknown; lat?: unknown; lng?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return NextResponse.json({ ok: false, error: "Body was not JSON." }, { status: 400 });
+  }
+  const id = Number(body.photoId);
+  const lat = Number(body.lat);
+  const lng = Number(body.lng);
+  // Checked rather than trusted: this endpoint is public, and a NaN written
+  // into the column is a photograph that can never be drawn again.
+  if (!Number.isInteger(id) || id <= 0) {
+    return NextResponse.json({ ok: false, error: "A photo id is required." }, { status: 400 });
+  }
+  if (!Number.isFinite(lat) || Math.abs(lat) > 90 || !Number.isFinite(lng) || Math.abs(lng) > 180) {
+    return NextResponse.json({ ok: false, error: "That is not a position." }, { status: 400 });
+  }
+
+  const res = await rest(cfg, `deal_photos?id=eq.${id}`, {
+    method: "PATCH",
+    headers: { prefer: "return=minimal" },
+    body: JSON.stringify({ latitude: lat, longitude: lng, is_outlier: false }),
+  });
+  if (!res.ok) {
+    return NextResponse.json(
+      { ok: false, error: `That could not be saved (${res.status}).` },
+      { status: 502 },
+    );
+  }
+  return NextResponse.json({ ok: true });
 }

@@ -23,7 +23,7 @@ import {
 import { fetchReviewSessions, type ReviewSessionRow } from "@/lib/estimator/reviewData";
 import {
   eventLabel,
-  fetchPropertyPhotos,
+  type EventPhoto,
   type PhotoEvent,
 } from "@/lib/estimator/propertyPhotos";
 
@@ -548,6 +548,11 @@ export function ReviewFilmstrip({
   selectedId,
   onSelect,
   propertyId,
+  source,
+  onSource,
+  events,
+  photoError,
+  onDragPhoto,
 }: {
   session: ReviewSession | null;
   /** Grade frames from the survey shown on the canvas, if there is one. */
@@ -565,13 +570,26 @@ export function ReviewFilmstrip({
    * here, on the first switch to it, so it travels with the pick rather than
    * making the whole page hold a list nobody may ever look at.
    */
-  onSelect: (
-    key: string | null,
-    frame?: { url: string; title: string; note: string | null },
-  ) => void;
+  onSelect: (key: string | null) => void;
   /** The yard, for its own photographs. Null on an estimate with no job. */
   propertyId: number | null;
+  /** Which source is showing, and how to change it. Owned upstairs. */
+  source: "visit" | "property";
+  onSource: (source: "visit" | "property") => void;
+  /** The yard's photographs, or null while they are still being read. */
+  events: PhotoEvent[] | null;
+  /** Why they could not be read, said rather than shown as an empty yard. */
+  photoError: string | null;
+  /**
+   * Start dragging a frame onto the map.
+   *
+   * The pointer goes down here and comes up over the canvas, which is a
+   * different component, so the drag belongs to the page that holds both.
+   */
+  onDragPhoto: (photo: EventPhoto, event: PhotoEvent, e: React.PointerEvent) => void;
 }) {
+  // Destructured names the body already used before the state moved upstairs.
+
   /*
     TWO SOURCES, ONE RAIL.
 
@@ -588,35 +606,6 @@ export function ReviewFilmstrip({
     halves already render as the same rail, so that is a merge rather than a
     rewrite.
   */
-  const [source, setSource] = useState<"visit" | "property">("visit");
-  const [events, setEvents] = useState<PhotoEvent[] | null>(null);
-  const [photoError, setPhotoError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (source !== "property" || propertyId === null) return;
-    let live = true;
-    void fetchPropertyPhotos(propertyId).then((r) => {
-      if (!live) return;
-      setEvents(r.events);
-      setPhotoError(r.error);
-    });
-    return () => {
-      live = false;
-    };
-    // Fetched on the first switch, not on mount: most of the time nobody opens
-    // this, and it is a request per estimate that would never be looked at.
-  }, [source, propertyId]);
-
-  // A change of yard invalidates what was fetched. Cleared during render
-  // rather than in an effect, so one frame never shows another property's
-  // photographs under this one's heading.
-  const [lastProperty, setLastProperty] = useState(propertyId);
-  if (lastProperty !== propertyId) {
-    setLastProperty(propertyId);
-    setEvents(null);
-    setPhotoError(null);
-  }
-
   const live = useMemo(
     () => (session ? photoAt(session.photos, audioMs, drift) : null),
     [session, audioMs, drift],
@@ -638,7 +627,7 @@ export function ReviewFilmstrip({
       ] as const).map(([value, label]) => (
         <button
           key={value}
-          onClick={() => setSource(value)}
+          onClick={() => onSource(value)}
           aria-pressed={source === value}
           className={`rounded-lg px-2 py-1 text-[0.65rem] font-bold ${
             source === value ? "bg-accent text-black" : "bg-surface2 text-muted"
@@ -685,20 +674,12 @@ export function ReviewFilmstrip({
                   return (
                     <button
                       key={ph.id}
-                      onClick={() =>
-                        onSelect(
-                          isPicked ? null : key,
-                          isPicked
-                            ? undefined
-                            : {
-                                url: ph.url,
-                                // The caption leads when somebody wrote one;
-                                // otherwise the visit is what identifies it.
-                                title: ph.caption?.trim() || eventLabel(e),
-                                note: ph.caption?.trim() ? eventLabel(e) : null,
-                              },
-                        )
-                      }
+                      onClick={() => onSelect(isPicked ? null : key)}
+                      /* A frame is dragged onto the map to give it a
+                         position. The pointer comes up over the canvas, which
+                         is a different component, so the page that holds both
+                         owns the gesture from here. */
+                      onPointerDown={(ev) => onDragPhoto(ph, e, ev)}
                       title={ph.caption ?? eventLabel(e)}
                       className={`relative h-16 w-[5.5rem] shrink-0 overflow-hidden rounded-lg border-2 ${
                         isPicked ? "border-accent" : "border-transparent"
@@ -709,6 +690,11 @@ export function ReviewFilmstrip({
                         src={ph.url}
                         alt={ph.caption ?? ""}
                         loading="lazy"
+                        /* The browser's own image drag would otherwise start
+                           on mouse-down and fire `pointercancel`, which kills
+                           the drag onto the map on its first move. The grid's
+                           tiles guard the same way. */
+                        draggable={false}
                         className="h-full w-full object-cover"
                       />
                       {ph.isVideo && (
@@ -764,7 +750,12 @@ export function ReviewFilmstrip({
             }`}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={item.url} alt={item.title} className="h-full w-full object-cover" />
+            <img
+              src={item.url}
+              alt={item.title}
+              draggable={false}
+              className="h-full w-full object-cover"
+            />
             <span
               className={`absolute bottom-0 left-0 px-1 text-[0.6rem] font-bold ${
                 // A grade frame is a survey record, not a site photograph, and

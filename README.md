@@ -237,7 +237,7 @@ tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 72 checks. A throw is reported as a failure rather than crashing
+is showing: 78 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
 
@@ -944,9 +944,60 @@ has photographed looked identical — *No photographs of this yard yet* — whic
 is how you conclude a feature does not work. It returns the error now and the
 strip says it, the same rule the proposal helper's error reporting follows.
 
-**Not done, and worth knowing:** `deal_photos` carries `latitude`/`longitude`,
-so these could be pins on the map like Upright's are. That is a bigger change
-than a rail and was not what was asked for.
+#### Dragging a photograph onto the map
+
+A frame drags out of the strip and drops on the map, and the photograph is a
+pin there from then on.
+
+**Most of them already have a position — that is the surprise.** 511 of the 705
+photographs on the project carry a latitude from the camera's own EXIF and 194
+do not. So this is two jobs at once: giving a position to the 194, and
+**correcting** one that landed in the wrong yard. The second is what
+`is_outlier` marks (39 of them), and **dropping a frame clears that flag** —
+somebody placing the picture on the yard has overruled the automatic judgement
+with a better one, and leaving it set would keep the picture off the map it was
+only now put on.
+
+**Pointer events, not HTML5 drag-and-drop**, which does not exist on an iPad.
+The pointer goes down on a filmstrip frame and comes up over the canvas — two
+different components — so the page that holds both owns the gesture, and asks
+the canvas to turn where the finger let go into a coordinate. Off the canvas is
+a cancelled drag, not a pin under the side column.
+
+**`draggable={false}` on the thumbnails is load-bearing.** Without it the
+browser's own image drag starts on mouse-down and fires `pointercancel`, which
+kills the gesture on its first move — it took a round of instrumenting the
+handler to find, and the grid's tiles have guarded the same way all along.
+
+**It only becomes a drag past 12px.** Short of that it is a tap, and a tap
+picks the frame — the same distinction the tile grid draws between a press and
+a reorder, for the same reason: a gloved tap on a moving truck is never
+perfectly still. A ghost of the frame follows the finger once the threshold is
+passed, because the whole question is *where* the photograph goes and until the
+picture is under the thumb there is nothing to aim.
+
+**On screen first, then written.** The pin appears under the finger that let it
+go; a failed write says so and puts it back, because a pin that is only on this
+device is worse than one that never moved.
+
+**Appointment pins are their own colour** (`#c9973f` against the session pins'
+white), for the reason Upright gives every survey glyph one: two different
+records drawn identically read as one, and these two genuinely differ — a
+session pin is stamped against a recording, an appointment photograph is a
+wall-clock picture from months of visits. They are drawn **only while the strip
+is showing them**, so a plan under a visit's own pins does not sprout eighty
+more, and **outliers are left off** — drawing a fix that landed two miles away
+scatters pins across the county.
+
+**Picking a frame lights its pin, and dropping one lights the pin it became.**
+That feedback is the "connected to the map" half of the gesture: without it a
+drop is a write you have to take on trust.
+
+**The check reads the canvas.** A pin is painted, not a DOM node, so the test
+drags a frame, drops it on the map, and counts pixels of the appointment colour
+in the rendered canvas — as well as asserting the coordinate that went to the
+server is near the yard rather than at zero. Removing either the drop or the
+`draggable={false}` guard turns it red.
 
 #### Locking the view
 

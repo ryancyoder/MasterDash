@@ -13,6 +13,15 @@ export interface EventPhoto {
   url: string;
   caption: string | null;
   takenAt: string | null;
+  /**
+   * Where it was taken, when anything knows.
+   *
+   * 511 of the 705 photographs on the project carry one from the camera's own
+   * EXIF and 194 do not. Dragging a frame onto the map is what gives one to
+   * the rest — and what corrects a fix that landed in the wrong yard.
+   */
+  lat: number | null;
+  lng: number | null;
   /** Its thumbnail is a poster frame; the row itself is a clip. */
   isVideo: boolean;
   /** Flagged as taken away from the site. Marked, never hidden. */
@@ -126,6 +135,8 @@ export function groupPhotoRows(
     taken_at: string | null;
     created_at: string;
     is_outlier: boolean;
+    latitude?: number | null;
+    longitude?: number | null;
   }[],
   urlFor: (path: string) => string,
 ): PhotoEvent[] {
@@ -141,6 +152,8 @@ export function groupPhotoRows(
       id: String(p.id),
       url: urlFor(path),
       caption: p.caption,
+      lat: typeof p.latitude === "number" ? p.latitude : null,
+      lng: typeof p.longitude === "number" ? p.longitude : null,
       takenAt: p.taken_at ?? p.created_at,
       isVideo: p.media_type === "video",
       // Flagged where it was taken, not deleted. Somebody took the picture;
@@ -177,6 +190,32 @@ export function photoCount(events: PhotoEvent[]): number {
  * second is how you conclude a feature does not work. It is the same rule the
  * proposal helper's error reporting follows.
  */
+/**
+ * Put a photograph on the map.
+ *
+ * IT ALSO CLEARS THE OUTLIER FLAG, and that is the point of the gesture as
+ * much as the coordinate is. `is_outlier` marks a fix that landed away from
+ * the site — a camera indoors, a phone that had not settled — and somebody
+ * dropping the frame on the yard has just overruled that automatic judgement
+ * with a better one. Leaving it flagged would keep the picture off the map it
+ * was only now put on.
+ */
+export async function placeEventPhoto(
+  photoId: string,
+  at: { lat: number; lng: number },
+): Promise<boolean> {
+  try {
+    const res = await fetch("/api/property-photos", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ photoId, lat: at.lat, lng: at.lng }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchPropertyPhotos(
   propertyId: number,
 ): Promise<{ events: PhotoEvent[]; error: string | null }> {

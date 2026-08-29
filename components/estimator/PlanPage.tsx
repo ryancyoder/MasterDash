@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PlanCanvas, {
   type PhotoDot,
+  type PlanCanvasApi,
   type PlanTool,
   type SurveyLayer,
 } from "@/components/estimator/PlanCanvas";
@@ -63,6 +64,13 @@ import {
 } from "@/lib/estimator/plan";
 import { heldPlanImages } from "@/lib/estimator/planImage";
 import { shapesForPhoto, type ShapePhotoLink } from "@/lib/estimator/photoLink";
+import {
+  eventLabel,
+  fetchPropertyPhotos,
+  placeEventPhoto,
+  type EventPhoto,
+  type PhotoEvent,
+} from "@/lib/estimator/propertyPhotos";
 import { photoTakeoffLabel } from "@/lib/estimator/pendingTakeoff";
 import {
   addOverlayFromFile,
@@ -328,20 +336,65 @@ export default function PlanPage({
    * exactly as Upright's strip behaves. Two flags would eventually light both.
    */
   const [stripPick, setStripPick] = useState<string | null>(null);
-  /**
-   * The property photograph the strip picked, carried with the pick.
-   *
-   * The session's photos and the grade frames are already up here, so a key is
-   * enough to find them. The yard's own photographs are fetched inside the
-   * strip, on the first switch to them, so this page never holds a list it may
-   * never be asked for.
-   */
-  const [eventFrame, setEventFrame] = useState<
-    { url: string; title: string; note: string | null } | null
+  /*
+    THE YARD'S OWN PHOTOGRAPHS.
+
+    They started inside the filmstrip, which was right while the strip was the
+    only thing that wanted them. Three things do now — the strip lists them,
+    the canvas draws the ones with a position, and dropping one on the map
+    writes that position — so they live here with the visit and the grade
+    frames, and the strip is handed them.
+
+    Still fetched lazily, on the first switch to them: most of the time nobody
+    looks, and it is a request per estimate that would never be read.
+  */
+  const [stripSource, setStripSource] = useState<"visit" | "property">("visit");
+  const [eventPhotos, setEventPhotos] = useState<PhotoEvent[] | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const estimatePropertyId = estimate.propertyId;
+
+  useEffect(() => {
+    if (stripSource !== "property" || estimatePropertyId === null) return;
+    let live = true;
+    void fetchPropertyPhotos(estimatePropertyId).then((r) => {
+      if (!live) return;
+      setEventPhotos(r.events);
+      setPhotoError(r.error);
+    });
+    return () => {
+      live = false;
+    };
+  }, [stripSource, estimatePropertyId]);
+
+  // A change of yard invalidates what was fetched. Cleared during render, so
+  // no frame ever shows another property's photographs under this one's name.
+  const [lastPhotoProperty, setLastPhotoProperty] = useState(estimatePropertyId);
+  if (lastPhotoProperty !== estimatePropertyId) {
+    setLastPhotoProperty(estimatePropertyId);
+    setEventPhotos(null);
+    setPhotoError(null);
+  }
+
+  /** The frame being dragged onto the map, and where the pointer is. */
+  const [dragPhoto, setDragPhoto] = useState<
+    { photo: EventPhoto; label: string; x: number; y: number; moved: boolean } | null
   >(null);
+  const canvasApi = useRef<PlanCanvasApi | null>(null);
+  /*
+    Which photo pin is lit.
+
+    Both kinds answer here. A session pin is keyed `photo:<id>` and drawn under
+    its bare id; an appointment photograph is drawn under `event:<id>`, which
+    IS its strip key — so picking a frame lights its pin on the map, and
+    dropping one lights the pin it just became. That feedback is the whole
+    "connected to the map" half of the gesture: without it a drop is a write
+    you have to take on trust.
+  */
   const selectedPhotoId = stripPick?.startsWith("photo:")
     ? stripPick.slice("photo:".length)
-    : null;
+    : stripPick?.startsWith("event:")
+      ? stripPick
+      : null;
   const selectedSurveyId = stripPick?.startsWith("grade:")
     ? stripPick.slice("grade:".length)
     : null;
@@ -413,16 +466,55 @@ export default function PlanPage({
    * built from the same photos but filtered differently.
    */
   const photoDots = useMemo<PhotoDot[] | null>(() => {
-    if (!visit) return null;
-    return visit.photos
+    const dots: PhotoDot[] = (visit?.photos ?? [])
       .filter((p) => p.lat !== null && p.lng !== null)
       .map((p) => ({
+        kind: "session" as const,
         id: p.id,
         at: { lat: p.lat as number, lng: p.lng as number },
         seq: p.seq,
         headingDeg: p.headingDeg,
       }));
-  }, [visit]);
+
+    /*
+      The yard's own photographs, where they have a position.
+
+      511 of the 705 on the project already carry one from the camera's EXIF;
+      the other 194 are what dragging a frame onto the map is for. They are
+      only drawn while the strip is showing them: a plan under a visit's own
+      pins should not also sprout eighty pins from six months of appointments
+      nobody asked to see.
+
+      OUTLIERS ARE LEFT OFF. `is_outlier` is the flag for a fix that landed
+      away from the site, so drawing them scatters pins across the county and
+      pulls any fit with them. The strip still lists them, marked, and dropping
+      one on the map is what settles it.
+    */
+    if (stripSource === "property") {
+      for (const e of eventPhotos ?? []) {
+        for (const ph of e.photos) {
+          if (ph.lat === null || ph.lng === null || ph.isOutlier) continue;
+          dots.push({
+            kind: "event",
+            id: `event:${ph.id}`,
+            at: { lat: ph.lat, lng: ph.lng },
+            seq: 0,
+            headingDeg: null,
+          });
+        }
+      }
+    }
+    return dots.length ? dots : null;
+  }, [visit, stripSource, eventPhotos]);
+
+  /** Every photograph of the yard, flat, for finding one by id. */
+  const eventById = useMemo(() => {
+    const m = new Map<string, { photo: EventPhoto; label: string }>();
+    for (const e of eventPhotos ?? []) {
+      for (const ph of e.photos) m.set(ph.id, { photo: ph, label: eventLabel(e) });
+    }
+    return m;
+  }, [eventPhotos]);
 
   /**
    * The frames captured while shooting grade.
@@ -450,10 +542,119 @@ export default function PlanPage({
       }));
   }, [visit, survey]);
 
+  /*
+    DRAGGING A PHOTOGRAPH ONTO THE MAP.
+
+    The pointer goes down on a filmstrip frame and comes up over the canvas —
+    two components — so the page that holds both owns the gesture. Pointer
+    events rather than HTML5 drag-and-drop, which does not exist on an iPad.
+
+    It only becomes a drag once the finger has travelled `DRAG_START_PX`. Short
+    of that it is a tap, and a tap on a frame picks it — the same distinction
+    the tile grid draws between a press and a reorder, and for the same reason:
+    a gloved tap on a moving truck is never perfectly still.
+  */
+  const DRAG_START_PX = 12;
+  const dragStart = useRef<{ x: number; y: number; id: string } | null>(null);
+
+  const beginPhotoDrag = useCallback(
+    (photo: EventPhoto, event: PhotoEvent, e: React.PointerEvent) => {
+      dragStart.current = { x: e.clientX, y: e.clientY, id: photo.id };
+      setDragPhoto({
+        photo,
+        label: eventLabel(event),
+        x: e.clientX,
+        y: e.clientY,
+        moved: false,
+      });
+    },
+    [],
+  );
+
+  /**
+   * Put a photograph where it was dropped.
+   *
+   * On screen first, then written. The pin has to appear under the finger that
+   * let it go — waiting on a round trip to draw it is the difference between a
+   * gesture that worked and one that might have. A failed write says so and
+   * puts the pin back where it was, because a pin that is only on this device
+   * is worse than one that never moved.
+   */
+  const placePhoto = useCallback(
+    async (photo: EventPhoto, at: { lat: number; lng: number }) => {
+      const before = { lat: photo.lat, lng: photo.lng, isOutlier: photo.isOutlier };
+      const patch = (next: Partial<EventPhoto>) =>
+        setEventPhotos((groups) =>
+          (groups ?? []).map((g) => ({
+            ...g,
+            photos: g.photos.map((p) => (p.id === photo.id ? { ...p, ...next } : p)),
+          })),
+        );
+      // Placed by hand overrules the flag that says the camera's own fix
+      // landed away from the site — see placeEventPhoto().
+      patch({ lat: at.lat, lng: at.lng, isOutlier: false });
+      setStripPick(`event:${photo.id}`);
+      setPhotoError(null);
+      const saved = await placeEventPhoto(photo.id, at);
+      if (!saved) {
+        patch(before);
+        setPhotoError("That photograph could not be placed. Check the connection and try again.");
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!dragPhoto) return;
+    const move = (e: PointerEvent) => {
+      const from = dragStart.current;
+      if (!from) return;
+      const far =
+        Math.abs(e.clientX - from.x) > DRAG_START_PX ||
+        Math.abs(e.clientY - from.y) > DRAG_START_PX;
+      setDragPhoto((d) => (d ? { ...d, x: e.clientX, y: e.clientY, moved: d.moved || far } : d));
+    };
+    const up = (e: PointerEvent) => {
+      const from = dragStart.current;
+      dragStart.current = null;
+      const dragged =
+        from !== null &&
+        (Math.abs(e.clientX - from.x) > DRAG_START_PX ||
+          Math.abs(e.clientY - from.y) > DRAG_START_PX);
+      const photo = dragPhoto.photo;
+      setDragPhoto(null);
+      if (!dragged) return;
+      // Off the canvas is a cancelled drag, not a pin under the side column.
+      const at = canvasApi.current?.latLngAt(e.clientX, e.clientY) ?? null;
+      if (!at) return;
+      placePhoto(photo, at);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragPhoto?.photo.id]);
+
   /** What the strip has picked, resolved to something the preview can show. */
   const pickedFrame = useMemo(() => {
     if (!stripPick) return null;
-    if (stripPick.startsWith("event:")) return eventFrame;
+    if (stripPick.startsWith("event:")) {
+      const found = eventById.get(stripPick.slice("event:".length));
+      if (!found) return null;
+      const caption = found.photo.caption?.trim();
+      // The caption leads where somebody wrote one; otherwise the visit is
+      // what identifies the picture.
+      return {
+        url: found.photo.url,
+        title: caption || found.label,
+        note: caption ? found.label : null,
+      };
+    }
     if (selectedSurveyId) {
       const f = gradeFrames.find((g) => g.id === selectedSurveyId);
       return f ? { url: f.url, title: f.label, note: "Grade shot" } : null;
@@ -470,7 +671,7 @@ export default function PlanPage({
       title: tag ?? `Pin ${p.seq}`,
       note: tag ? [p.note, `Pin ${p.seq}`].filter(Boolean).join(" · ") : p.note,
     };
-  }, [stripPick, selectedSurveyId, selectedPhotoId, gradeFrames, visit, eventFrame]);
+  }, [stripPick, selectedSurveyId, selectedPhotoId, gradeFrames, visit, eventById]);
 
   /**
    * Attaching a photograph to the take-off it is a picture of.
@@ -1061,10 +1262,15 @@ export default function PlanPage({
           shapes={plan.shapes}
           survey={survey}
           surveySessionId={surveySessionId}
+          apiRef={canvasApi}
           photos={photoDots}
           livePhotoId={livePhotoId}
           selectedPhotoId={selectedPhotoId}
-          onSelectPhoto={(id) => setStripPick(id ? `photo:${id}` : null)}
+          onSelectPhoto={(id) =>
+            // An appointment photograph's dot is already keyed with its
+            // source; a session pin is a bare id and needs its prefix.
+            setStripPick(id ? (id.startsWith("event:") ? id : `photo:${id}`) : null)
+          }
           selectedSurveyId={selectedSurveyId}
           pinsDraggable={mode === "review"}
           onMovePin={handleMovePin}
@@ -1202,14 +1408,14 @@ export default function PlanPage({
             tap on one would do nothing visible at all. Additive: it sits above
             the cards rather than moving them.
           */}
-          {mode === "plan" && stripPick?.startsWith("event:") && eventFrame && (
+          {mode === "plan" && stripPick?.startsWith("event:") && pickedFrame && (
             <div className="shrink-0 overflow-hidden rounded-2xl border border-edge bg-surface">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={eventFrame.url} alt="" className="max-h-44 w-full object-cover" />
+              <img src={pickedFrame.url} alt="" className="max-h-44 w-full object-cover" />
               <div className="px-3 py-2">
-                <p className="text-xs font-bold text-ink">{eventFrame.title}</p>
-                {eventFrame.note && (
-                  <p className="text-[0.65rem] text-muted">{eventFrame.note}</p>
+                <p className="text-xs font-bold text-ink">{pickedFrame.title}</p>
+                {pickedFrame.note && (
+                  <p className="text-[0.65rem] text-muted">{pickedFrame.note}</p>
                 )}
               </div>
             </div>
@@ -1329,6 +1535,33 @@ export default function PlanPage({
         `src` attribute: the hook assigns it after setting crossOrigin, because
         the wrong order is captured as a tainted source and plays silence.
       */}
+      {/*
+        The frame under the finger.
+
+        A drag with nothing following it is a drag you cannot aim: the whole
+        question is WHERE on the map this photograph goes, and until the
+        picture is under the thumb there is nothing to place. It only appears
+        once the gesture has passed the threshold, so a tap that picks a frame
+        never flashes a ghost.
+
+        `pointer-events-none` so it can never be what the pointerup lands on —
+        the drop has to reach the canvas underneath it.
+      */}
+      {dragPhoto?.moved && (
+        <div
+          className="pointer-events-none fixed z-50 overflow-hidden rounded-lg border-2 border-[#c9973f] shadow-lg"
+          style={{
+            left: dragPhoto.x - 44,
+            top: dragPhoto.y - 33,
+            width: 88,
+            height: 66,
+          }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={dragPhoto.photo.url} alt="" className="h-full w-full object-cover" />
+        </div>
+      )}
+
       <ReviewFilmstrip
         session={visit}
         frames={gradeFrames}
@@ -1336,11 +1569,13 @@ export default function PlanPage({
         drift={drift}
         onSeek={seekMs}
         selectedId={stripPick}
-        onSelect={(key, frame) => {
-          setStripPick(key);
-          setEventFrame(frame ?? null);
-        }}
+        onSelect={setStripPick}
         propertyId={estimate.propertyId}
+        source={stripSource}
+        onSource={setStripSource}
+        events={eventPhotos}
+        photoError={photoError}
+        onDragPhoto={beginPhotoDrag}
       />
       <ReviewTransport
         session={visit}

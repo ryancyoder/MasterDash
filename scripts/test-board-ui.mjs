@@ -185,16 +185,24 @@ try {
   });
   // Two visits to property 13, one typed and one not — which is the ordinary
   // shape: 70 of the 120 events on file carry no event_type at all.
-  await page.route("**/api/property-photos**", (r) =>
-    r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, events: [
+  // p1 has no position — the case dragging it onto the map is for. p2 already
+  // has one, p3 is flagged off-site.
+  const placed = [];
+  await page.route("**/api/property-photos**", (r) => {
+    if (r.request().method() === "PATCH") {
+      placed.push(JSON.parse(r.request().postData() ?? "{}"));
+      return r.fulfill({ contentType: "application/json", body: '{"ok":true}' });
+    }
+    return r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, events: [
       { id: "e1", name: null, type: "Appointment", startedAt: "2026-06-02T14:00:00Z", photos: [
-        { id: "p1", url: "https://cover.test/yard.png", caption: "Front bed", takenAt: "2026-06-02T14:05:00Z", isVideo: false, isOutlier: false },
-        { id: "p2", url: "https://cover.test/yard.png", caption: null, takenAt: "2026-06-02T14:09:00Z", isVideo: true, isOutlier: false },
+        { id: "p1", url: "https://cover.test/yard.png", caption: "Front bed", takenAt: "2026-06-02T14:05:00Z", lat: null, lng: null, isVideo: false, isOutlier: false },
+        { id: "p2", url: "https://cover.test/yard.png", caption: null, takenAt: "2026-06-02T14:09:00Z", lat: 41.311, lng: -87.151, isVideo: true, isOutlier: false },
       ] },
       { id: "e2", name: null, type: null, startedAt: "2026-03-11T14:00:00Z", photos: [
-        { id: "p3", url: "https://cover.test/yard.png", caption: null, takenAt: "2026-03-11T14:02:00Z", isVideo: false, isOutlier: true },
+        { id: "p3", url: "https://cover.test/yard.png", caption: null, takenAt: "2026-03-11T14:02:00Z", lat: 41.9, lng: -87.9, isVideo: false, isOutlier: true },
       ] },
-    ] }) }));
+    ] }) });
+  });
   let imageUploads = 0;
   await page.route("**/api/plan-image**", (r) => {
     imageUploads++;
@@ -663,6 +671,67 @@ try {
   });
   ok("PICKING A PROPERTY PHOTOGRAPH PREVIEWS IT",
     preview.shown && /Front bed/.test(preview.body), String(preview.shown));
+
+  // 7c-v. DRAG A PHOTOGRAPH ONTO THE MAP.
+  //
+  // 511 of the 705 photographs on the project carry a position from the
+  // camera's EXIF and 194 do not. Dragging a frame out of the strip is what
+  // gives one to the rest — and what corrects a fix that landed in the wrong
+  // yard, which is what the off-site flag marks.
+  const canvasBox = await page.locator("canvas").boundingBox();
+
+  const frame = await page.locator('div.rounded-xl.border button').first().boundingBox();
+  await page.mouse.move(frame.x + frame.width / 2, frame.y + frame.height / 2);
+  await page.mouse.down();
+  // Past the threshold, or it is a tap that picks the frame.
+  await page.mouse.move(canvasBox.x + 200, canvasBox.y + 200, { steps: 8 });
+  const ghost = await page.locator("div.fixed.z-50.pointer-events-none").count();
+  ok("the frame follows the finger, so the drop can be aimed", ghost === 1, String(ghost));
+  await page.mouse.move(canvasBox.x + 240, canvasBox.y + 180, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+
+  ok("A DROP WRITES THE POSITION",
+    placed.length === 1 && placed[0].photoId === "p1" &&
+      Number.isFinite(placed[0].lat) && Number.isFinite(placed[0].lng),
+    JSON.stringify(placed));
+  // Null-safe: against a build that never writes, `placed[0]` is undefined,
+  // and a test that throws prints neither PASS nor FAIL — so every check below
+  // it would stop existing rather than going red.
+  ok("and it is a real coordinate, near the yard rather than at zero",
+    placed[0] !== undefined &&
+      Math.abs(placed[0].lat - 41.31) < 0.05 && Math.abs(placed[0].lng + 87.15) < 0.05,
+    JSON.stringify(placed[0] ?? null));
+  ok("the ghost goes when the finger lifts",
+    (await page.locator("div.fixed.z-50.pointer-events-none").count()) === 0);
+
+  // The pin has to be ON THE MAP, not merely recorded. Read the canvas: the
+  // event pins are drawn in their own colour, so counting those pixels says
+  // whether the photograph reached the map at all.
+  const pinPixels = await page.evaluate(() => {
+    const c = document.querySelector("canvas");
+    const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      // #c9973f, the appointment-photograph colour — as a warm hue rather
+      // than an exact value, since an unlit pin is drawn at 60% over the map.
+      if (d[i] > d[i + 1] && d[i + 1] > d[i + 2] && d[i] - d[i + 2] > 60) n++;
+    }
+    return n;
+  });
+  ok("AND THE PIN IS ON THE MAP, in the appointment colour",
+    pinPixels > 20, `${pinPixels} pixels`);
+
+  // A short movement is a pick, not a placement.
+  const writesSoFar = placed.length;
+  const frame2 = await page.locator('div.rounded-xl.border button').nth(1).boundingBox();
+  await page.mouse.move(frame2.x + frame2.width / 2, frame2.y + frame2.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(frame2.x + frame2.width / 2 + 4, frame2.y + frame2.height / 2, { steps: 2 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  ok("a tap on a frame picks it rather than placing it",
+    placed.length === writesSoFar, `${placed.length} writes`);
 
   await page.click('button:text-is("Visit")');
   await page.waitForTimeout(200);

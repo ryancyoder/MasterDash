@@ -439,7 +439,7 @@ ok(
 
   const shot = (id: string, takenAt: string | null, over = {}) => ({
     id, url: `https://x/${id}.jpg`, caption: null, takenAt,
-    isVideo: false, isOutlier: false, ...over,
+    lat: null, lng: null, isVideo: false, isOutlier: false, ...over,
   });
   const ev = (over: Partial<PhotoEvent> & { id: string }): PhotoEvent => ({
     name: null, type: null, startedAt: null, photos: [], ...over,

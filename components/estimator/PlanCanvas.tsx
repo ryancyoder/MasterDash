@@ -238,16 +238,42 @@ export interface SurveyLayer {
  * reach the canvas.
  */
 export interface PhotoDot {
+  /**
+   * Which record it belongs to.
+   *
+   * A `session` pin is one of Upright's, numbered on its own visit's roll. An
+   * `event` pin is a photograph from an appointment, which has no number in
+   * any roll — so it is drawn as a picture rather than as `Pin 7`, and it is
+   * the only one that can be given a position from the filmstrip.
+   */
+  kind: "session" | "event";
   id: string;
   at: LatLng;
   seq: number;
   headingDeg: number | null;
 }
 
+/** What the page can ask the canvas, for a drop that starts somewhere else. */
+export interface PlanCanvasApi {
+  /** A point on the screen, as a coordinate. Null before the first layout. */
+  latLngAt(clientX: number, clientY: number): LatLng | null;
+}
+
 /** An iPad's rear camera, roughly, and about as far as a GPS fix earns. */
 const PHOTO_FOV_DEG = 62;
 const PHOTO_CONE_M = 10;
 const PHOTO_COLOUR = "#f8fafc";
+/**
+ * A photograph from an appointment, rather than from the visit being replayed.
+ *
+ * Its own colour for the reason Upright gives every survey glyph one: two
+ * different records drawn identically read as one record, and these two are
+ * genuinely different — a session pin is stamped against a recording and an
+ * appointment photograph is a wall-clock picture of the yard from months of
+ * visits. Warm against the session pins' white, and the same wherever an
+ * appointment photograph appears.
+ */
+const EVENT_PHOTO_COLOUR = "#c9973f";
 
 /**
  * The survey glyphs, matching Upright's.
@@ -355,6 +381,7 @@ export default function PlanCanvas({
   selectedSurveyId,
   pinsDraggable,
   onMovePin,
+  apiRef,
   rightAngle,
   smoothNew,
   labelFor,
@@ -433,6 +460,15 @@ export default function PlanCanvas({
   pinsDraggable: boolean;
   /** A corrected pin, on release. Writes back to Upright's own row. */
   onMovePin: (kind: "survey" | "photo", id: string, at: LatLng) => void;
+  /**
+   * Filled in with what the page may ask the canvas.
+   *
+   * A frame dragged out of the filmstrip comes up over this canvas, and the
+   * pointer went down on a different component — so the page that owns both
+   * needs to turn where the finger let go into a coordinate. Nothing else
+   * crosses that boundary, so it is one function rather than a handle.
+   */
+  apiRef?: { current: PlanCanvasApi | null };
   /** Square up corners while drawing. Off is for the yards that are not. */
   rightAngle: boolean;
   /** Round the shape being drawn, so the pending outline previews as a curve. */
@@ -1356,10 +1392,11 @@ export default function PlanCanvas({
           }
         }
 
+        const colour = photo.kind === "event" ? EVENT_PHOTO_COLOUR : PHOTO_COLOUR;
         ctx.save();
         ctx.shadowColor = "rgba(0,0,0,0.9)";
         ctx.shadowBlur = 4;
-        ctx.fillStyle = lit ? PHOTO_COLOUR : withAlpha(PHOTO_COLOUR, 0.6);
+        ctx.fillStyle = lit ? colour : withAlpha(colour, 0.6);
         ctx.beginPath();
         ctx.arc(p.x, p.y, lit ? 7 : 5, 0, Math.PI * 2);
         ctx.fill();
@@ -1369,14 +1406,24 @@ export default function PlanCanvas({
           ctx.stroke();
           // A ring, not a recentre: the playhead says which pin, never where
           // the map should be looking.
-          ctx.strokeStyle = PHOTO_COLOUR;
+          ctx.strokeStyle = colour;
           ctx.lineWidth = 2;
           ctx.beginPath();
           ctx.arc(p.x, p.y, 13, 0, Math.PI * 2);
           ctx.stroke();
         }
         ctx.restore();
-        if (lit) drawLabel(ctx, `Pin ${photo.seq}`, p.x, p.y - 20, PHOTO_COLOUR);
+        if (lit) {
+          // An appointment photograph has no number in any roll, so labelling
+          // it `Pin 0` would be worse than saying nothing.
+          drawLabel(
+            ctx,
+            photo.kind === "event" ? "Photo" : `Pin ${photo.seq}`,
+            p.x,
+            p.y - 20,
+            colour,
+          );
+        }
       }
     }
 
@@ -1533,6 +1580,35 @@ export default function PlanCanvas({
     const rect = canvasRef.current!.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
+
+  /*
+    What the page may ask, for a drop that started on the filmstrip.
+
+    Re-assigned on every render rather than once: `transformNow()` closes over
+    the view, and a handle captured at mount would answer with the framing the
+    canvas opened at — so a photograph dropped after a pan would land wherever
+    the map used to be, which is a wrong answer that looks like a right one.
+
+    It also returns null off the canvas, so a frame let go over the side
+    column is a cancelled drag rather than a pin placed under the panel.
+  */
+  useEffect(() => {
+    if (!apiRef) return;
+    apiRef.current = {
+      latLngAt(clientX, clientY) {
+        const canvas = canvasRef.current;
+        if (!canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        const x = clientX - rect.left;
+        const y = clientY - rect.top;
+        if (x < 0 || y < 0 || x > rect.width || y > rect.height) return null;
+        return toLatLng(fromCanvas({ x, y }, transformNow()));
+      },
+    };
+    return () => {
+      if (apiRef) apiRef.current = null;
+    };
+  });
 
   /** A tap that landed without turning into a pan. */
   function handleTap(cp: Pt) {
