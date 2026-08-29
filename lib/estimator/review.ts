@@ -435,8 +435,25 @@ export function clipSeekTarget(v: ClipVideoState, withinSec: number): number | n
  * is to say they all look like a black rectangle. Naming them is the whole
  * point: a black pane that says nothing is indistinguishable from a visit
  * where the camera was off.
+ *
+ * THE CODEC CASE IS NOT HYPOTHETICAL, AND IT IS WORTH NAMING PROPERLY. Upright
+ * asked its MediaRecorder for `video/mp4` and left the codec to the device; an
+ * iPad picks HEVC, its hardware encoder's own format. Safari decodes that
+ * everywhere, so the clips looked perfect in the field and in Upright itself —
+ * and Chrome and Firefox at a desk refuse them outright, which is exactly what
+ * a MEDIA_ERR_SRC_NOT_SUPPORTED on this path means. The master audio played
+ * throughout because `audio/mp4` is AAC, and everything plays AAC.
+ *
+ * Upright names H.264 now, so clips recorded from here on play anywhere. Every
+ * clip recorded BEFORE that is still HEVC and always will be, so the message
+ * has to say the one thing that actually opens them rather than leaving
+ * somebody to conclude the recording is broken.
  */
-export function clipErrorMessage(code: number | null | undefined): string | null {
+export function clipErrorMessage(
+  code: number | null | undefined,
+  /** Whether this browser can decode HEVC. See `canPlayHevc()`. */
+  canPlayHevc = true,
+): string | null {
   switch (code) {
     case 1:
       return "The clip stopped loading.";
@@ -445,8 +462,27 @@ export function clipErrorMessage(code: number | null | undefined): string | null
     case 3:
       return "The clip is damaged and cannot be decoded.";
     case 4:
-      return "This browser cannot play the clip's format.";
+      return canPlayHevc
+        ? "This browser cannot play the clip's format."
+        : "Recorded as HEVC, which this browser cannot decode. Open this session in Safari to watch it — newer clips play anywhere.";
     default:
       return code == null ? null : "The clip could not be played.";
   }
+}
+
+/**
+ * Whether this browser can decode HEVC — asked of the browser, not guessed
+ * from its user agent.
+ *
+ * `canPlayType` answers "" for no and "maybe"/"probably" for yes. Both yesses
+ * are taken as yes: a browser that says "maybe" and then fails raises the
+ * media error anyway, and the generic message is waiting for it.
+ */
+export function canPlayHevc(): boolean {
+  if (typeof document === "undefined") return true;
+  const v = document.createElement("video");
+  return (
+    v.canPlayType('video/mp4; codecs="hvc1"') !== "" ||
+    v.canPlayType('video/mp4; codecs="hev1"') !== ""
+  );
 }

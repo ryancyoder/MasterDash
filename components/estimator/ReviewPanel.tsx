@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   PHOTO_WINDOW_MS,
   clipAt,
+  canPlayHevc,
   clipErrorMessage,
   clipSeekTarget,
   fmtClock,
@@ -77,7 +78,8 @@ export function ReviewVideo({
     // is a black rectangle: a 404, a codec this browser will not decode and a
     // clip that is merely slow all look exactly alike, and all three look like
     // a visit recorded with the camera switched off.
-    const onError = () => setTrouble(clipErrorMessage(video.error?.code ?? null));
+    const hevc = canPlayHevc();
+    const onError = () => setTrouble(clipErrorMessage(video.error?.code ?? null, hevc));
     const onPlayable = () => {
       slowSaid = false;
       setTrouble(null);

@@ -291,6 +291,16 @@ ok(
   ok("a fetch failure says to check the connection", clipErrorMessage(2)!.includes("connection"));
   ok("an undecodable file says it is damaged", clipErrorMessage(3)!.includes("damaged"));
   ok("an unsupported codec names the browser", clipErrorMessage(4)!.includes("format"));
+  ok(
+    "and where the browser has no HEVC at all it says so, and what opens it",
+    clipErrorMessage(4, false)!.includes("HEVC") && clipErrorMessage(4, false)!.includes("Safari"),
+    "every clip recorded before Upright named H.264 is HEVC and always will be",
+  );
+  ok(
+    "the HEVC hint is only offered for a format refusal",
+    clipErrorMessage(2, false)!.includes("connection"),
+    "a fetch that failed is not a codec problem, whatever the browser can decode",
+  );
   ok("no error is no message", clipErrorMessage(null) === null);
   ok("an unknown code still says something", clipErrorMessage(99) !== null);
 }
