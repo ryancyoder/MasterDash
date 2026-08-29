@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import type { ReviewClip, ReviewPhoto, ReviewSession } from "@/lib/estimator/review";
+import type {
+  GradeFrame,
+  ReviewClip,
+  ReviewPhoto,
+  ReviewSession,
+} from "@/lib/estimator/review";
 import { configReport, serverConfig } from "@/lib/server/supabase";
 import { uprightApi } from "@/lib/server/upright";
 
@@ -73,6 +78,7 @@ export async function GET(request: Request) {
     session?: Record<string, unknown>;
     clips?: unknown;
     photos?: unknown;
+    elevationPoints?: unknown;
   };
   const s = (body.session ?? {}) as Record<string, unknown>;
 
@@ -112,6 +118,32 @@ export async function GET(request: Request) {
     .filter((p): p is ReviewPhoto => p !== null)
     .sort((a, b) => a.seq - b.seq);
 
+  // The grade shots. Every sighting burns a crosshair into a frame, and those
+  // are pictures of the same yard as the photo pins, taken minutes apart — so
+  // they share one strip. A point with no picture is an ordinary state (an
+  // older session, or one shot before frames were captured) and is simply not
+  // a strip entry; it is still a survey point on the canvas.
+  const frames: GradeFrame[] = (
+    Array.isArray(body.elevationPoints) ? body.elevationPoints : []
+  )
+    .map((raw) => {
+      const r = (raw ?? {}) as Record<string, unknown>;
+      const url = str(r.photoUrl);
+      const kind = r.kind;
+      if (typeof r.id !== "string" || !url) return null;
+      if (kind !== "observation" && kind !== "anchor" && kind !== "target") return null;
+      return {
+        id: r.id,
+        url,
+        kind,
+        label: str(r.label) ?? kind,
+        // When the row was written, which is when the shot was taken. An
+        // elevation point carries no offset of its own; see stripItems().
+        capturedAt: str(r.created_at),
+      };
+    })
+    .filter((f): f is GradeFrame => f !== null);
+
   // NOTE THE FIELD NAME. `audio_duration_seconds` holds the session's
   // WALL-CLOCK length, stamped when the visit ended — not the audio's own
   // duration. It is the denominator of the drift ratio; see review.ts.
@@ -127,6 +159,7 @@ export async function GET(request: Request) {
     wallMs: wallSec === null ? null : wallSec * 1000,
     clips,
     photos,
+    frames,
     transcriptStatus: str(s.transcript_status) ?? "none",
   };
 

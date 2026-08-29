@@ -83,6 +83,16 @@ export interface ReviewSession {
   wallMs: number | null;
   clips: ReviewClip[];
   photos: ReviewPhoto[];
+  /**
+   * The crosshair frames captured while shooting grade on THIS visit.
+   *
+   * They belong to the session, not to whichever survey happens to be drawn on
+   * the canvas. Those are chosen separately and are often a different visit, so
+   * reading the frames off the survey layer meant a replayed visit showed none
+   * of its own grade shots unless you had also picked the same session in the
+   * Survey card — two pickers that had to agree, with nothing saying so.
+   */
+  frames: GradeFrame[];
   transcriptStatus: string;
 }
 

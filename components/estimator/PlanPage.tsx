@@ -349,24 +349,28 @@ export default function PlanPage({
   /**
    * The frames captured while shooting grade.
    *
-   * They come from the SURVEY, not the visit — a grade frame belongs to an
-   * elevation point — so the strip shows them whenever a survey is loaded,
-   * whether or not that is the same session being replayed. Usually it is; the
-   * two are chosen separately and nothing forces them to agree.
+   * THE VISIT'S OWN, when there is a visit. The strip is that session's record,
+   * so its grade shots have to come from it — reading them off the survey layer
+   * instead meant a replayed visit showed none of its own unless you had
+   * separately picked the same session in the Survey card, which is two pickers
+   * silently required to agree.
+   *
+   * The survey is the fallback rather than dead weight: most surveys on the
+   * project belong to sessions with no audio, so they can never be replayed,
+   * and their frames would otherwise have nowhere to appear at all.
    */
-  const gradeFrames = useMemo<GradeFrame[]>(
-    () =>
-      (survey?.points ?? [])
-        .filter((p) => !p.hidden && p.photoUrl)
-        .map((p) => ({
-          id: p.id,
-          url: p.photoUrl as string,
-          kind: p.kind,
-          label: p.label,
-          capturedAt: p.capturedAt ?? null,
-        })),
-    [survey],
-  );
+  const gradeFrames = useMemo<GradeFrame[]>(() => {
+    if (visit) return visit.frames;
+    return (survey?.points ?? [])
+      .filter((p) => !p.hidden && p.photoUrl)
+      .map((p) => ({
+        id: p.id,
+        url: p.photoUrl as string,
+        kind: p.kind,
+        label: p.label,
+        capturedAt: p.capturedAt ?? null,
+      }));
+  }, [visit, survey]);
 
   /** What the strip has picked, resolved to something the preview can show. */
   const pickedFrame = useMemo(() => {
