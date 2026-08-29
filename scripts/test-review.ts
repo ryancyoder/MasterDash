@@ -13,6 +13,7 @@ import {
   clipAt,
   clipErrorMessage,
   clipLoadingMessage,
+  playFailureMessage,
   clipSeekTarget,
   driftScale,
   fmtClock,
@@ -354,6 +355,36 @@ ok(
     "and it still names why the check failed",
     clipLoadingMessage({ ok: false, status: 0, bytes: null, error: "Failed to fetch" }, 0)
       .includes("Failed to fetch"),
+  );
+}
+
+{
+  // A rejected play() usually means we did something, not that the clip is bad.
+  ok(
+    "an aborted play is not reported at all",
+    playFailureMessage("AbortError", "The play() request was interrupted by a call to pause()") === null,
+    "we caused it by taking the clip away at the end of its window",
+  );
+  ok(
+    "a blocked play says the browser blocked it",
+    playFailureMessage("NotAllowedError", "")!.includes("blocked"),
+  );
+  ok(
+    "an unsupported source gets the codec words, not a paraphrase",
+    playFailureMessage("NotSupportedError", "", false) === clipErrorMessage(4, false, ""),
+    "this rejection often arrives before the error event does",
+  );
+  ok(
+    "and it keeps the HEVC advice with it",
+    playFailureMessage("NotSupportedError", "", false)!.includes("Safari"),
+  );
+  ok(
+    "anything else is reported with whatever it said",
+    playFailureMessage("TypeError", "something odd")!.includes("something odd"),
+  );
+  ok(
+    "an unnamed failure still says something",
+    playFailureMessage(null, null) === "The clip would not start.",
   );
 }
 

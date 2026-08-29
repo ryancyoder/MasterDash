@@ -9,6 +9,7 @@ import {
   clipErrorMessage,
   clipLoadingMessage,
   clipSeekTarget,
+  playFailureMessage,
   fmtClock,
   photoAt,
   reviewLabel,
@@ -125,6 +126,10 @@ export function ReviewVideo({
       which looks exactly like one that has not started.
     */
     let failed = false;
+    let playPending = false;
+    // Set when the effect is torn down, so nothing that is already in flight
+    // can report about a screen that has moved on.
+    let dead = false;
     const onError = () => {
       failed = true;
       setTrouble(
@@ -148,6 +153,7 @@ export function ReviewVideo({
           seeded = false;
           slowSaid = false;
           failed = false;
+          playPending = false;
           loadedAt = performance.now();
           setTrouble(null);
           video.src = hit.clip.url;
@@ -175,14 +181,27 @@ export function ReviewVideo({
           }
         }
 
-        if (!audio.paused && video.paused) {
-          void video.play().catch((e: unknown) => {
-            setTrouble(
-              e instanceof Error && e.name === "NotAllowedError"
-                ? "This browser blocked the clip from playing."
-                : "The clip would not start.",
-            );
-          });
+        // ONE play() AT A TIME. `paused` stays true until the promise settles,
+        // so calling it on every frame starts a fresh attempt sixty times a
+        // second — and the moment anything pauses or re-sources the element,
+        // every one of them rejects at once.
+        if (!audio.paused && video.paused && !playPending) {
+          playPending = true;
+          void video.play().then(
+            () => {
+              playPending = false;
+            },
+            (e: unknown) => {
+              playPending = false;
+              if (dead || shownClip === null) return;
+              const err = e instanceof Error ? e : null;
+              const said = playFailureMessage(err?.name, err?.message, hevc);
+              if (said) {
+                failed = true;
+                setTrouble(said);
+              }
+            },
+          );
         }
         if (audio.paused && !video.paused) video.pause();
 
@@ -199,7 +218,7 @@ export function ReviewVideo({
           // tell us about the preflight rather than about the clip.
           void fetch(url, { method: "HEAD" })
             .then((r) => {
-              if (failed || shownClip === null) return;
+              if (dead || failed || shownClip === null) return;
               const len = r.headers.get("content-length");
               setTrouble(
                 clipLoadingMessage(
@@ -209,7 +228,7 @@ export function ReviewVideo({
               );
             })
             .catch((e: unknown) => {
-              if (failed || shownClip === null) return;
+              if (dead || failed || shownClip === null) return;
               setTrouble(
                 clipLoadingMessage(
                   { ok: false, status: 0, bytes: null, error: e instanceof Error ? e.message : "blocked" },
@@ -223,6 +242,7 @@ export function ReviewVideo({
         if (shownClip !== null) {
           shownClip = null;
           seeded = false;
+          playPending = false;
           video.pause();
           video.removeAttribute("src");
           // Removing the attribute does not clear the picture; without this
@@ -237,6 +257,7 @@ export function ReviewVideo({
     };
     raf = requestAnimationFrame(tick);
     return () => {
+      dead = true;
       cancelAnimationFrame(raf);
       video.removeEventListener("error", onError);
       video.removeEventListener("loadeddata", onPlayable);

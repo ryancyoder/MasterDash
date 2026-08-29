@@ -541,3 +541,29 @@ export function clipLoadingMessage(
   const size = reach.bytes ? `, ${mb(reach.bytes)}` : "";
   return `Still loading the clip${ready}\u2026 The file is reachable${size}.`;
 }
+
+/**
+ * What a rejected `play()` means — or null when it means nothing at all.
+ *
+ * MOST play() REJECTIONS ARE OUR OWN DOING. Seeking, pausing, or pointing the
+ * element at the next clip while a play is still pending rejects that play
+ * with an AbortError, and there is nothing wrong: the clip played, and then we
+ * took it away at the end of its window. Reporting those put "the clip would
+ * not start" on screen for the whole of every gap, describing a clip that had
+ * just finished playing perfectly.
+ *
+ * A NotSupportedError is the opposite — it is the same codec refusal the
+ * `error` event carries, and it often arrives here FIRST, so it gets the same
+ * words rather than a vaguer paraphrase of them.
+ */
+export function playFailureMessage(
+  name: string | null | undefined,
+  message: string | null | undefined,
+  canPlayHevc = true,
+): string | null {
+  if (name === "AbortError") return null;
+  if (name === "NotAllowedError") return "This browser blocked the clip from playing.";
+  if (name === "NotSupportedError") return clipErrorMessage(4, canPlayHevc, message);
+  const note = message && message.trim() ? ` (${message.trim()})` : "";
+  return `The clip would not start.${note}`;
+}
