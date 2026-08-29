@@ -17,11 +17,12 @@ now the whole app, at the root.
 
 ## The screens
 
-    /            the grid — the whole of data entry
+    /            the job board, then the grid — the whole of data entry
     /proposal    the numbers, the job name, and the list of saved estimates
 
 ## Where the work is kept
 
+    lib/estimator/jobBoard.ts  which job, and which estimate is already its
     lib/estimator/store.ts    the estimate, as a log of increments
     lib/estimator/sync.ts     two-way sync that survives no signal
     lib/estimator/tree.ts     the committed tile tree, the offline floor
@@ -37,6 +38,86 @@ now the whole app, at the root.
     lib/estimator/visit.ts    the site visit: findings and their validation
     lib/server/upright.ts      the Upright session, read through its own API
     app/api/                  the routes that hold the service key
+
+---
+
+## Which job, before which assembly
+
+The app opened straight onto the tile grid, which is the *second* question. The
+first one — **which of the jobs on the board am I pricing** — lived nowhere, so
+the answer was whatever estimate the tablet happened to be holding, and every
+estimate on file reads `deal_id: null` because nothing had ever written it.
+
+`/` now opens on a board of the live work: one tile per deal in **Propose,
+Sent, Sold** or **Project Management**, each drawn as a satellite preview of
+its yard, filterable by stage. Tapping one opens that job.
+
+**One tile is one DEAL, not one property.** A property carries several deals —
+86 across 71 properties in this project's own data — and a deal is what has a
+proposal number, a value and a stage. A property tile would have to ask *which
+of these two jobs* after the tap, which is a question the tile could have
+answered before it.
+
+**Lead is deliberately not on the board**, and that is a data fact rather than
+a judgement: all six Lead deals carry no property, so the column would be
+empty. It belongs there the day a lead gets tagged to a yard.
+
+**Invoiced and Paid in Full are finished work**, and not what somebody opening
+an estimator is looking for.
+
+### Which estimate is already this deal's
+
+`estimateForDeal()` answers it, and the fallback is narrow on purpose:
+
+- **`deal_id` is the answer when it is set** — and today it is set on none of
+  the twenty-four estimates on file, so the fallback is doing all the work.
+- **A property's single estimate counts as a deal's only when that property has
+  exactly ONE deal on the board.** Two live jobs at one yard cannot be told
+  apart by the property alone, and quietly opening the wrong one puts a price
+  on the wrong job. Same discipline as Upright's session matcher: where two
+  candidates cannot be separated, the honest answer is neither.
+- **The screen says which it was.** A tile paired that way reads *estimate
+  started — matched by property*, so a guess never presents as a fact.
+
+**The tap is what settles it.** Opening a property-matched tile writes
+`attachDeal()`, so the join stops being re-derived — and that is the id the
+take-off join wants. Opening a deal with no estimate starts a fresh one already
+carrying the deal, the property and the deal's name.
+
+**Nothing on screen is lost by opening a job.** An estimate is saved by client
+id and reachable from *Open an estimate*; `flushAutosave()` runs first so the
+last few seconds go with it. If the estimate behind a tile cannot be read, the
+board says so and changes nothing — starting a fresh one there would silently
+duplicate a job somebody else is working on.
+
+### When the board is the first screen
+
+`isUnstarted()` decides, and it is deliberately broad: a name, a deal, a tap, a
+drawn shape or a transcript all count as work. Being dropped onto a job list
+with a half-priced estimate behind it reads as having lost it, and the cost of
+being wrong the other way is one tap on **Jobs** — which is in the header
+always, because changing your mind about which job is the same question as
+picking one. It waits for the store to hydrate, since the server snapshot is an
+empty estimate and every estimate would otherwise flash the board on the way
+in.
+
+**The pairing is not done in the route handler.** `/api/deals` returns deals
+and estimates as two lists and `jobBoard.ts` decides — that rule is a judgement
+about ambiguity rather than a query, and it is worth checking without a
+network. `npm run test:board` does exactly that, 37 checks.
+
+**And `npm run test:board-ui` reads the rendered screen**, because the pure
+tests prove the rules to the letter and cannot see whether any of it reaches
+the page — the same gap that left one of Upright's crosshairs perfectly
+computed and clipped out of its own overlay. It boots the production server,
+fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
+is showing: 18 checks. A throw is reported as a failure rather than crashing
+the run with no summary, since a test that crashes prints neither PASS nor
+FAIL and a clean count says nothing about it.
+
+The landing rule is **mutation-tested**: making `isUnstarted()` return `false`
+unconditionally turns the run red, so the board being the first screen is the
+code and not a hope.
 
 ---
 
@@ -835,7 +916,17 @@ npm run dev      # http://localhost:3000
 
 npm run build
 npx eslint .
+
+npm run test:review     # the review screen's pure logic
+npm run test:plan       # the take-off's geometry
+npm run test:board      # the job board's pairing and filtering
+npm run test:board-ui   # the job board in a real browser (needs playwright)
 ```
+
+`test:board-ui` builds first and drives a real Chromium against `next start`.
+Playwright is a test tool rather than a dependency of the app, so it is
+resolved from the global install (`npm i -g playwright`); set `NODE_PATH` if it
+lives somewhere else.
 
 To run the production build locally, including the API routes:
 

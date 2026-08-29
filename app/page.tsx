@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AssemblyPage from "@/components/estimator/AssemblyPage";
+import JobBoard from "@/components/estimator/JobBoard";
 import PlanPage from "@/components/estimator/PlanPage";
 import VisitPage from "@/components/estimator/VisitPage";
 import TileGrid from "@/components/estimator/TileGrid";
@@ -15,7 +16,17 @@ import {
   buildProposal,
   rollupCount,
 } from "@/lib/estimator/proposal";
-import { tap, untap, updateSettings } from "@/lib/estimator/store";
+import {
+  adoptEstimate,
+  attachDeal,
+  clearEstimate,
+  setJobName,
+  tap,
+  untap,
+  updateSettings,
+} from "@/lib/estimator/store";
+import { fetchEstimate, flushAutosave } from "@/lib/estimator/sync";
+import { isUnstarted, tileTitle, type BoardTile } from "@/lib/estimator/jobBoard";
 import { applyOrder, isArrangeable, levelKey } from "@/lib/estimator/tileOrder";
 import {
   canExpandInline,
@@ -79,7 +90,7 @@ function sheetPhoto(
 }
 
 export default function EstimatorPage() {
-  const { estimate, settings } = useEstimate();
+  const { estimate, settings, hydrated } = useEstimate();
   const photos = usePhotos();
   const catalogPhotos = useCatalogPhotos();
   // Prices are applied to the catalog items in place, which React cannot see.
@@ -91,6 +102,29 @@ export default function EstimatorPage() {
 
   /** Drill path. Empty = home. */
   const [stack, setStack] = useState<TileNode[]>([]);
+
+  /*
+    WHICH JOB, BEFORE WHICH ASSEMBLY.
+
+    The estimator opened straight onto the tile grid, which is the second
+    question. The first one — which of the jobs on the board am I pricing —
+    lived nowhere, so the answer was whatever estimate the tablet happened to
+    be holding.
+
+    Three states rather than a boolean. "auto" lets an untouched estimate land
+    on the board and a half-priced one stay where it was, which is the whole
+    point of isUnstarted(); the other two are what a tap said outright, and a
+    tap always outranks the guess. It waits for `hydrated` because the server
+    snapshot is an empty estimate and every estimate would otherwise flash the
+    board on the way in.
+  */
+  const [boardIntent, setBoardIntent] = useState<"auto" | "open" | "closed">("auto");
+  /** The deal being opened, so a slow read is not a dead tap. */
+  const [openingDeal, setOpeningDeal] = useState<number | null>(null);
+  const [boardNotice, setBoardNotice] = useState<string | null>(null);
+  const showBoard =
+    boardIntent === "open" ||
+    (boardIntent === "auto" && hydrated && isUnstarted(estimate));
 
   /*
     TAKE-OFFS SOMEBODY TAGGED IN THE YARD AND HAS NOT DRAWN YET.
@@ -333,6 +367,56 @@ export default function EstimatorPage() {
     },
     [homeTiles, drillInto, reviewSessionId],
   );
+
+  /**
+   * Open a job off the board.
+   *
+   * Two cases, and the difference matters: a deal that already has an estimate
+   * gets that estimate back with its whole op log, and one that does not gets
+   * a fresh estimate already carrying the deal and the property — which is the
+   * join `attachDeal` exists for and which nothing has ever written before
+   * now, so every estimate on file reads `deal_id: null`.
+   *
+   * What is on screen is not lost either way. It is saved by client id and
+   * reachable from Open an estimate; `flushAutosave()` is what makes sure the
+   * last few seconds of it went with it.
+   */
+  const openJob = useCallback(async (tile: BoardTile) => {
+    setOpeningDeal(tile.deal.id);
+    setBoardNotice(null);
+    flushAutosave();
+    try {
+      if (tile.estimate) {
+        const remote = await fetchEstimate(tile.estimate.clientId);
+        if (remote.estimate) {
+          adoptEstimate(remote.estimate, remote.ops);
+          // A tile paired by property is a guess the tap has now confirmed —
+          // and the pairing rule only offers one where the property has a
+          // single deal and a single estimate, so there was nothing else it
+          // could have been. Writing it is what stops it being re-derived
+          // forever, and it is the id the take-off join wants.
+          if (remote.estimate.dealId !== tile.deal.id) {
+            attachDeal(tile.deal.id, tile.deal.propertyId);
+          }
+          setBoardIntent("closed");
+          return;
+        }
+        // The row was on the board a moment ago and is not there now. Starting
+        // a fresh estimate here would quietly duplicate one somebody else is
+        // working on, so say so instead.
+        setBoardNotice("That estimate could not be read. Nothing has been changed.");
+        return;
+      }
+      clearEstimate();
+      attachDeal(tile.deal.id, tile.deal.propertyId);
+      setJobName(tileTitle(tile.deal));
+      setBoardIntent("closed");
+    } catch (e) {
+      setBoardNotice(`That job could not be opened: ${String(e)}`);
+    } finally {
+      setOpeningDeal(null);
+    }
+  }, []);
 
   /**
    * TAP.
@@ -738,12 +822,26 @@ export default function EstimatorPage() {
               )}
             </div>
           </>
+        ) : showBoard ? (
+          <>
+            <span className="text-xs font-semibold text-muted tracking-wide">
+              JOBS
+            </span>
+            {/* What the board would be leaving behind, named rather than
+                implied — Skip to estimator is a friendlier button when it says
+                where it goes. */}
+            {estimate.jobName && (
+              <span className="truncate text-xs text-muted">
+                on screen: {estimate.jobName}
+              </span>
+            )}
+          </>
         ) : (
           <>
             {/* The estimator is the app now, so this names it rather than
                 pointing back at a portal that no longer wraps it. */}
             <span className="text-xs font-semibold text-muted tracking-wide">
-              QUICK ESTIMATOR
+              {estimate.jobName || "QUICK ESTIMATOR"}
             </span>
             <div className="flex items-center gap-3">
               {/* One control for the whole grid, so folders have a resting
@@ -774,6 +872,20 @@ export default function EstimatorPage() {
                 </span>
               )}
 
+              {/* The way back to the board once a job has been chosen. It is
+                  always here rather than only on a blank estimate, because
+                  changing your mind about which job is the same question as
+                  picking one. */}
+              <button
+                onClick={() => {
+                  setBoardNotice(null);
+                  setBoardIntent("open");
+                }}
+                className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
+              >
+                Jobs
+              </button>
+
               {/* The discoverable way in. Long-pressing empty space works on
                   any arrangeable level, but nothing on screen says so. */}
               {arrangeable && (
@@ -792,13 +904,26 @@ export default function EstimatorPage() {
       {/* The plan fills the frame and manages its own scrolling — a canvas
           inside a scroll container fights the pan gesture for the same drag. */}
       <div
-        className={`flex-1 min-h-0 px-3 ${
-          onPlanPage
-            ? "flex flex-col overflow-hidden pb-3"
-            : "overflow-y-auto md-scroll pb-24"
+        className={`flex-1 min-h-0 ${
+          !current && showBoard
+            ? "flex flex-col overflow-hidden"
+            : onPlanPage
+              ? "px-3 flex flex-col overflow-hidden pb-3"
+              : "px-3 overflow-y-auto md-scroll pb-24"
         }`}
       >
-        {onPlanPage ? (
+        {!current && showBoard ? (
+          <JobBoard
+            onOpen={openJob}
+            onSkip={() => {
+              setBoardNotice(null);
+              setBoardIntent("closed");
+            }}
+            openClientId={estimate.clientId || null}
+            opening={openingDeal}
+            notice={boardNotice}
+          />
+        ) : onPlanPage ? (
           <PlanPage
             estimate={estimate}
             settings={settings}
@@ -900,7 +1025,9 @@ export default function EstimatorPage() {
       )}
 
       {/* The whole of the totals UI on this screen. Everything else is on the
-          proposal, behind this pill. */}
+          proposal, behind this pill. Not while the board is up: a total for an
+          estimate you have not chosen yet is a number about the wrong job. */}
+      {!(!current && showBoard) && (
       <Link
         href="/proposal"
         className="absolute bottom-4 right-4 flex items-center gap-3 rounded-full bg-surface2 border border-edge px-5 py-3 shadow-lg"
@@ -917,6 +1044,7 @@ export default function EstimatorPage() {
           ›
         </span>
       </Link>
+      )}
     </main>
   );
 }
