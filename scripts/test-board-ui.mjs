@@ -55,11 +55,32 @@ const ESTIMATES = [
   { clientId: "cid-1", dealId: null, propertyId: 10, jobName: "Kowalski", updatedAt: "2026-08-21T00:00:00Z" },
 ];
 
+// A stale server on this port is worse than no server: it answers, it serves
+// the PREVIOUS build's HTML, and the chunks that HTML asks for are gone — which
+// surfaces as a ChunkLoadError and a test that times out looking for something
+// the build it is testing renders perfectly well.
+try {
+  await fetch(BASE, { method: "HEAD" });
+  console.log(`FAIL  something is already listening on ${PORT}. `
+    + "Stop it first — a stale next-server would be tested instead of this build.");
+  process.exit(1);
+} catch { /* nothing there, which is what we want */ }
+
+// DETACHED, so the whole process group can be killed at the end. `npx next
+// start` spawns next-server as a CHILD: killing the npx wrapper alone leaves
+// that child holding the port, which is how the stale server above happens.
 const server = spawn("npx", ["next", "start", "-p", String(PORT)], {
   stdio: ["ignore", "pipe", "pipe"],
   env: { ...process.env },
+  detached: true,
 });
 const dead = new Promise((_, rej) => server.on("exit", (c) => rej(new Error(`server exited ${c}`))));
+
+function stopServer() {
+  try { process.kill(-server.pid, "SIGTERM"); }
+  catch { try { server.kill("SIGTERM"); } catch { /* already gone */ } }
+}
+process.on("exit", stopServer);
 
 async function waitForServer() {
   for (let i = 0; i < 120; i++) {
@@ -73,12 +94,17 @@ async function waitForServer() {
 }
 
 const tileTexts = (page) =>
-  page.$$eval("main button.aspect-\\[4\\/3\\]", (els) => els.map((e) => e.textContent ?? ""));
+  page.$$eval("main button[data-deal]", (els) => els.map((e) => e.textContent ?? ""));
 
 try {
   await Promise.race([waitForServer(), dead]);
   const browser = await chromium.launch();
   const page = await browser.newPage();
+  // Aborted Esri requests are expected here and are not page errors; a real
+  // throw is, and a screen that threw halfway through can still pass every
+  // selector check above it.
+  const thrown = [];
+  page.on("pageerror", (e) => thrown.push(String(e).slice(0, 200)));
 
   await page.route("**/api/deals", (r) =>
     r.fulfill({ contentType: "application/json",
@@ -93,7 +119,7 @@ try {
   await page.waitForSelector("main");
 
   // 1. A tablet holding nothing lands on the board, not on the grid.
-  await page.waitForSelector("main button.aspect-\\[4\\/3\\]", { timeout: 15000 });
+  await page.waitForSelector("main button[data-deal]", { timeout: 15000 });
   const first = await tileTexts(page);
   ok("an untouched estimate lands on the board", first.length === 3, `${first.length} tiles`);
   ok("and finished work is not on it", !first.join(" ").includes("Old job"));
@@ -112,50 +138,107 @@ try {
   ok("a property with no coordinates says that",
     first[1].includes("no map location yet"), first[1]);
   ok("a deal with no property says that instead",
-    first[2].includes("Not tied to a property"), first[2]);
+    first[2].includes("not tied to a property"), first[2]);
 
   // 5. Filter chips. The first tap on one means "only this".
   await page.click("text=/^Sold 1$/");
   await page.waitForFunction(
-    () => document.querySelectorAll("main button.aspect-\\[4\\/3\\]").length === 1);
+    () => document.querySelectorAll("main button[data-deal]").length === 1);
   const sold = await tileTexts(page);
   ok("one chip filters to that stage alone", sold.length === 1 && sold[0].includes("Naples"));
   await page.click("text=/^Propose 1$/");
   await page.waitForFunction(
-    () => document.querySelectorAll("main button.aspect-\\[4\\/3\\]").length === 2);
+    () => document.querySelectorAll("main button[data-deal]").length === 2);
   ok("a second chip adds to it", (await tileTexts(page)).length === 2);
   await page.click("button:text-is('All')");
   await page.waitForFunction(
-    () => document.querySelectorAll("main button.aspect-\\[4\\/3\\]").length === 3);
+    () => document.querySelectorAll("main button[data-deal]").length === 3);
   ok("and All puts them back", (await tileTexts(page)).length === 3);
 
-  // 6. Skip leaves the board without choosing, and Jobs comes back to it.
+  // 5b. THE TILE IS THE GRID'S TILE.
+  //
+  // Two tile shapes on one app reads as two apps, so this is measured off the
+  // rendered box rather than trusted to the classes: square, and the same
+  // corner and the same column width as the assembly tiles the user sees on
+  // the very next screen.
+  const boardBox = await page.$eval("main button[data-deal]", (el) => {
+    const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    return { w: r.width, h: r.height, radius: cs.borderTopLeftRadius,
+             border: cs.borderTopWidth, bg: cs.backgroundColor };
+  });
+  ok("a job tile is SQUARE", Math.abs(boardBox.w - boardBox.h) < 1,
+    `${boardBox.w.toFixed(1)} x ${boardBox.h.toFixed(1)}`);
+
   await page.click("text=Skip to estimator");
   await page.waitForSelector("text=QUICK ESTIMATOR");
-  ok("Skip reaches the grid", (await page.$("main button.aspect-\\[4\\/3\\]")) === null);
+  await page.waitForTimeout(300);
+  await page.waitForSelector("main button.aspect-square");
+  const gridBox = await page.$eval("main button.aspect-square", (el) => {
+    const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    return { w: r.width, h: r.height, radius: cs.borderTopLeftRadius,
+             border: cs.borderTopWidth, bg: cs.backgroundColor };
+  });
+  ok("and it is the same size as an assembly tile on the same screen",
+    Math.abs(boardBox.w - gridBox.w) < 1, `${boardBox.w} vs ${gridBox.w}`);
+  ok("with the same corner radius",
+    boardBox.radius === gridBox.radius, `${boardBox.radius} vs ${gridBox.radius}`);
+  ok("the same surface", boardBox.bg === gridBox.bg, `${boardBox.bg} vs ${gridBox.bg}`);
+  ok("and no border either, the way the grid's tiles have none",
+    parseFloat(boardBox.border) === 0 && parseFloat(gridBox.border) === 0,
+    `${boardBox.border} vs ${gridBox.border}`);
+
+  // 6. Skip leaves the board without choosing, and Jobs comes back to it.
+  await page.click("button:text-is('Jobs')");
+  await page.waitForSelector("main button[data-deal]");
+  await page.click("text=Skip to estimator");
+  await page.waitForSelector("text=QUICK ESTIMATOR");
+  ok("Skip reaches the grid", (await page.$("main button[data-deal]")) === null);
   ok("and the totals pill is back", (await page.$('a[href="/proposal"]')) !== null);
   await page.click("button:text-is('Jobs')");
-  await page.waitForSelector("main button.aspect-\\[4\\/3\\]");
+  await page.waitForSelector("main button[data-deal]");
   ok("Jobs opens the board again", (await tileTexts(page)).length === 3);
 
   // 7. Opening a deal with no estimate names the estimate after it and leaves.
-  await page.click("main button.aspect-\\[4\\/3\\] >> text=Shop cleanup");
+  await page.click("main button[data-deal] >> text=Shop cleanup");
   await page.waitForSelector("text=Shop cleanup >> nth=0");
   await page.waitForFunction(
-    () => !document.querySelector("main button.aspect-\\[4\\/3\\]"));
+    () => !document.querySelector("main button[data-deal]"));
   ok("opening a job closes the board",
-    (await page.$("main button.aspect-\\[4\\/3\\]")) === null);
+    (await page.$("main button[data-deal]")) === null);
   ok("and the estimate wears the deal's name",
     (await page.textContent("header"))?.includes("Shop cleanup") === true,
     await page.textContent("header"));
+
+  // 7b. THE BOARD KNOWS WHICH JOB YOU ARE IN, including one it has no estimate
+  // row for: the estimate list was fetched before that estimate existed, so a
+  // client id alone would leave the tile reading "no estimate yet".
+  await page.click("button:text-is('Jobs')");
+  await page.waitForSelector("main button[data-deal]");
+  const marked = await page.$eval('main button[data-deal="3"]', (el) => ({
+    pressed: el.getAttribute("aria-pressed"),
+    ring: getComputedStyle(el).boxShadow,
+    text: el.textContent ?? "",
+  }));
+  ok("the job just started is marked as the one open",
+    marked.pressed === "true" && /open now/.test(marked.text), marked.text);
+  ok("and wears the accent ring, not the plain hairline",
+    /34, 197, 94/.test(marked.ring), marked.ring);
+  const other = await page.$eval('main button[data-deal="1"]', (el) => el.getAttribute("aria-pressed"));
+  ok("while the others are not", other === "false", String(other));
+  await page.click("text=Skip to estimator");
+  await page.waitForSelector("text=Shop cleanup");
 
   // 8. Having chosen, a reload does NOT bounce back to the board.
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForSelector("header");
   await page.waitForTimeout(600);
   ok("a started estimate is not sent back to the board on reload",
-    (await page.$("main button.aspect-\\[4\\/3\\]")) === null,
+    (await page.$("main button[data-deal]")) === null,
     await page.textContent("header"));
+
+  ok("nothing threw along the way", thrown.length === 0, thrown.join(" / "));
 
   await browser.close();
 } catch (e) {
@@ -164,7 +247,7 @@ try {
   // board never appeared, most likely — is a failure and is counted as one.
   ok("the board ran at all", false, String(e && e.stack ? e.stack.split("\n")[0] : e));
 } finally {
-  server.kill("SIGTERM");
+  stopServer();
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

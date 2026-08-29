@@ -52,6 +52,40 @@ estimate on file reads `deal_id: null` because nothing had ever written it.
 Sent, Sold** or **Project Management**, each drawn as a satellite preview of
 its yard, filterable by stage. Tapping one opens that job.
 
+**It is the grid's tile, to the letter** — square, `rounded-3xl`, no border,
+its surface from the same token, its column width from the same
+`minmax(clamp(8rem, 15.2vw, 13rem), 1fr))` and its gap the same 12px. A job
+tile and an assembly tile sit in the same frame on consecutive screens, and two
+tile shapes in one app reads as two apps. So:
+
+- **The yard is the tile**, full-bleed under the grid's own scrim, exactly as a
+  photographed cultivar is.
+- **A yard with nowhere to show falls back to a centred glyph**, which is what
+  the grid does with a tile that has no photo. A tile with nothing in it reads
+  as broken; a glyph reads as a picture that has not arrived. The sub-line
+  still says *which* of the two problems it is — a property with no
+  coordinates, or a deal tied to no property at all.
+- **The value wears the grid's badge** — top right, white, `tabular-nums` —
+  because that is the number this tile has instead of a count. The stage wears
+  the same pill on the other corner, tinted rather than white: a stage is a
+  category, not a number. (*Project Management* is **PM** there; the filter
+  chip has room for the whole thing and keeps it.)
+- **One sub-line**, as the grid's tile has. On a located tile the picture is
+  the address, so the line spends itself on what a tap actually does — open
+  work already done, or start it. Both lines are `line-clamp-2`, since a deal
+  name is typed by a person and the tile is 128px on a small screen.
+
+**What is deliberately NOT borrowed is the drain.** The grid greys what is not
+on the job; every deal on this board is live, so draining the ones with no
+estimate yet would make most of a real board (12 estimates against 86 deals)
+read as dead work. The grid's *ring* is borrowed instead, in the accent: it
+marks the job currently open.
+
+**And the ring keys off the deal id as well as the client id.** A job started
+from a tile has no row in the board's estimate list — that list was fetched
+once, before the estimate existed — so a client id alone left the very job you
+were sitting in reading *no estimate yet*.
+
 **One tile is one DEAL, not one property.** A property carries several deals —
 86 across 71 properties in this project's own data — and a deal is what has a
 proposal number, a value and a stage. A property tile would have to ask *which
@@ -111,9 +145,28 @@ tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 18 checks. A throw is reported as a failure rather than crashing
+is showing: 27 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
+
+**The tile's shape is measured, not trusted to the classes.** It reads the
+rendered box: that a job tile is square, and that its width, corner radius,
+surface colour and absence of a border all equal an assembly tile's on the
+very next screen. A class list can say `aspect-square` and still be stretched
+by the grid row it sits in.
+
+Two traps that cost time, both worth keeping:
+
+- **`npx next start` spawns `next-server` as a child**, so killing the `npx`
+  wrapper leaves that child holding the port. The next run then finds a server
+  that answers, serves the *previous* build's HTML, and asks for chunks that no
+  longer exist — a `ChunkLoadError` and a timeout looking for something the
+  build under test renders perfectly well. The server is spawned detached and
+  the whole process group is killed; and the run refuses to start at all if
+  something is already listening on the port, because a stale server is worse
+  than no server.
+- **`button[aria-pressed]` matches the header's reveal chips**, not just the
+  tiles. The geometry checks select `button.aspect-square`.
 
 The landing rule is **mutation-tested**: making `isUnstarted()` return `false`
 unconditionally turns the run red, so the board being the first screen is the

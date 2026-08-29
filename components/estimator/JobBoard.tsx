@@ -25,8 +25,12 @@ import {
 
 /** ~0.45 m/px: a house, its yard and the neighbours. */
 const TILE_Z = 18;
-const MOSAIC_W = 320;
-const MOSAIC_H = 240;
+/**
+ * Square, because the tiles are — and big enough to cover the largest of them
+ * (`clamp(8rem, 15.2vw, 13rem)` is at most 208px), so the crop is always from
+ * the middle outwards rather than leaving a gap at an edge.
+ */
+const MOSAIC = 320;
 
 /**
  * A little slippy map with no Leaflet in it.
@@ -42,11 +46,11 @@ function MapPreview({ lat, lng }: { lat: number; lng: number }) {
     const r = (lat * Math.PI) / 180;
     const px = ((lng + 180) / 360) * n * 256;
     const py = ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n * 256;
-    const left = px - MOSAIC_W / 2;
-    const top = py - MOSAIC_H / 2;
+    const left = px - MOSAIC / 2;
+    const top = py - MOSAIC / 2;
     const out: { key: string; src: string; x: number; y: number }[] = [];
-    for (let ty = Math.floor(top / 256); ty <= Math.floor((top + MOSAIC_H - 1) / 256); ty++) {
-      for (let tx = Math.floor(left / 256); tx <= Math.floor((left + MOSAIC_W - 1) / 256); tx++) {
+    for (let ty = Math.floor(top / 256); ty <= Math.floor((top + MOSAIC - 1) / 256); ty++) {
+      for (let tx = Math.floor(left / 256); tx <= Math.floor((left + MOSAIC - 1) / 256); tx++) {
         if (ty < 0 || ty >= n) continue;
         const wrapped = ((tx % n) + n) % n;   // the world wraps east-west
         out.push({
@@ -65,11 +69,11 @@ function MapPreview({ lat, lng }: { lat: number; lng: number }) {
       <div
         className="absolute"
         style={{
-          width: MOSAIC_W,
-          height: MOSAIC_H,
+          width: MOSAIC,
+          height: MOSAIC,
           left: "50%",
           top: "50%",
-          transform: `translate(${-MOSAIC_W / 2}px, ${-MOSAIC_H / 2}px)`,
+          transform: `translate(${-MOSAIC / 2}px, ${-MOSAIC / 2}px)`,
         }}
       >
         {tiles.map((t) => (
@@ -96,10 +100,20 @@ const STAGE_TINT: Record<BoardStage, string> = {
   "Project Management": "#c9973f",
 };
 
+/**
+ * What a job tile shows when there is no yard to show.
+ *
+ * The grid's own tiles fall back from a photograph to a centred glyph, and
+ * this is the same fallback for the same reason: a tile with nothing in it
+ * reads as broken, and a glyph reads as a tile whose picture has not arrived.
+ */
+const NO_MAP_GLYPH = "\u{1F3E1}";
+
 export default function JobBoard({
   onOpen,
   onSkip,
   openClientId,
+  openDealId,
   opening,
   notice,
 }: {
@@ -108,6 +122,16 @@ export default function JobBoard({
   onSkip: () => void;
   /** The estimate currently loaded, so its tile can say so. */
   openClientId: string | null;
+  /**
+   * And the deal it is attached to.
+   *
+   * Both, because they answer at different moments. A job opened out of an
+   * existing estimate is known by its client id; one STARTED from a tile has
+   * no row on the board's estimate list yet -- that list was fetched once,
+   * before it existed -- so without the deal id the board would show "no
+   * estimate yet" on the very job you are sitting in.
+   */
+  openDealId: number | null;
   /** The deal being opened right now, so a slow read is not a dead tap. */
   opening: number | null;
   /** What went wrong opening one, said here rather than swallowed. */
@@ -205,60 +229,149 @@ export default function JobBoard({
             Nothing on the board in {stages.length ? "those stages" : "Propose, Sent, Sold or Project Management"}.
           </p>
         ) : (
-          <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
-            {tiles.map((t) => (
-              <button
-                key={t.deal.id}
-                onClick={() => onOpen(t)}
-                disabled={opening !== null}
-                className={`relative aspect-[4/3] overflow-hidden rounded-2xl border bg-surface text-left ${
-                  t.estimate && t.estimate.clientId === openClientId
-                    ? "border-accent"
-                    : "border-edge"
-                } ${opening !== null && opening !== t.deal.id ? "opacity-40" : ""}`}
-              >
-                {t.deal.lat !== null && t.deal.lng !== null ? (
-                  <MapPreview lat={t.deal.lat} lng={t.deal.lng} />
-                ) : (
-                  <span className="absolute inset-0 flex items-center justify-center px-4 text-center text-[0.65rem] text-muted">
-                    {t.deal.propertyId === null
-                      ? "Not tied to a property"
-                      : "This property has no map location yet"}
-                  </span>
-                )}
-
-                <span
-                  className="absolute left-2 top-2 rounded-full px-2 py-0.5 text-[0.6rem] font-bold text-black"
-                  style={{ background: STAGE_TINT[t.stage] }}
-                >
-                  {t.stage}
-                </span>
-                {tileValue(t.deal.value) && (
-                  <span className="absolute right-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[0.6rem] font-bold text-white">
-                    {tileValue(t.deal.value)}
-                  </span>
-                )}
-
-                <span
-                  className="absolute inset-x-0 bottom-0 px-2.5 py-2 text-white"
-                  style={{ background: "linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0))" }}
-                >
-                  <span className="block text-xs font-bold leading-tight">{tileTitle(t.deal)}</span>
-                  {t.deal.propertyAddress && t.deal.name && (
-                    <span className="block text-[0.62rem] opacity-80">{t.deal.propertyAddress}</span>
-                  )}
-                  <span className="block text-[0.62rem] opacity-80">
-                    {opening === t.deal.id
-                      ? "Opening…"
+          /* The grid's own measurements, so a job tile and an assembly tile are
+             the same size on the same screen. */
+          <div
+            className="grid gap-3"
+            style={{
+              gridTemplateColumns:
+                "repeat(auto-fill, minmax(clamp(8rem, 15.2vw, 13rem), 1fr))",
+              alignContent: "start",
+            }}
+          >
+            {tiles.map((t) => {
+              const located = t.deal.lat !== null && t.deal.lng !== null;
+              const isOpen =
+                (openDealId !== null && t.deal.id === openDealId) ||
+                (t.estimate !== null && t.estimate.clientId === openClientId);
+              const busy = opening === t.deal.id;
+              return (
+                <button
+                  key={t.deal.id}
+                  data-deal={t.deal.id}
+                  onClick={() => onOpen(t)}
+                  disabled={opening !== null}
+                  title={t.deal.propertyAddress ?? undefined}
+                  aria-label={
+                    `${tileTitle(t.deal)} — ${t.stage}` +
+                    (t.deal.propertyAddress ? `, ${t.deal.propertyAddress}` : "") +
+                    (isOpen
+                      ? ", open now"
                       : t.estimate
-                        ? t.match === "property"
-                          ? "estimate started — matched by property"
-                          : "estimate started"
-                        : "no estimate yet"}
+                        ? ", estimate started"
+                        : ", no estimate yet")
+                  }
+                  aria-pressed={isOpen}
+                  /*
+                    The grid's tile, to the letter: square, rounded-3xl, no
+                    border, its surface from the same token, and its picture
+                    full-bleed under a scrim. A job tile and an assembly tile
+                    sit in the same grid on the same screen, and two tile
+                    shapes on one app reads as two apps.
+                  */
+                  className={`relative w-full aspect-square rounded-3xl flex flex-col overflow-hidden touch-none select-none ${
+                    located ? "justify-end" : "items-center justify-center"
+                  } ${opening !== null && !busy ? "opacity-40" : ""}`}
+                  style={{
+                    background: "var(--md-surface-2)",
+                    // The ring the grid gives a chosen tile, in the accent
+                    // rather than in white: this is not "on the job", it is
+                    // THE job — the estimate currently loaded.
+                    boxShadow: isOpen
+                      ? "inset 0 0 0 2px var(--md-accent)"
+                      : "inset 0 0 0 1px rgba(255,255,255,0.08)",
+                  }}
+                >
+                  {located ? (
+                    <>
+                      <MapPreview lat={t.deal.lat!} lng={t.deal.lng!} />
+                      {/* A scrim, not a dimmer — the same one the grid uses,
+                          so a caption stays readable over bright turf. */}
+                      <span className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-black/5" />
+                    </>
+                  ) : (
+                    <span
+                      className="text-[clamp(1.75rem,4.5vw,3rem)] leading-none"
+                      style={{ filter: "grayscale(1)", opacity: 0.75 }}
+                      aria-hidden="true"
+                    >
+                      {NO_MAP_GLYPH}
+                    </span>
+                  )}
+
+                  <span
+                    /* Clamped, because a deal name is typed by a person and
+                       the tile is 128px on a small screen. `overflow-hidden`
+                       on the button would otherwise cut a line in half. */
+                    className={`relative line-clamp-2 font-semibold leading-tight text-[clamp(0.7rem,1.35vw,0.95rem)] ${
+                      located
+                        ? "px-2.5 text-left text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
+                        : "mt-2 px-2 text-center text-ink"
+                    }`}
+                  >
+                    {tileTitle(t.deal)}
                   </span>
-                </span>
-              </button>
-            ))}
+
+                  {/*
+                    ONE sub-line, as the grid's tile has. The address is not on
+                    it: on a located tile the picture IS the address, and what
+                    the sub-line has to answer is what a tap does — open work
+                    already done, or start it. The address is still on the
+                    tile's title and its label for anyone who needs it, and it
+                    leads when the deal has no name of its own.
+                  */}
+                  <span
+                    className={`relative line-clamp-2 text-[clamp(0.6rem,1.1vw,0.78rem)] font-medium ${
+                      located
+                        ? "px-2.5 pb-2.5 text-left text-white/85 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
+                        : "mt-1 px-2 text-center text-muted"
+                    }`}
+                  >
+                    {busy
+                      ? "Opening…"
+                      : isOpen
+                        ? "open now"
+                        : [
+                          // Why there is no picture — two different problems,
+                          // and they get two different sentences. Only on a
+                          // tile that has none: on a located one the picture
+                          // is its own explanation.
+                          located
+                            ? null
+                            : t.deal.propertyId === null
+                              ? "not tied to a property"
+                              : "no map location yet",
+                          // What a tap does, which is the fact the sub-line
+                          // exists for and is never dropped.
+                          t.estimate
+                            ? t.match === "property"
+                              ? "estimate started — matched by property"
+                              : "estimate started"
+                            : "no estimate yet",
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                  </span>
+
+                  {/* Top right, white, tabular — the grid's badge, carrying the
+                      number this tile has instead of a count. */}
+                  {tileValue(t.deal.value) && (
+                    <span className="absolute top-2.5 right-2.5 min-w-[1.6rem] px-1.5 py-0.5 rounded-full bg-white text-black text-[clamp(0.65rem,1.2vw,0.85rem)] font-bold tabular-nums text-center shadow-[0_1px_4px_rgba(0,0,0,0.6)]">
+                      {tileValue(t.deal.value)}
+                    </span>
+                  )}
+
+                  {/* The same pill on the other corner, tinted rather than
+                      white: a stage is a category, not a number. */}
+                  <span
+                    className="absolute top-2.5 left-2.5 px-1.5 py-0.5 rounded-full text-black text-[clamp(0.55rem,1vw,0.7rem)] font-bold shadow-[0_1px_4px_rgba(0,0,0,0.6)]"
+                    style={{ background: STAGE_TINT[t.stage] }}
+                  >
+                    {t.stage === "Project Management" ? "PM" : t.stage}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>

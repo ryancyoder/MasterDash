@@ -920,6 +920,7 @@ export default function EstimatorPage() {
               setBoardIntent("closed");
             }}
             openClientId={estimate.clientId || null}
+            openDealId={estimate.dealId}
             opening={openingDeal}
             notice={boardNotice}
           />
