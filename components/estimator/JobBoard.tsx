@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BOARD_STAGES,
+  boardPages,
   boardTiles,
+  firstPageOf,
+  gridFor,
+  keepPage,
   stageCounts,
   tilePicture,
   tileTitle,
@@ -141,7 +145,21 @@ export default function JobBoard({
   const [deals, setDeals] = useState<BoardDeal[] | null>(null);
   const [estimates, setEstimates] = useState<BoardEstimate[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [stages, setStages] = useState<BoardStage[]>([]);
+  /*
+    ONE PAGE PER STAGE, AND NO SCROLLING ON ANY OF THEM.
+
+    The filter chips are gone: with the stages as pages, filtering to one IS
+    navigating to it, and two ways to say the same thing that can disagree is
+    one too many. The stage row is still there and still counts, but a tap on
+    it now jumps rather than filters.
+
+    A busy stage runs to several pages inside its own run — see `boardPages()`
+    for why that beats either scrolling or shrinking Sent's 58 tiles to
+    postage stamps while Sold's 8 sit in an empty screen.
+  */
+  const [page, setPage] = useState(0);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState({ width: 0, height: 0 });
   /**
    * Deals whose cover photo would not load.
    *
@@ -177,43 +195,108 @@ export default function JobBoard({
   }, []);
 
   const counts = useMemo(() => stageCounts(deals ?? []), [deals]);
-  const tiles = useMemo(
-    () => boardTiles(deals ?? [], estimates, stages),
-    [deals, estimates, stages],
-  );
+  const tiles = useMemo(() => boardTiles(deals ?? [], estimates), [deals, estimates]);
+
+  /** The box the tiles have to fit in, measured rather than assumed. */
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      setBox({ width, height });
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  // The grid's own tile size and gap, so a job tile is the size of an assembly
+  // tile on the next screen. 12px is `gap-3`.
+  const grid = useMemo(() => gridFor(box.width, box.height, 180, 12), [box]);
+  const pages = useMemo(() => boardPages(tiles, grid.perPage), [tiles, grid.perPage]);
+
+  /*
+    Hold the page against a board that changes under it — a deal moves stage,
+    the iPad is turned and the tiles per page with it. Kept during render
+    rather than in an effect, so no frame ever draws a page that is not there.
+  */
+  const [held, setHeld] = useState<{ stage: BoardStage; index: number } | null>(null);
+  const safePage = keepPage(pages, held, page);
+  if (safePage !== page) setPage(safePage);
+  const current = pages[safePage] ?? null;
+  if (current && (held?.stage !== current.stage || held?.index !== current.index)) {
+    setHeld({ stage: current.stage, index: current.index });
+  }
+
+  const go = (next: number) => {
+    const clamped = Math.max(0, Math.min(pages.length - 1, next));
+    setPage(clamped);
+    const p = pages[clamped];
+    if (p) setHeld({ stage: p.stage, index: p.index });
+  };
+
+  /*
+    THE SWIPE.
+
+    A pointer gesture rather than a scroll container: the brief is that no page
+    scrolls, and a scroller that snaps is still a scroller — it can be left
+    half way, it bounces at the ends, and on a tile grid it fights the taps.
+    This commits on release, so a page either turns or it does not.
+
+    `SWIPE_PX` is generous because the competing gesture is a tap on a tile,
+    not a drag: anything short of a real sweep across the glass should still
+    open the job under the thumb.
+  */
+  const swipe = useRef<{ x: number; y: number } | null>(null);
+  const SWIPE_PX = 60;
+  const onDown = (e: React.PointerEvent) => {
+    swipe.current = { x: e.clientX, y: e.clientY };
+  };
+  const onUp = (e: React.PointerEvent) => {
+    const from = swipe.current;
+    swipe.current = null;
+    if (!from) return;
+    const dx = e.clientX - from.x;
+    const dy = e.clientY - from.y;
+    // Mostly sideways, or it is a scroll gesture on a screen that does not
+    // scroll and should do nothing rather than turn a page by accident.
+    if (Math.abs(dx) < SWIPE_PX || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    go(safePage + (dx < 0 ? 1 : -1));
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2">
-        {BOARD_STAGES.map((s) => {
-          const on = stages.length === 0 || stages.includes(s);
+      {/* The stages, as navigation rather than as a filter: with a page per
+          stage, filtering to one IS going to it. The count still says how big
+          each part of the pipeline is, and the dots say how far across a stage
+          this page sits. */}
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5 px-3 pb-2">
+        {BOARD_STAGES.map((st) => {
+          const here = current?.stage === st;
           return (
             <button
-              key={s}
-              onClick={() =>
-                setStages((cur) =>
-                  cur.includes(s) ? cur.filter((x) => x !== s)
-                  // An empty filter means "all", so the first tap on a chip has
-                  // to mean "only this one" rather than "all plus this one".
-                  : cur.length === 0 ? [s] : [...cur, s],
-                )
-              }
+              key={st}
+              onClick={() => go(firstPageOf(pages, st))}
+              aria-pressed={here}
               className={`rounded-full px-3 py-1 text-xs font-bold ${
-                on ? "text-black" : "bg-surface2 text-muted"
+                here ? "text-black" : "bg-surface2 text-muted"
               }`}
-              style={on ? { background: STAGE_TINT[s] } : undefined}
+              style={here ? { background: STAGE_TINT[st] } : undefined}
             >
-              {s} <span className="opacity-70">{counts[s]}</span>
+              {st} <span className="opacity-70">{counts[st]}</span>
             </button>
           );
         })}
-        {stages.length > 0 && (
-          <button
-            onClick={() => setStages([])}
-            className="rounded-full bg-surface2 px-3 py-1 text-xs font-bold text-muted"
-          >
-            All
-          </button>
+        {current && current.ofStage > 1 && (
+          <span className="flex items-center gap-1 pl-1" aria-hidden="true">
+            {Array.from({ length: current.ofStage }, (_, i) => (
+              <span
+                key={i}
+                className={`h-1.5 w-1.5 rounded-full ${
+                  i + 1 === current.index ? "bg-ink" : "bg-surface2"
+                }`}
+              />
+            ))}
+          </span>
         )}
         <button
           onClick={onSkip}
@@ -223,32 +306,45 @@ export default function JobBoard({
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto md-scroll px-3 pb-24">
-        {notice && (
-          <p className="mb-2 rounded-xl border border-edge bg-surface2 px-3 py-2 text-xs text-[#f59e0b]">
-            {notice}
-          </p>
-        )}
+      {notice && (
+        <p className="mx-3 mb-2 shrink-0 rounded-xl border border-edge bg-surface2 px-3 py-2 text-xs text-[#f59e0b]">
+          {notice}
+        </p>
+      )}
+
+      {/* NO SCROLL, anywhere. `overflow-hidden` is the guarantee on the
+          container and `gridFor()` is the guarantee on what goes in it: the
+          page holds exactly as many tiles as the measured box fits. */}
+      <div
+        ref={gridRef}
+        onPointerDown={onDown}
+        onPointerUp={onUp}
+        onPointerCancel={() => (swipe.current = null)}
+        className="relative min-h-0 flex-1 overflow-hidden px-3 pb-3 touch-pan-y"
+      >
         {deals === null ? (
-          <p className="py-10 text-center text-sm text-muted">Looking…</p>
+          <p className="pt-10 text-center text-sm text-muted">Looking…</p>
         ) : error ? (
-          <p className="py-10 text-center text-sm text-muted">{error}</p>
-        ) : tiles.length === 0 ? (
-          <p className="py-10 text-center text-sm leading-relaxed text-muted">
-            Nothing on the board in {stages.length ? "those stages" : "Propose, Sent, Sold or Project Management"}.
+          <p className="pt-10 text-center text-sm text-muted">{error}</p>
+        ) : current === null || current.tiles.length === 0 ? (
+          <p className="pt-10 text-center text-sm leading-relaxed text-muted">
+            {tiles.length === 0
+              ? "Nothing on the board in Propose, Sent, Sold or Project Management."
+              : `Nothing in ${current?.stage ?? "this stage"}. Swipe on for the rest of the pipeline.`}
           </p>
         ) : (
-          /* The grid's own measurements, so a job tile and an assembly tile are
-             the same size on the same screen. */
+          /* The grid's own gap, and a tile size that makes whole rows fit —
+             so a job tile is about the size of an assembly tile on the next
+             screen, and the page never runs past its own bottom edge. */
           <div
             className="grid gap-3"
             style={{
-              gridTemplateColumns:
-                "repeat(auto-fill, minmax(clamp(8rem, 15.2vw, 13rem), 1fr))",
+              gridTemplateColumns: `repeat(${grid.cols}, ${grid.size}px)`,
+              gridAutoRows: `${grid.size}px`,
               alignContent: "start",
             }}
           >
-            {tiles.map((t) => {
+            {current.tiles.map((t) => {
               // A photograph of the yard, then its roof from orbit, then a
               // glyph. tilePicture() owns the order; see jobBoard.ts.
               const picture = tilePicture(t.deal, brokenCovers.has(t.deal.id));

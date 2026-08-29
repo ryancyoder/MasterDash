@@ -49,8 +49,8 @@ the answer was whatever estimate the tablet happened to be holding, and every
 estimate on file reads `deal_id: null` because nothing had ever written it.
 
 `/` now opens on a board of the live work: one tile per deal in **Propose,
-Sent, Sold** or **Project Management**, each drawn as a satellite preview of
-its yard, filterable by stage. Tapping one opens that job.
+Sent, Sold** or **Project Management**, each drawn as a picture of its yard,
+one stage to a page. Tapping a tile opens that job.
 
 **It is the grid's tile, to the letter** — square, `rounded-3xl`, no border,
 its surface from the same token, its column width from the same
@@ -146,6 +146,51 @@ empty. It belongs there the day a lead gets tagged to a yard.
 **Invoiced and Paid in Full are finished work**, and not what somebody opening
 an estimator is looking for.
 
+### One page per stage, and nothing scrolls
+
+The board is paged: **Propose → Sent → Sold → Project Management**, one stage
+at a time, swiped through with a finger. Tapping a stage in the row above jumps
+to it. Nothing on any page scrolls.
+
+**One page per stage is the floor, not the rule.** Sent carries **58** deals
+against Sold's 8. A page per stage alone would have to either scroll — the
+thing being removed — or shrink Sent's tiles to postage stamps while Sold's
+eight sat in an empty screen. So a stage runs to as many pages as it needs and
+they stay inside its own run: the order is still Propose, Sent, Sold, Project
+Management, with Sent simply taking four swipes to cross. Dots beside the stage
+row say how far across one you are.
+
+**An empty stage still gets its page.** Skipping it would mean the swipe order
+changed as deals moved through the pipeline, so the gesture that reached Sold
+this morning reaches something else this afternoon. A page saying *Nothing in
+Sold* is a fact about the pipeline and worth a swipe.
+
+**"No scrolling" is arithmetic, not a CSS hope.** `gridFor()` measures the box
+and derives how many whole rows and columns of tile fit in it; `boardPages()`
+fills each page to exactly that. The container is `overflow-hidden` so the
+promise cannot be broken by accident, and the tile size that comes back is what
+makes whole rows fit — usually a little larger than the grid's own target,
+never smaller. Before the first layout the box is 0×0, so both are floored at
+one row and one column: a page holding zero tiles would show an empty board
+rather than the pipeline.
+
+**The page is held to its stage, not to its number.** The board changes under
+it — a deal moves, the iPad is turned and the tiles per page with it — so
+`keepPage()` puts you back at the top of Sent after a resize rather than
+throwing you into Sold because Sent got shorter.
+
+**The swipe is a pointer gesture, not a snapping scroller.** A scroller that
+snaps is still a scroller: it can be left half way, it bounces at the ends, and
+on a tile grid it fights the taps. This commits on release, so a page either
+turns or it does not. The threshold is generous (60px) because the competing
+gesture is a *tap on a tile*, not a drag — anything short of a real sweep
+across the glass should still open the job under the thumb. A mostly-vertical
+drag does nothing, rather than turning a page on a screen that does not scroll.
+
+**The filter chips are gone.** With the stages as pages, filtering to one *is*
+navigating to it, and two ways to say the same thing that can disagree is one
+too many. The row still counts each stage; a tap now jumps instead of filters.
+
 ### Which estimate is already this deal's
 
 `estimateForDeal()` answers it, and the fallback is narrow on purpose:
@@ -185,14 +230,14 @@ in.
 **The pairing is not done in the route handler.** `/api/deals` returns deals
 and estimates as two lists and `jobBoard.ts` decides — that rule is a judgement
 about ambiguity rather than a query, and it is worth checking without a
-network. `npm run test:board` does exactly that, 44 checks.
+network. `npm run test:board` does exactly that, 61 checks.
 
 **And `npm run test:board-ui` reads the rendered screen**, because the pure
 tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 63 checks. A throw is reported as a failure rather than crashing
+is showing: 72 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
 

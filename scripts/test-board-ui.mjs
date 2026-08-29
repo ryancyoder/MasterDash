@@ -62,6 +62,15 @@ const DEALS = [
     propertyAddress: "5 Gone Ln", lat: 41.31, lng: -87.15,
     coverUrl: "https://cover.test/missing.png" },
 ];
+// Sent carries 58 on the real board, so it has to run to several pages here
+// too or the paging is never exercised.
+for (let i = 0; i < 20; i++) {
+  DEALS.push({
+    id: 100 + i, name: `Filler ${i}`, stage: "Sent", value: null, proposalNumber: null,
+    nextAction: null, updatedAt: `2026-07-${String(10 + i).padStart(2, "0")}T00:00:00Z`,
+    propertyId: null, propertyAddress: null, lat: null, lng: null, coverUrl: null,
+  });
+}
 // One estimate, at the property of deal 1, which has exactly one deal — the
 // only shape the property fallback accepts.
 const ESTIMATES = [
@@ -221,27 +230,50 @@ try {
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("main");
 
-  // 1. A tablet holding nothing lands on the board, not on the grid.
+  // 1. A tablet holding nothing lands on the board, not on the grid — and on
+  // the FIRST STAGE of the pipeline, not on everything at once.
   await page.waitForSelector("main button[data-deal]", { timeout: 15000 });
-  const first = await tileTexts(page);
-  ok("an untouched estimate lands on the board", first.length === 4, `${first.length} tiles`);
-  ok("and finished work is not on it", !first.join(" ").includes("Old job"));
+  const opening = await tileTexts(page);
+  ok("an untouched estimate lands on the board",
+    (await page.$$("main button[data-deal]")).length > 0);
+  ok("and on Propose, which is the front of the pipeline",
+    opening.length === 1 && opening[0].includes("Shop cleanup"),
+    opening.join(" | "));
   ok("the header says JOBS", (await page.textContent("header"))?.includes("JOBS") === true);
   ok("the totals pill is not on the board", (await page.$('a[href="/proposal"]')) === null);
 
-  // 2. Newest deal first, by the deal's own date.
+  // Finished work never gets a page at all.
+  const stageButtons = await page.$$eval("main header ~ div button, main > div button",
+    (els) => els.map((e) => e.textContent ?? ""));
+  ok("and finished work has no page",
+    !stageButtons.some((t) => /Paid in Full|Invoiced/.test(t)), stageButtons.join("|"));
+
+  // 2. The stage row navigates. The picture checks live on Sent.
+  await page.click('button:has-text("Sent")');
+  await page.waitForTimeout(300);
+  const first = await tileTexts(page);
+  ok("tapping a stage goes to it", first.some((t) => t.includes("Kowalski regrade")),
+    first.slice(0, 2).join(" | "));
   ok("newest deal first", first[0].includes("Kowalski regrade"), first[0].slice(0, 40));
 
   // 3. The pairing reaches the screen, and says it was a guess.
   ok("a property-matched estimate is named as one",
     first[0].includes("matched by property"), first[0]);
-  ok("a deal with no estimate says so", first[2].includes("no estimate yet"), first[2]);
 
   // 4. The two different kinds of "nowhere to show" get two different sentences.
+  await page.click('button:has-text("Sold")');
+  await page.waitForTimeout(300);
+  const sold = await tileTexts(page);
   ok("a property with no coordinates says that",
-    first[1].includes("no map location yet"), first[1]);
+    sold[0].includes("no map location yet"), sold[0]);
+  await page.click('button:has-text("Propose")');
+  await page.waitForTimeout(300);
+  const propose = await tileTexts(page);
   ok("a deal with no property says that instead",
-    first[2].includes("not tied to a property"), first[2]);
+    propose[0].includes("not tied to a property"), propose[0]);
+  ok("and one with no estimate says so", propose[0].includes("no estimate yet"), propose[0]);
+  await page.click('button:has-text("Sent")');
+  await page.waitForTimeout(300);
 
   // 4b. THE PICTURE, and its fallback chain.
   //
@@ -259,32 +291,115 @@ try {
       },
     ])),
   );
+  // Deals 1 and 5 are both on Sent, which is the page showing.
   ok("a property with a cover photo shows it",
     pictures["1"].cover === "https://cover.test/yard.png", JSON.stringify(pictures["1"]));
   ok("AND NOT the satellite as well — one picture per tile",
     pictures["1"].mapTiles === 0, `${pictures["1"].mapTiles} map tiles`);
-  ok("a located property without one still gets its satellite",
-    pictures["5"] !== undefined && pictures["3"].mapTiles === 0);
   ok("a cover photo that 404s falls back to the satellite, not to black",
     pictures["5"].cover === null && pictures["5"].mapTiles > 0,
     JSON.stringify(pictures["5"]));
-  ok("and a tile with neither still shows the glyph",
-    pictures["3"].glyph === true, JSON.stringify(pictures["3"]));
 
-  // 5. Filter chips. The first tap on one means "only this".
-  await page.click("text=/^Sold 1$/");
-  await page.waitForFunction(
-    () => document.querySelectorAll("main button[data-deal]").length === 1);
-  const sold = await tileTexts(page);
-  ok("one chip filters to that stage alone", sold.length === 1 && sold[0].includes("Naples"));
-  await page.click("text=/^Propose 1$/");
-  await page.waitForFunction(
-    () => document.querySelectorAll("main button[data-deal]").length === 2);
-  ok("a second chip adds to it", (await tileTexts(page)).length === 2);
-  await page.click("button:text-is('All')");
-  await page.waitForFunction(
-    () => document.querySelectorAll("main button[data-deal]").length === 4);
-  ok("and All puts them back", (await tileTexts(page)).length === 4);
+  // Deal 3 has no property at all, and sits on Propose.
+  await page.click('button:has-text("Propose")');
+  await page.waitForTimeout(300);
+  const noYard = await page.$eval('main button[data-deal="3"]', (el) => ({
+    mapTiles: el.querySelectorAll('img[src*="World_Imagery"]').length,
+    glyph: /\u{1F3E1}/u.test(el.textContent ?? ""),
+  }));
+  ok("a tile with no yard to show falls back to the glyph",
+    noYard.glyph === true && noYard.mapTiles === 0, JSON.stringify(noYard));
+  await page.click('button:has-text("Sent")');
+  await page.waitForTimeout(300);
+
+  // 5. PAGES, AND NO SCROLLING ON ANY OF THEM.
+  //
+  // The brief was a page per stage with a swipe between them and nothing that
+  // scrolls. Sent carries 58 on the real board, so a stage has to be able to
+  // run to several pages of its own — otherwise "no scrolling" means shrinking
+  // its tiles to postage stamps while Sold's eight sit in an empty screen.
+  const noScroll = await page.evaluate(() => {
+    const grid = document.querySelector("main button[data-deal]")?.closest("div.grid");
+    const pane = grid?.parentElement;
+    if (!pane) return { error: "no pane" };
+    const r = grid.getBoundingClientRect();
+    const p = pane.getBoundingClientRect();
+    return {
+      overflow: getComputedStyle(pane).overflowY,
+      scrolls: pane.scrollHeight > pane.clientHeight + 1,
+      overflowsBox: r.bottom > p.bottom + 1,
+    };
+  });
+  ok("NOTHING ON A PAGE SCROLLS",
+    noScroll.overflow === "hidden" && noScroll.scrolls === false, JSON.stringify(noScroll));
+  ok("and the tiles fit inside the page rather than being clipped by it",
+    noScroll.overflowsBox === false, JSON.stringify(noScroll));
+
+  const sentPage1 = await tileTexts(page);
+  const dots = await page.$$eval("main span.rounded-full.h-1\\.5", (e) => e.length);
+  ok("a stage with more deals than fit runs to several pages",
+    dots > 1, `${dots} dots`);
+  ok("and the page is full rather than half empty",
+    sentPage1.length > 4, `${sentPage1.length} tiles`);
+
+  // The swipe. A real pointer sweep across the tiles, not a scroll.
+  const pane = await page.locator("main button[data-deal]").first()
+    .evaluate((el) => el.closest("div.grid")?.parentElement?.getBoundingClientRect().toJSON());
+  const midY = pane.y + pane.height / 2;
+  await page.mouse.move(pane.x + pane.width - 40, midY);
+  await page.mouse.down();
+  await page.mouse.move(pane.x + 40, midY, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(350);
+  const sentPage2 = await tileTexts(page);
+  ok("A SWIPE TURNS THE PAGE",
+    sentPage2.length > 0 && sentPage2[0] !== sentPage1[0],
+    `${sentPage1[0]?.slice(0, 20)} then ${sentPage2[0]?.slice(0, 20)}`);
+  ok("and it is still the same stage, not the next one",
+    (await page.$eval('button[aria-pressed="true"]', (b) => b.textContent ?? "")).includes("Sent"),
+    await page.$eval('button[aria-pressed="true"]', (b) => b.textContent ?? ""));
+
+  // Back the other way.
+  await page.mouse.move(pane.x + 40, midY);
+  await page.mouse.down();
+  await page.mouse.move(pane.x + pane.width - 40, midY, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(350);
+  ok("and swiping back returns to the page before it",
+    (await tileTexts(page))[0] === sentPage1[0]);
+
+  // A short drag is not a page turn. Started in the pane's own padding rather
+  // than on a tile: a press and release on one element is a click, and a tile
+  // opening its job is the right answer to that — it is just not what this
+  // check is about.
+  await page.mouse.move(pane.x + 3, midY);
+  await page.mouse.down();
+  await page.mouse.move(pane.x + 33, midY, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForTimeout(250);
+  ok("a small movement does not turn the page",
+    (await tileTexts(page))[0] === sentPage1[0],
+    `${sentPage1[0]?.slice(0, 20)} then ${(await tileTexts(page))[0]?.slice(0, 20)}`);
+
+  // Nor does a mostly-vertical one: on a screen that does not scroll, a
+  // dragged thumb should do nothing rather than turn a page by accident.
+  await page.mouse.move(pane.x + 3, pane.y + 30);
+  await page.mouse.down();
+  await page.mouse.move(pane.x + 3 - 80, pane.y + 30 + 200, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(250);
+  ok("and neither does a mostly-vertical drag",
+    (await tileTexts(page))[0] === sentPage1[0]);
+
+  // An empty stage keeps its page, so the order of the swipe can be learned.
+  await page.click('button:has-text("Project Management")');
+  await page.waitForTimeout(300);
+  const empty = await page.evaluate(() => document.querySelector("main")?.textContent ?? "");
+  ok("AN EMPTY STAGE STILL HAS ITS PAGE, and says so",
+    /Nothing in Project Management/.test(empty), empty.slice(0, 140));
+  ok("with no tiles on it", (await page.$$("main button[data-deal]")).length === 0);
+  await page.click('button:has-text("Sent")');
+  await page.waitForTimeout(300);
 
   // 5b. THE TILE IS THE GRID'S TILE.
   //
@@ -329,7 +444,7 @@ try {
   ok("and the totals pill is back", (await page.$('a[href="/proposal"]')) !== null);
   await page.click("button:text-is('Jobs')");
   await page.waitForSelector("main button[data-deal]");
-  ok("Jobs opens the board again", (await tileTexts(page)).length === 4);
+  ok("Jobs opens the board again", (await page.$$("main button[data-deal]")).length > 0);
 
   // 7. Opening a deal with no estimate names the estimate after it and leaves.
   await page.click("main button[data-deal] >> text=Shop cleanup");
@@ -347,6 +462,7 @@ try {
   // client id alone would leave the tile reading "no estimate yet".
   await page.click("button:text-is('Jobs')");
   await page.waitForSelector("main button[data-deal]");
+  // Deal 3 is the Propose one, which is the page the board opens on.
   const marked = await page.$eval('main button[data-deal="3"]', (el) => ({
     pressed: el.getAttribute("aria-pressed"),
     ring: getComputedStyle(el).boxShadow,
@@ -356,6 +472,8 @@ try {
     marked.pressed === "true" && /open now/.test(marked.text), marked.text);
   ok("and wears the accent ring, not the plain hairline",
     /34, 197, 94/.test(marked.ring), marked.ring);
+  await page.click('button:has-text("Sent")');
+  await page.waitForTimeout(300);
   const other = await page.$eval('main button[data-deal="1"]', (el) => el.getAttribute("aria-pressed"));
   ok("while the others are not", other === "false", String(other));
   await page.click("text=Skip to estimator");
@@ -368,6 +486,8 @@ try {
   // Choose button on it — a question whose answer the board already held.
   await page.click("button:text-is('Jobs')");
   await page.waitForSelector("main button[data-deal]");
+  await page.click('button:has-text("Sent")');
+  await page.waitForTimeout(300);
   await page.click('main button[data-deal="5"]');
   await page.waitForFunction(() => !document.querySelector("main button[data-deal]"));
   // By its own tile, not by the word: "Plan" also matches Plants and Plant

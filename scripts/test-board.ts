@@ -11,8 +11,12 @@ import {
   BOARD_STAGES,
   boardTiles,
   estimateForDeal,
+  boardPages,
+  firstPageOf,
+  gridFor,
   isBoardStage,
   isUnstarted,
+  keepPage,
   tilePicture,
   stageCounts,
   tileTitle,
@@ -176,6 +180,79 @@ const est = (over: Partial<BoardEstimate> & { clientId: string }): BoardEstimate
     tilePicture(deal({ id: 6, ...yard, coverUrl: "https://x/gone.jpg" }), true) === "map");
   ok("and to the glyph when there is no satellite either",
     tilePicture(deal({ id: 7, coverUrl: "https://x/gone.jpg" }), true) === "none");
+}
+
+{
+  console.log("\n--- one page per stage, and no scrolling on any of them ---");
+
+  // An iPad in landscape, less the header and the stage row.
+  const g = gridFor(1000, 620, 180, 12);
+  ok("a page holds whole rows and columns of the box it is given",
+    g.cols === 5 && g.rows === 3 && g.perPage === 15, JSON.stringify(g));
+  ok("and the tiles grow to fill it rather than leaving a margin",
+    g.size >= 180 && g.cols * g.size + (g.cols - 1) * 12 <= 1000 + 0.001,
+    String(g.size));
+  // Before the first layout the box is 0x0. A page of zero tiles would show an
+  // empty board rather than the pipeline.
+  ok("an unmeasured box still holds a tile",
+    gridFor(0, 0, 180, 12).perPage === 1);
+  ok("and a box narrower than one tile holds one, not none",
+    gridFor(100, 100, 180, 12).perPage === 1);
+
+  const stage = (s: string, n: number) =>
+    Array.from({ length: n }, (_, i) => deal({ id: 0, stage: s, name: `${s}${i}` }));
+  // Roughly the real pipeline: Sent carries seven times what Sold does.
+  const many = boardTiles(
+    [...stage("Propose", 17), ...stage("Sent", 58), ...stage("Sold", 8), ...stage("Project Management", 8)],
+    [],
+  );
+  const pages = boardPages(many, 15);
+  ok("every stage is on the board, in pipeline order",
+    [...new Set(pages.map((p) => p.stage))].join(",") ===
+      "Propose,Sent,Sold,Project Management",
+    [...new Set(pages.map((p) => p.stage))].join(","));
+  // A page per stage alone would either scroll -- the thing being removed --
+  // or shrink Sent's tiles to postage stamps while Sold sat in an empty screen.
+  ok("A BUSY STAGE RUNS TO SEVERAL PAGES rather than scrolling",
+    pages.filter((p) => p.stage === "Sent").length === 4,
+    String(pages.filter((p) => p.stage === "Sent").length));
+  // Written out rather than by initial: Sent and Sold both start with S, and
+  // Propose and Project Management both start with P.
+  ok("and they stay together, so the run is still Propose then Sent then Sold",
+    pages.map((p) => p.stage).join("|") ===
+      ["Propose", "Propose", "Sent", "Sent", "Sent", "Sent", "Sold", "Project Management"].join("|"),
+    pages.map((p) => p.stage).join("|"));
+  ok("no page is ever over-full", pages.every((p) => p.tiles.length <= 15));
+  ok("and nothing is dropped on the way",
+    pages.reduce((n, p) => n + p.tiles.length, 0) === many.length);
+  ok("each page says where it is in its own stage",
+    pages.filter((p) => p.stage === "Sent").map((p) => `${p.index}/${p.ofStage}`).join(",") ===
+      "1/4,2/4,3/4,4/4");
+
+  // Skipping it would mean the swipe that reached Sold this morning reaches
+  // something else this afternoon.
+  const sparse = boardPages(boardTiles(stage("Sold", 2), []), 15);
+  ok("AN EMPTY STAGE STILL GETS ITS PAGE, so the order can be learned",
+    sparse.length === 4 && sparse.filter((p) => p.tiles.length === 0).length === 3,
+    String(sparse.length));
+
+  ok("a stage's name jumps to the first page of its run",
+    firstPageOf(pages, "Sold") === pages.findIndex((p) => p.stage === "Sold"));
+  ok("and an absent one lands somewhere real rather than off the end",
+    firstPageOf([], "Sold") === 0);
+
+  // The count changes under the page number: a deal moves, or the box is
+  // resized and the tiles per page with it.
+  const wider = boardPages(many, 24);
+  const onSent3 = pages.find((p) => p.stage === "Sent" && p.index === 3)!;
+  ok("a resize keeps you in the stage you were in, not on the same number",
+    wider[keepPage(wider, onSent3, 99)].stage === "Sent",
+    wider[keepPage(wider, onSent3, 99)].stage);
+  ok("and an exact page is kept when it still exists",
+    pages[keepPage(pages, onSent3, 0)].index === 3);
+  ok("with nothing to keep, the index is clamped rather than left dangling",
+    keepPage(pages, null, 999) === pages.length - 1 && keepPage(pages, null, -5) === 0);
+  ok("and an empty board is page zero", keepPage([], onSent3, 4) === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

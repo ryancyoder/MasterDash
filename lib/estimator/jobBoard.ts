@@ -221,3 +221,108 @@ export function isUnstarted(e: {
   if (e.visit?.transcript?.trim()) return false;
   return true;
 }
+
+// --- One page per stage, and no scrolling on any of them -------------------
+
+export interface BoardPage {
+  stage: BoardStage;
+  /** 1-based, within the stage. */
+  index: number;
+  /** How many pages this stage runs to. */
+  ofStage: number;
+  tiles: BoardTile[];
+}
+
+/**
+ * How many tiles fit, and how big they are.
+ *
+ * This is the whole "no scrolling" guarantee, so it is arithmetic rather than
+ * a CSS hope: the number of tiles a page holds is derived from the box it has
+ * to sit in, and the page is filled to exactly that. `target` is the size a
+ * tile would like to be — the grid's own `clamp(8rem, 15.2vw, 13rem)` middle —
+ * and the size that comes back is what makes whole rows and columns fit, which
+ * is usually a little larger.
+ *
+ * Guarded at one column and one row: before the first layout the box is 0×0,
+ * and a page holding zero tiles would show an empty board rather than the
+ * whole pipeline.
+ */
+export function gridFor(
+  width: number,
+  height: number,
+  target: number,
+  gap: number,
+): { cols: number; rows: number; perPage: number; size: number } {
+  const cols = Math.max(1, Math.floor((width + gap) / (target + gap)));
+  const rows = Math.max(1, Math.floor((height + gap) / (target + gap)));
+  const size = Math.max(
+    1,
+    Math.min((width - gap * (cols - 1)) / cols, (height - gap * (rows - 1)) / rows),
+  );
+  return { cols, rows, perPage: cols * rows, size };
+}
+
+/**
+ * The pipeline, cut into pages.
+ *
+ * ONE PAGE PER STAGE IS THE FLOOR, NOT THE RULE. Sent carries 58 deals against
+ * Sold's 8, so a page per stage alone would either scroll — which is the thing
+ * being removed — or shrink Sent's tiles to postage stamps while Sold's sat in
+ * an empty screen. A stage runs to as many pages as it needs and they stay in
+ * its own run, so swiping still goes Propose → Sent → Sold → Project
+ * Management, with Sent simply taking four swipes to cross.
+ *
+ * AN EMPTY STAGE STILL GETS ITS PAGE. Skipping it would mean the swipe order
+ * changed as deals moved through the pipeline, so the gesture that reached
+ * Sold this morning reaches something else this afternoon. A page saying
+ * nothing is here is a fact about the pipeline and worth a swipe.
+ */
+export function boardPages(tiles: BoardTile[], perPage: number): BoardPage[] {
+  const size = Math.max(1, Math.floor(perPage));
+  const pages: BoardPage[] = [];
+  for (const stage of BOARD_STAGES) {
+    const mine = tiles.filter((t) => t.stage === stage);
+    const ofStage = Math.max(1, Math.ceil(mine.length / size));
+    for (let i = 0; i < ofStage; i++) {
+      pages.push({
+        stage,
+        index: i + 1,
+        ofStage,
+        tiles: mine.slice(i * size, (i + 1) * size),
+      });
+    }
+  }
+  return pages;
+}
+
+/** The first page of a stage, for tapping its name to jump there. */
+export function firstPageOf(pages: BoardPage[], stage: BoardStage): number {
+  const at = pages.findIndex((p) => p.stage === stage);
+  return at < 0 ? 0 : at;
+}
+
+/**
+ * Keep a page number pointing at a page.
+ *
+ * The count changes under it — a deal moves stage, the box is resized and the
+ * tiles per page with it — and a stale index would land on nothing. Held to
+ * the same STAGE where it can be, rather than to the same number: being put
+ * back at the top of Sent after a resize is right, and being thrown into Sold
+ * because Sent got shorter is not.
+ */
+export function keepPage(
+  pages: BoardPage[],
+  previous: { stage: BoardStage; index: number } | null,
+  index: number,
+): number {
+  if (pages.length === 0) return 0;
+  if (previous) {
+    const sameStage = pages.findIndex(
+      (p) => p.stage === previous.stage && p.index === previous.index,
+    );
+    if (sameStage >= 0) return sameStage;
+    const stageStart = pages.findIndex((p) => p.stage === previous.stage);
+    if (stageStart >= 0) return stageStart;
+  }
+  return Math.max(0, Math.min(pages.length - 1, index));
+}
