@@ -793,6 +793,21 @@ export function setJobName(jobName: string) {
   });
 }
 
+/**
+ * The property this estimate is for.
+ *
+ * Separate from the map's anchor, which only says where to open. The anchor
+ * has carried a property id since the picker was added and this column never
+ * did — so every estimate on the project reads `property_id: null`, and
+ * anything looking for "the take-off for this yard" finds nothing. This is the
+ * join, and it is the one Upright needs to show a bed on the map.
+ */
+export function attachProperty(propertyId: number | null) {
+  mutate((d) => {
+    d.propertyId = propertyId;
+  });
+}
+
 export function attachDeal(dealId: number | null, propertyId: number | null) {
   mutate((d) => {
     d.dealId = dealId;

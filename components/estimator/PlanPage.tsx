@@ -52,6 +52,7 @@ import {
 } from "@/lib/estimator/propertyLayers";
 import {
   addShape,
+  attachProperty,
   detachShape,
   insertVertex,
   linkNodeToSurvey,
@@ -852,6 +853,8 @@ function AnchorCard({
               <button
                 key={p.id}
                 onClick={() => {
+                  // The estimate is for this yard, not merely looking at it.
+                  attachProperty(p.id);
                   setPlanAnchor({
                     propertyId: p.id,
                     label: p.address,

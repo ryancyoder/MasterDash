@@ -475,6 +475,29 @@ gets stored is square on the ground, which is what a contractor is buying.
 Measured: a deliberately sloppy rectangle whose worst corner was 0.81° out came
 back at **90.000° on all four**.
 
+#### Publishing the take-off for other apps
+
+The saved row carries a `takeoff` alongside `plan`: the same shapes with their
+**outlines already resolved** — curves worked out, node ids resolved to
+positions — plus the assembly name, the measurement and the load count. Upright
+draws it on its map from that and owns none of the geometry.
+
+Everything else here is derived and never stored, and this is the one
+deliberate exception. It is the same kind of exception `lines` already is: that
+column is a projection so a report, or Aspire, or anything else gets one flat
+row and never has to fold the op log itself. This is that, for the shapes.
+
+The alternative was to hand out the corners and let each reader resolve the
+curves — which means the centripetal Catmull-Rom in `curve.ts` living in every
+app that wants to show a bed, including inside an Edge Function, and a bed that
+measures one area here and draws a different shape there. The app that owns the
+definition resolves it once, at save; everyone else draws points.
+
+`property_id` is now written from the property picker too. It had existed
+unused since the table was created — the map anchor carried a property id and
+the column never did, so every estimate on the project read `property_id: null`
+and nothing looking for "the take-off for this yard" could find one.
+
 #### Curved edges
 
 A bed is rarely a polygon. **◠** in the toolbar rounds the edges of shapes

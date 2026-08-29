@@ -8,7 +8,7 @@ import {
   getSnapshot,
 } from "./store";
 import type { Estimate, TapOp } from "./types";
-import type { Proposal } from "./proposal";
+import { takeoffProjection, type Proposal } from "./proposal";
 
 // Two-way sync, on a device that often has no signal.
 //
@@ -125,6 +125,7 @@ function writeQueue(q: QueuedWrite[]) {
 }
 
 function toRow(estimate: Estimate, proposal: Proposal) {
+  const takeoff = takeoffProjection(estimate);
   return {
     client_id: estimate.clientId,
     deal_id: estimate.dealId,
@@ -144,6 +145,10 @@ function toRow(estimate: Estimate, proposal: Proposal) {
       // The transcript and what was read from it, so a visit survives the
       // device it was typed on.
       visit: estimate.visit,
+      // The same take-off, resolved: outlines with the curves already worked
+      // out, ready for another app to draw without owning any of the geometry.
+      // Absent rather than empty when nothing is drawn.
+      ...(takeoff ? { takeoff } : {}),
       rendered: proposal.lines.map((l) => ({
         item_id: l.item.id,
         label: l.label,
