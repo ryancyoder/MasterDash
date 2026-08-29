@@ -183,3 +183,48 @@ export async function localOverlayUrl(overlay: MapOverlay): Promise<string | nul
 export function overlayCorners(overlay: MapOverlay) {
   return georefCorners(overlay.georef);
 }
+
+// --- Upright's survey -----------------------------------------------------
+
+export interface UprightSurveySession {
+  id: string;
+  startedAt: string | null;
+  propertyAddress: string | null;
+  elevationPointCount: number;
+  photoCount: number;
+}
+
+/** Sessions carrying elevation points. Not the same set as those with audio. */
+export async function fetchSurveySessions(): Promise<UprightSurveySession[]> {
+  try {
+    const res = await fetch("/api/upright/sessions?have=survey&limit=50");
+    const body = (await res.json()) as {
+      ok?: boolean;
+      sessions?: UprightSurveySession[];
+    };
+    if (!res.ok || !body.ok) return [];
+    return body.sessions ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * One session's survey, with the elevations already derived.
+ *
+ * Null on any failure rather than throwing: the survey is a reference layer,
+ * and losing it offline should cost the map a layer, never the take-off.
+ */
+export async function fetchSurvey(sessionId: string): Promise<{
+  points: unknown[];
+  runs: unknown[];
+} | null> {
+  try {
+    const res = await fetch(`/api/upright/survey?session=${encodeURIComponent(sessionId)}`);
+    const body = (await res.json()) as { ok?: boolean; points?: unknown[]; runs?: unknown[] };
+    if (!res.ok || !body.ok) return null;
+    return { points: body.points ?? [], runs: body.runs ?? [] };
+  } catch {
+    return null;
+  }
+}

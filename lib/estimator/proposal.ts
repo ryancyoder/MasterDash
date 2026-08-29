@@ -14,7 +14,14 @@
 // was entered.
 
 import { ASSEMBLY_MODELS, getAssembly, takeoff } from "./assemblies";
-import { bucketsForMeasurement, measurementOf } from "./plan";
+import type { LatLng } from "./geo";
+import {
+  bucketsForMeasurement,
+  measurementOf,
+  outlineOf,
+  unitForShape,
+  type ShapeKind,
+} from "./plan";
 import { getItem, quantityFor, sellFor } from "./catalog";
 import {
   SECTION_ORDER,
@@ -282,3 +289,68 @@ export function planShapeCount(estimate: Estimate): number {
 }
 
 export const ALL_ASSEMBLY_IDS = ASSEMBLY_MODELS.map((m) => m.id);
+
+
+// --- The take-off, resolved for other readers -----------------------------
+
+export interface TakeoffShape {
+  id: string;
+  type: ShapeKind;
+  color: string;
+  /** The assembly's name, so a viewer needs no catalog of its own. */
+  assembly: string | null;
+  assemblyId: string | null;
+  measurement: number;
+  unit: "sq_ft" | "ln_ft";
+  loads: number;
+  /** The outline on the ground, curves already resolved. Ready to draw. */
+  ring: LatLng[];
+}
+
+/**
+ * The take-off as something another app can simply draw.
+ *
+ * Everything else here is derived and never stored, and this is the one
+ * deliberate exception — but it is an exception of the same kind `lines`
+ * already is. That column is a PROJECTION: the estimate lives in the op log,
+ * and `lines` exists so a report, or Aspire, or anything else gets one flat
+ * row and never has to fold the log itself. This is that, for the geometry.
+ *
+ * The alternative was to hand out the corners and let each reader resolve the
+ * curves. That means the centripetal Catmull-Rom in `curve.ts` living in every
+ * app that wants to show a bed — including inside an Edge Function — and a bed
+ * that measures one area here and draws a different shape there. The app that
+ * owns the definition resolves it once, at save, and everyone else draws
+ * points.
+ *
+ * Null when there is nothing drawn, so the key is simply absent rather than
+ * present and empty.
+ */
+export function takeoffProjection(estimate: Estimate): {
+  updatedAt: string;
+  shapes: TakeoffShape[];
+} | null {
+  const { nodes, shapes } = estimate.plan;
+  const out: TakeoffShape[] = [];
+
+  for (const shape of shapes) {
+    const ring = outlineOf(shape, nodes);
+    if (ring.length < (shape.type === "area" ? 3 : 2)) continue;
+    const model = shape.assemblyId ? getAssembly(shape.assemblyId) : undefined;
+    const measurement = measurementOf(shape, nodes);
+    out.push({
+      id: shape.id,
+      type: shape.type,
+      color: shape.color,
+      assembly: model ? model.name.replace(" – Standard", "") : null,
+      assemblyId: shape.assemblyId,
+      measurement,
+      unit: unitForShape(shape.type),
+      loads: bucketsForMeasurement(measurement, model?.bucketSize ?? null),
+      ring,
+    });
+  }
+
+  if (out.length === 0) return null;
+  return { updatedAt: new Date().toISOString(), shapes: out };
+}

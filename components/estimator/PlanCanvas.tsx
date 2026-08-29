@@ -8,6 +8,8 @@ import {
   lengthFt,
   metresPerWorldUnit,
   padBounds,
+  squareClose,
+  squareCorner,
   toLatLng,
   toWorld,
   worldBounds,
@@ -16,11 +18,21 @@ import {
   type WorldBounds,
   type WorldPoint,
 } from "@/lib/estimator/geo";
+import { smoothOutline } from "@/lib/estimator/curve";
 import type { Basemap, MapAnchor, MapOverlay } from "@/lib/estimator/mapLayers";
 import {
+  SURVEY_COLORS,
+  formatElevation,
+  type ElevationResult,
+  type SurveyKind,
+} from "@/lib/estimator/survey";
+import {
   measurementOf,
+  outlineOf,
   pointsOf,
+  positionsOf,
   sharedNodeIds,
+  type NodeSurveyLink,
   type PendingPoint,
   type PlanNodes,
   type PlanShape,
@@ -74,6 +86,15 @@ const TAP_SLOP_PX = 10;
  * radius, so reaching for a corner and joining to one do not fight.
  */
 const SNAP_PX = 18;
+/**
+ * How near the square position a tap has to land to be squared.
+ *
+ * Looser than the corner snap, because this is a constraint on shape rather
+ * than a claim about a place: landing on a shot point says "this corner is
+ * there", and squaring says "this side runs that way", which is a judgement
+ * anyone tapping a rectangle has already made.
+ */
+const SQUARE_PX = 26;
 
 /**
  * Zoom, as canvas pixels per World unit.
@@ -164,6 +185,117 @@ function drawLabel(
   ctx.fillText(text, x, y);
 }
 
+export interface SurveyDot {
+  id: string;
+  kind: SurveyKind;
+  label: string;
+  at: LatLng;
+  placed: boolean;
+  hidden: boolean;
+  elevation: ElevationResult;
+  /**
+   * The frame captured when this point was shot, with the crosshair burned in.
+   *
+   * Every grade shot takes one, and it is what makes a survey placeable
+   * afterwards: a yard full of "Target 3" is impossible to match to the ground
+   * without the picture that was aimed at it.
+   */
+  photoUrl?: string | null;
+  /** When the shot was taken, so the frame can sit on the visit's timeline. */
+  capturedAt?: string | null;
+}
+
+export interface SurveyRunLine {
+  id: string;
+  fromId: string;
+  toId: string;
+  runFt: number;
+  fallFt: number | null;
+  percent: number | null;
+  lowId: string | null;
+  flat: boolean;
+}
+
+export interface SurveyLayer {
+  points: SurveyDot[];
+  runs: SurveyRunLine[];
+}
+
+/**
+ * A photo pin from the visit being replayed.
+ *
+ * Not a survey point and drawn as a different thing: it measures nothing. It
+ * says a picture was taken here, and — where the compass was trusted — which
+ * way the camera was facing, which is what turns a yard full of "Pin 7" into
+ * something readable. Its position may be null upstream; only located photos
+ * reach the canvas.
+ */
+export interface PhotoDot {
+  id: string;
+  at: LatLng;
+  seq: number;
+  headingDeg: number | null;
+}
+
+/** An iPad's rear camera, roughly, and about as far as a GPS fix earns. */
+const PHOTO_FOV_DEG = 62;
+const PHOTO_CONE_M = 10;
+const PHOTO_COLOUR = "#f8fafc";
+
+/**
+ * The survey glyphs, matching Upright's.
+ *
+ * An observation, an anchor and a target are different things and have to be
+ * tellable apart at a glance — deliberately not the same mark as a take-off
+ * corner, which is a different thing again. Legibility over bright turf comes
+ * from a drop shadow rather than from a box: a yard full of boxed labels is
+ * unreadable, which is a lesson Upright already paid for.
+ */
+function drawSurveyGlyph(
+  ctx: CanvasRenderingContext2D,
+  kind: SurveyKind,
+  x: number,
+  y: number,
+) {
+  const colour = SURVEY_COLORS[kind];
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.9)";
+  ctx.shadowBlur = 4;
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  if (kind === "observation") {
+    // Where you stood: a tripod over a spot.
+    ctx.arc(x, y - 4, 3.5, 0, Math.PI * 2);
+    ctx.moveTo(x, y - 0.5);
+    ctx.lineTo(x - 5, y + 7);
+    ctx.moveTo(x, y - 0.5);
+    ctx.lineTo(x + 5, y + 7);
+    ctx.moveTo(x, y - 0.5);
+    ctx.lineTo(x, y + 7);
+  } else if (kind === "anchor") {
+    // The shared datum: a benchmark triangle.
+    ctx.moveTo(x, y - 7);
+    ctx.lineTo(x + 6.5, y + 5);
+    ctx.lineTo(x - 6.5, y + 5);
+    ctx.closePath();
+  } else {
+    // What was sighted: the crosshair it was sighted through.
+    ctx.arc(x, y, 5.5, 0, Math.PI * 2);
+    ctx.moveTo(x - 9, y);
+    ctx.lineTo(x - 2, y);
+    ctx.moveTo(x + 2, y);
+    ctx.lineTo(x + 9, y);
+    ctx.moveTo(x, y - 9);
+    ctx.lineTo(x, y - 2);
+    ctx.moveTo(x, y + 2);
+    ctx.lineTo(x, y + 9);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** A round number of feet near the target width, for the scale bar. */
 function niceFeet(target: number): number {
   const pow = 10 ** Math.floor(Math.log10(target));
@@ -185,6 +317,12 @@ function shiftCentre(centre: LatLng, from: WorldPoint, to: WorldPoint): LatLng {
   return toLatLng({ x: c.x + (to.x - from.x), y: c.y + (to.y - from.y) });
 }
 
+/** What a tap or a drop would land on, if anything. */
+type SnapTarget =
+  | { kind: "node"; nodeId: string; at: LatLng }
+  | { kind: "survey"; at: LatLng; label: string; link: NodeSurveyLink }
+  | null;
+
 export type PlanTool = "select" | "area" | "linear";
 
 export default function PlanCanvas({
@@ -199,6 +337,17 @@ export default function PlanCanvas({
   onScalePointsChange,
   nodes,
   shapes,
+  survey,
+  surveySessionId,
+  photos,
+  livePhotoId,
+  selectedPhotoId,
+  onSelectPhoto,
+  selectedSurveyId,
+  pinsDraggable,
+  onMovePin,
+  rightAngle,
+  smoothNew,
   labelFor,
   tool,
   selectedShapeId,
@@ -208,7 +357,9 @@ export default function PlanCanvas({
   onCloseArea,
   onMoveNodes,
   onMergeNodes,
+  onLinkSurvey,
   onInsertVertex,
+  onToggleVertexSmooth,
   showMeasurements,
 }: {
   /** Where to open when there is nothing drawn yet. */
@@ -239,6 +390,40 @@ export default function PlanCanvas({
   /** Every corner on the plan. Shapes hold ids into this; see plan.ts. */
   nodes: PlanNodes;
   shapes: PlanShape[];
+  /**
+   * Upright's elevation survey, already derived. Read-only here: it was
+   * measured on site and this screen lays beds out against it.
+   */
+  survey: SurveyLayer | null;
+  /** Which session the shown survey is, so a link can record where it came from. */
+  surveySessionId: string | null;
+  /** Located photo pins from the visit being replayed, if one is loaded. */
+  photos: PhotoDot[] | null;
+  /**
+   * The pin nearest the playhead. Lit, never centred on: the viewport must not
+   * be yanked out from under someone who is mid-drawing.
+   */
+  livePhotoId: string | null;
+  selectedPhotoId: string | null;
+  onSelectPhoto: (id: string | null) => void;
+  /** A survey point picked from the filmstrip, lit the way a photo pin is. */
+  selectedSurveyId: string | null;
+  /**
+   * Whether survey points and photo pins can be dragged.
+   *
+   * True only while the column is showing Review. In Plan the survey is a
+   * reference to lay beds against, and a stray thumb that moved a shot point
+   * would silently change every elevation derived from it with nothing on
+   * screen to say so. Correcting the visit is what Review is for, so that is
+   * where the pins come alive.
+   */
+  pinsDraggable: boolean;
+  /** A corrected pin, on release. Writes back to Upright's own row. */
+  onMovePin: (kind: "survey" | "photo", id: string, at: LatLng) => void;
+  /** Square up corners while drawing. Off is for the yards that are not. */
+  rightAngle: boolean;
+  /** Round the shape being drawn, so the pending outline previews as a curve. */
+  smoothNew: boolean;
   /** The assembly name drawn under a shape's measurement, when it has one. */
   labelFor: (shape: PlanShape) => string | null;
   tool: PlanTool;
@@ -253,8 +438,12 @@ export default function PlanCanvas({
   onMoveNodes: (moves: Record<string, LatLng>) => void;
   /** A corner dropped onto another becomes that corner. */
   onMergeNodes: (fromId: string, intoId: string) => void;
+  /** A corner dropped onto a shot point sits on it, and records that. */
+  onLinkSurvey: (nodeId: string, at: LatLng, link: NodeSurveyLink) => void;
   /** Splitting a side. Returns the new corner's id so the drag can continue. */
   onInsertVertex: (shapeId: string, index: number, at: LatLng) => string;
+  /** Tapping a corner of a rounded shape holds it sharp, or lets it round. */
+  onToggleVertexSmooth: (shapeId: string, nodeId: string) => void;
   showMeasurements: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -274,6 +463,8 @@ export default function PlanCanvas({
   const homedRef = useRef(false);
   /** The layer the view was last brought to, so it happens once per layer. */
   const focusedRef = useRef<string | null>(null);
+  /** The anchor the view is sitting on, so a change of property moves it. */
+  const anchoredRef = useRef<string | null>(null);
 
   // Live drag, held locally and committed on release. Writing every
   // pointermove to the estimate is a localStorage write and a full re-render
@@ -281,9 +472,12 @@ export default function PlanCanvas({
   const dragRef = useRef<
     | { kind: "vertex"; nodeId: string }
     | { kind: "shape"; base: Record<string, LatLng>; startWorld: WorldPoint }
+    | { kind: "pin"; pin: "survey" | "photo"; id: string }
     | { kind: "pan"; startX: number; startY: number; centre: WorldPoint }
     | null
   >(null);
+  /** A pin being corrected, held locally and committed on release. */
+  const [dragPin, setDragPin] = useState<{ id: string; at: LatLng } | null>(null);
   /**
    * Corners being dragged, by id, held locally and committed on release.
    *
@@ -293,8 +487,8 @@ export default function PlanCanvas({
    * the finger lifts.
    */
   const [dragNodes, setDragNodes] = useState<Record<string, LatLng> | null>(null);
-  /** The corner a drop would join to, highlighted while the finger is down. */
-  const [snapTo, setSnapTo] = useState<string | null>(null);
+  /** What a drop would land on, highlighted while the finger is down. */
+  const [snapTo, setSnapTo] = useState<SnapTarget>(null);
 
   /**
    * The layer's placement mid-gesture, held here and committed on release —
@@ -387,6 +581,9 @@ export default function PlanCanvas({
     for (const shape of shapes) {
       for (const v of pointsOf(shape, nodes)) pts.push(toWorld(v));
     }
+    for (const point of survey?.points ?? []) {
+      if (!point.hidden) pts.push(toWorld(point.at));
+    }
     for (const o of overlays) {
       const c = cornersWorld(georefCorners(o.georef));
       pts.push(c.tl, c.tr, c.bl, {
@@ -395,7 +592,7 @@ export default function PlanCanvas({
       });
     }
     return worldBounds(pts);
-  }, [shapes, nodes, overlays]);
+  }, [shapes, nodes, survey, overlays]);
 
   /**
    * Point the view at everything there is.
@@ -527,17 +724,67 @@ export default function PlanCanvas({
     [liveGeoref, aligning],
   );
 
-  /** Corners as they are right now — a live drag overrides the stored ones. */
+  /** Identifies the anchor's position, so a change of property is detectable. */
+  const anchorKey = anchor ? `${anchor.centre.lat},${anchor.centre.lng}` : null;
+
+  /**
+   * Where a squared corner could go, best first.
+   *
+   * Closing the rectangle comes first because it is the stronger claim — it
+   * makes BOTH ends square at once, and it is the thing somebody tapping out a
+   * bed is usually trying to do.
+   */
+  const squareOptions = useCallback((): LatLng[] => {
+    if (pending.length < 2) return [];
+    const prev2 = pending[pending.length - 2].at;
+    const prev = pending[pending.length - 1].at;
+    const out: LatLng[] = [];
+    if (tool === "area" && pending.length >= 3) {
+      const close = squareClose(pending[0].at, prev2, prev);
+      if (close) out.push(close);
+    }
+    return out;
+  }, [pending, tool]);
+
+  /** Corner POSITIONS as they are right now — a live drag overrides the stored. */
   const liveNodes = useMemo(
-    () => (dragNodes ? { ...nodes, ...dragNodes } : nodes),
+    () => ({ ...positionsOf(nodes), ...(dragNodes ?? {}) }),
     [nodes, dragNodes],
+  );
+
+  /** Where each surveyed point is, when a survey is shown. Snap targets. */
+  const surveyTargets = useMemo(
+    () =>
+      (survey?.points ?? []).filter(
+        (p) => !p.hidden && p.elevation.state !== "unplaced",
+      ),
+    [survey],
   );
 
   const shared = useMemo(() => sharedNodeIds(shapes), [shapes]);
 
   /** Every corner's position, resolved once per draw rather than per shape. */
+  /** The corners — what you grab. */
   const shapePoints = useCallback(
-    (shape: PlanShape) => pointsOf(shape, liveNodes),
+    (shape: PlanShape) =>
+      shape.vertices.map((id) => liveNodes[id]).filter((p): p is LatLng => !!p),
+    [liveNodes],
+  );
+
+  /**
+   * The edge — what the shape encloses, and what it is measured on.
+   *
+   * Rebuilt from the live corner positions so a curve follows a dragged corner
+   * as it moves, rather than snapping into shape when the finger lifts.
+   */
+  const shapeOutline = useCallback(
+    (shape: PlanShape) => {
+      const live: PlanNodes = {};
+      for (const id of shape.vertices) {
+        if (liveNodes[id]) live[id] = { at: liveNodes[id] };
+      }
+      return outlineOf(shape, live);
+    },
     [liveNodes],
   );
 
@@ -555,6 +802,16 @@ export default function PlanCanvas({
     // under them, which is exactly what Upright's own map notes warn about.
     if (!homedRef.current && canvas.width && canvas.height) {
       homedRef.current = true;
+      placeView(canvas.width, canvas.height);
+      anchoredRef.current = anchorKey;
+    }
+
+    // Choosing a property moves the map. The first home happens before there
+    // is an anchor — the picker is on this screen — so without this the view
+    // stays on the fallback for ever and the yard is fifteen kilometres away.
+    // A deliberate act by the user, not a recentre out from under them.
+    if (anchorKey !== anchoredRef.current && canvas.width && canvas.height) {
+      anchoredRef.current = anchorKey;
       placeView(canvas.width, canvas.height);
     }
 
@@ -681,9 +938,10 @@ export default function PlanCanvas({
 
     // 3. The take-off.
     for (const shape of shapes) {
-      const points = shapePoints(shape);
-      const pts = points.map((v) => toCanvas(toWorld(v), t));
+      const pts = shapePoints(shape).map((v) => toCanvas(toWorld(v), t));
       if (pts.length < 2) continue;
+      // The line drawn is the outline; the dots drawn are the corners.
+      const edge = shapeOutline(shape).map((v) => toCanvas(toWorld(v), t));
       const selected = shape.id === selectedShapeId;
       ctx.strokeStyle = shape.color;
       ctx.lineWidth = selected ? 4 : 2.5;
@@ -691,8 +949,8 @@ export default function PlanCanvas({
       let anchorPt: Pt;
       if (shape.type === "area" && pts.length >= 3) {
         ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        pts.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
+        ctx.moveTo(edge[0].x, edge[0].y);
+        edge.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
         ctx.closePath();
         ctx.fillStyle = withAlpha(shape.color, selected ? 0.32 : 0.2);
         ctx.fill();
@@ -700,13 +958,13 @@ export default function PlanCanvas({
         anchorPt = centroid(pts);
       } else {
         ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        pts.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
+        ctx.moveTo(edge[0].x, edge[0].y);
+        edge.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
         ctx.stroke();
         anchorPt = pts[Math.floor(pts.length / 2)];
       }
 
-      const measurement = measurementOf(shape, liveNodes);
+      const measurement = measurementOf(shape, nodes);
       const label = labelFor(shape);
       if (showMeasurements && measurement > 0) {
         drawLabel(
@@ -730,6 +988,7 @@ export default function PlanCanvas({
       }
 
       const isShared = (i: number) => shared.has(shape.vertices[i] ?? "");
+      const linkAt = (i: number) => nodes[shape.vertices[i] ?? ""]?.survey ?? null;
 
       if (selected) {
         const segCount = shape.type === "area" ? pts.length : pts.length - 1;
@@ -751,12 +1010,17 @@ export default function PlanCanvas({
           ctx.lineTo(m.x, m.y + 3);
           ctx.stroke();
         }
+        const rounded = new Set(shape.smoothVertices ?? []);
         pts.forEach((p, i) => {
           ctx.fillStyle = "#ffffff";
           ctx.strokeStyle = shape.color;
           ctx.lineWidth = 3;
           ctx.beginPath();
-          ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
+          if (rounded.size > 0 && !rounded.has(shape.vertices[i] ?? "")) {
+            ctx.rect(p.x - 7, p.y - 7, 14, 14);
+          } else {
+            ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
+          }
           ctx.fill();
           ctx.stroke();
           // A shared corner gets a ring around it. Dragging one moves every
@@ -786,23 +1050,226 @@ export default function PlanCanvas({
           }
         });
       }
+
+      // A corner sitting on a shot point gets the survey's own colour, so a
+      // measured corner and a corner placed off an aerial are tellable apart
+      // without reading anything. Drawn for selected and unselected alike:
+      // whether the geometry is surveyed is a property of the shape, not of
+      // whatever happens to be selected.
+      pts.forEach((p, i) => {
+        if (!linkAt(i)) return;
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.9)";
+        ctx.shadowBlur = 3;
+        ctx.strokeStyle = SURVEY_COLORS.target;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, selected ? 13 : 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      });
+    }
+
+    // 4. Upright's survey, over the take-off rather than under it: reading the
+    //    grade while laying beds out is the whole point of having it here, and
+    //    a filled polygon over a two-decimal number wins every time.
+    if (survey) {
+      const visible = survey.points.filter((p) => !p.hidden);
+      // A point being corrected follows the finger, and so does everything
+      // drawn from it — the slope runs it anchors move with it live, which is
+      // the whole reason elevations are derived rather than stored.
+      const at = new Map(
+        visible.map((p) => [
+          p.id,
+          toCanvas(toWorld(dragPin && dragPin.id === p.id ? dragPin.at : p.at), t),
+        ]),
+      );
+
+      for (const run of survey.runs) {
+        const a = at.get(run.fromId);
+        const b = at.get(run.toId);
+        if (!a || !b) continue;
+        const measured = run.percent !== null;
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.9)";
+        ctx.shadowBlur = 4;
+        ctx.strokeStyle = measured ? "#7dd3fc" : "#64748b";
+        ctx.lineWidth = 2;
+        // A run to a point with no elevation yet draws dashed and says so,
+        // rather than inventing a grade.
+        ctx.setLineDash(measured ? [] : [6, 5]);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        if (measured) {
+          // The arrow points DOWNHILL — the way water runs, which is the
+          // reason to draw one on a landscape site at all. A run level within
+          // 0.05% gets a bar instead of an arrowhead.
+          const low = run.lowId ? at.get(run.lowId) : null;
+          const high = low === a ? b : a;
+          if (low && high) {
+            const ang = Math.atan2(low.y - high.y, low.x - high.x);
+            const mx = (a.x + b.x) / 2;
+            const my = (a.y + b.y) / 2;
+            ctx.beginPath();
+            if (run.flat) {
+              ctx.moveTo(mx - 6 * Math.sin(ang), my + 6 * Math.cos(ang));
+              ctx.lineTo(mx + 6 * Math.sin(ang), my - 6 * Math.cos(ang));
+            } else {
+              ctx.moveTo(mx + 8 * Math.cos(ang), my + 8 * Math.sin(ang));
+              ctx.lineTo(
+                mx + 8 * Math.cos(ang) - 9 * Math.cos(ang - 0.42),
+                my + 8 * Math.sin(ang) - 9 * Math.sin(ang - 0.42),
+              );
+              ctx.moveTo(mx + 8 * Math.cos(ang), my + 8 * Math.sin(ang));
+              ctx.lineTo(
+                mx + 8 * Math.cos(ang) - 9 * Math.cos(ang + 0.42),
+                my + 8 * Math.sin(ang) - 9 * Math.sin(ang + 0.42),
+              );
+            }
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+
+        drawLabel(
+          ctx,
+          measured
+            ? `${run.percent!.toFixed(1)}% · ${run.fallFt!.toFixed(2)}' over ${Math.round(run.runFt)}'`
+            : "not measured",
+          (a.x + b.x) / 2,
+          (a.y + b.y) / 2 - 14,
+          measured ? "#7dd3fc" : "#94a3b8",
+        );
+      }
+
+      // Survey points cluster: an observation, the anchor and the first target
+      // are often within a couple of feet of each other, and three labels on
+      // one spot are less readable than one. A label that would land on top of
+      // one already drawn is dropped — the glyph still shows, so nothing
+      // disappears, and zooming in separates them.
+      const claimed: { x0: number; y0: number; x1: number; y1: number }[] = [];
+      ctx.font = "bold 14px ui-sans-serif, system-ui, sans-serif";
+      const claim = (text: string, x: number, y: number) => {
+        const w = ctx.measureText(text).width / 2 + 3;
+        const box = { x0: x - w, y0: y - 9, x1: x + w, y1: y + 9 };
+        if (
+          claimed.some(
+            (c) => box.x0 < c.x1 && box.x1 > c.x0 && box.y0 < c.y1 && box.y1 > c.y0,
+          )
+        ) {
+          return false;
+        }
+        claimed.push(box);
+        return true;
+      };
+
+      const ordered = [
+        ...visible.filter((p) => p.kind === "anchor"),
+        ...visible.filter((p) => p.kind !== "anchor"),
+      ];
+      for (const point of ordered) {
+        const p = at.get(point.id);
+        if (!p) continue;
+        drawSurveyGlyph(ctx, point.kind, p.x, p.y);
+        // Picked from the filmstrip: a ring in the point's own colour, the
+        // same answer a photo pin gives. Tapping a grade frame is how you find
+        // the thing it was aimed at, so it has to be visible on the map.
+        if (point.id === selectedSurveyId) {
+          ctx.save();
+          ctx.strokeStyle = SURVEY_COLORS[point.kind];
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 15, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+        // Glyph plus at most one line, per Upright: a yard full of labelled
+        // pins is unreadable. The name shows only while the point is
+        // unplaced, which is the one moment identity matters more than the
+        // number — after that the number is all anybody wants.
+        const text =
+          point.elevation.state === "unplaced"
+            ? `${point.label} · place pin`
+            : point.kind === "observation"
+              ? ""
+              : formatElevation(point.elevation);
+        if (text && claim(text, p.x, p.y + 19)) {
+          drawLabel(ctx, text, p.x, p.y + 19, SURVEY_COLORS[point.kind]);
+        }
+      }
     }
 
     // The shape being drawn. No rubber band to the cursor — there is no cursor
     // on a touch screen, and a line chasing the last tap is noise.
     if (pending.length > 0) {
       const pts = pending.map((v) => toCanvas(toWorld(v.at), t));
+      // Preview the curve, not the chords — otherwise the shape changes the
+      // moment Finish is pressed, which is exactly when it should not.
+      const previewPath = smoothNew
+        ? smoothOutline(
+            pending.map((v) => v.at),
+            pending.map(() => true),
+            tool === "area" && pending.length >= 3,
+          ).map((v) => toCanvas(toWorld(v), t))
+        : pts;
       ctx.strokeStyle = "#22c55e";
       ctx.lineWidth = 3;
       ctx.setLineDash([8, 6]);
       if (pts.length > 1) {
         ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        pts.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
+        ctx.moveTo(previewPath[0].x, previewPath[0].y);
+        previewPath.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
         if (tool === "area" && pts.length >= 3) ctx.closePath();
         ctx.stroke();
       }
       ctx.setLineDash([]);
+
+      // Where a square corner would go. Drawn because on a touch screen there
+      // is no hover to preview it with — without this the snap would be a
+      // thing that happened to you rather than a thing you aimed at.
+      if (rightAngle && pts.length >= 2) {
+        const last = pts[pts.length - 1];
+        const prev = pts[pts.length - 2];
+        const len = Math.hypot(last.x - prev.x, last.y - prev.y);
+        if (len > 1) {
+          // Mercator is conformal, so a right angle on the ground is a right
+          // angle on screen; the guides can be drawn in screen space.
+          const ux = (last.x - prev.x) / len;
+          const uy = (last.y - prev.y) / len;
+          ctx.save();
+          ctx.strokeStyle = "rgba(125,211,252,0.5)";
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4, 6]);
+          for (const [dx, dy] of [
+            [ux, uy],
+            [-uy, ux],
+            [uy, -ux],
+          ]) {
+            ctx.beginPath();
+            ctx.moveTo(last.x, last.y);
+            ctx.lineTo(last.x + dx * 160, last.y + dy * 160);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        for (const option of squareOptions()) {
+          const q = toCanvas(toWorld(option), t);
+          ctx.save();
+          ctx.shadowColor = "rgba(0,0,0,0.9)";
+          ctx.shadowBlur = 4;
+          ctx.strokeStyle = "#7dd3fc";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(q.x - 8, q.y - 8, 16, 16);
+          ctx.restore();
+          drawLabel(ctx, "square", q.x, q.y - 20, "#7dd3fc");
+        }
+      }
+
       pts.forEach((p, i) => {
         // The first vertex is drawn large while an area is closeable, because
         // tapping it is how you close — the target has to look like one.
@@ -827,16 +1294,86 @@ export default function PlanCanvas({
       });
     }
 
-    // What a drop would join to. Drawn last so it sits over the corner it is
-    // about to consume.
-    if (snapTo && liveNodes[snapTo]) {
-      const p = toCanvas(toWorld(liveNodes[snapTo]), t);
-      ctx.strokeStyle = "#22c55e";
+    // 5. Photo pins from the visit being replayed, over the survey.
+    //
+    //    Deliberately not the survey's glyphs: a photo measures nothing, and
+    //    the two must never be confused at a glance. The wedge says which way
+    //    the camera was pointing, which is what makes a pin answer "what is
+    //    this a picture OF" rather than only "where was it taken from".
+    //
+    //    Faint for every pin, solid for the one the playhead is on. The wash
+    //    reads as coverage; the solid one answers what you are looking at.
+    if (photos && photos.length) {
+      for (const photo of photos) {
+        const live = photo.id === livePhotoId;
+        const picked = photo.id === selectedPhotoId;
+        const lit = live || picked;
+        const at = dragPin && dragPin.id === photo.id ? dragPin.at : photo.at;
+        const p = toCanvas(toWorld(at), t);
+
+        if (photo.headingDeg !== null) {
+          // A ground distance rather than a screen size, so the wedge scales
+          // with the map like everything else that claims to be on the earth.
+          const mPerWorld = metresPerWorldUnit(at.lat);
+          const rPx = mPerWorld > 0 ? (PHOTO_CONE_M / mPerWorld) * t.scale : 0;
+          if (rPx > 4) {
+            // Canvas angles run from +x anticlockwise in screen space; a
+            // compass bearing runs from north clockwise. Hence the -90.
+            const mid = ((photo.headingDeg - 90) * Math.PI) / 180;
+            const half = (PHOTO_FOV_DEG / 2) * (Math.PI / 180);
+            ctx.save();
+            ctx.fillStyle = withAlpha(PHOTO_COLOUR, lit ? 0.28 : 0.1);
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+            ctx.arc(p.x, p.y, rPx, mid - half, mid + half);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+          }
+        }
+
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.9)";
+        ctx.shadowBlur = 4;
+        ctx.fillStyle = lit ? PHOTO_COLOUR : withAlpha(PHOTO_COLOUR, 0.6);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, lit ? 7 : 5, 0, Math.PI * 2);
+        ctx.fill();
+        if (lit) {
+          ctx.strokeStyle = "#0f172a";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          // A ring, not a recentre: the playhead says which pin, never where
+          // the map should be looking.
+          ctx.strokeStyle = PHOTO_COLOUR;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 13, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+        if (lit) drawLabel(ctx, `Pin ${photo.seq}`, p.x, p.y - 20, PHOTO_COLOUR);
+      }
+    }
+
+    // What a drop would land on. Drawn last so it sits over its target, and
+    // named — "join" and "survey" are different acts and the word is the only
+    // thing that says which one is about to happen.
+    if (snapTo) {
+      const p = toCanvas(toWorld(snapTo.at), t);
+      const joining = snapTo.kind === "node";
+      ctx.strokeStyle = joining ? "#22c55e" : SURVEY_COLORS.target;
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(p.x, p.y, 17, 0, Math.PI * 2);
       ctx.stroke();
-      drawLabel(ctx, "join", p.x, p.y - 28, "#22c55e");
+      drawLabel(
+        ctx,
+        joining ? "join" : snapTo.label,
+        p.x,
+        p.y - 28,
+        joining ? "#22c55e" : SURVEY_COLORS.target,
+      );
     }
 
     // 4. A scale bar. On a plan image the zoom percentage was the honest
@@ -880,11 +1417,22 @@ export default function PlanCanvas({
     }
   }, [
     shapes,
+    survey,
+    photos,
+    livePhotoId,
+    selectedPhotoId,
+    selectedSurveyId,
+    dragPin,
+    nodes,
     liveNodes,
     shapePoints,
+    shapeOutline,
+    smoothNew,
     shared,
     snapTo,
     pending,
+    rightAngle,
+    squareOptions,
     canvasSize,
     assetVersion,
     basemap,
@@ -901,6 +1449,7 @@ export default function PlanCanvas({
     transformFor,
     placeView,
     focusOverlay,
+    anchorKey,
     bumpAssets,
     viewVersion,
   ]);
@@ -916,22 +1465,44 @@ export default function PlanCanvas({
    * corner it just placed.
    */
   const snapCandidate = useCallback(
-    (cp: Pt, exclude: Iterable<string> = []): string | null => {
+    (cp: Pt, exclude: Iterable<string> = []): SnapTarget => {
       const t = transformNow();
       const skip = new Set(exclude);
-      let best: string | null = null;
+      let best: SnapTarget = null;
       let bestDist = SNAP_PX;
+
+      // Plan corners first, so a tie goes to joining two shapes — the more
+      // common act, and the one whose absence leaves a billable sliver.
       for (const [id, at] of Object.entries(liveNodes)) {
         if (skip.has(id)) continue;
         const d = dist(cp, toCanvas(toWorld(at), t));
         if (d <= bestDist) {
-          best = id;
+          best = { kind: "node", nodeId: id, at };
+          bestDist = d;
+        }
+      }
+
+      // Then surveyed points. Landing on one is how a bed corner stops being
+      // a guess off an aerial and becomes a corner somebody stood and shot.
+      for (const point of surveyTargets) {
+        const d = dist(cp, toCanvas(toWorld(point.at), t));
+        if (d < bestDist) {
+          best = {
+            kind: "survey",
+            at: point.at,
+            label: point.label,
+            link: {
+              sessionId: surveySessionId ?? "",
+              pointId: point.id,
+              label: point.label,
+            },
+          };
           bestDist = d;
         }
       }
       return best;
     },
-    [liveNodes, transformNow],
+    [liveNodes, surveyTargets, surveySessionId, transformNow],
   );
 
   function canvasPoint(e: React.PointerEvent): Pt {
@@ -969,21 +1540,61 @@ export default function PlanCanvas({
       // how a bed comes to share its edge with the lawn beside it. Decided at
       // the tap, while the person drawing can see what they were aiming at,
       // rather than guessed from proximity once the shape is finished.
-      const nodeId = snapCandidate(
+      const target = snapCandidate(
         cp,
         pending.map((pt) => pt.nodeId).filter((id): id is string => id !== null),
       );
-      onPendingChange([
-        ...pending,
-        { at: nodeId ? (liveNodes[nodeId] ?? ll) : ll, nodeId },
-      ]);
+      if (target !== null) {
+        onPendingChange([
+          ...pending,
+          target.kind === "node"
+            ? { at: target.at, nodeId: target.nodeId }
+            : { at: target.at, nodeId: null, survey: target.link },
+        ]);
+        return;
+      }
+
+      // Nothing to land on, so square the corner instead. After the place
+      // snaps, never before: a shot point is a measurement and a right angle
+      // is only a tidy-up, so a real position always wins.
+      // `squareClose` does not depend on where the tap landed — it is a fixed
+      // corner — so it is shared with the guides. `squareCorner` does, since
+      // the tap sets how long the side is.
+      const squared = rightAngle ? [...squareOptions()] : [];
+      if (rightAngle && pending.length >= 2) {
+        const corner = squareCorner(
+          pending[pending.length - 2].at,
+          pending[pending.length - 1].at,
+          ll,
+        );
+        if (corner) squared.push(corner);
+      }
+      for (const option of squared) {
+        if (dist(cp, toCanvas(toWorld(option), t)) <= SQUARE_PX) {
+          onPendingChange([...pending, { at: option, nodeId: null }]);
+          return;
+        }
+      }
+
+      onPendingChange([...pending, { at: ll, nodeId: null }]);
       return;
     }
 
     // select: topmost shape under the finger, or nothing.
     for (let i = shapes.length - 1; i >= 0; i--) {
       const shape = shapes[i];
-      const pts = shapePoints(shape).map((v) => toCanvas(toWorld(v), t));
+      // A tap on a corner of the shape already selected toggles whether that
+      // corner rounds — the cheapest way to hold one side of a bed straight,
+      // and it needs no control of its own.
+      if (shape.id === selectedShapeId && (shape.smoothVertices?.length ?? 0) > 0) {
+        const corners = shapePoints(shape).map((v) => toCanvas(toWorld(v), t));
+        const hit = corners.findIndex((p) => dist(cp, p) <= VERTEX_GRAB_PX);
+        if (hit >= 0) {
+          onToggleVertexSmooth(shape.id, shape.vertices[hit]);
+          return;
+        }
+      }
+      const pts = shapeOutline(shape).map((v) => toCanvas(toWorld(v), t));
       if (shape.type === "area" && pointInPolygon(cp, pts)) {
         onSelectShape(shape.id);
         return;
@@ -1047,6 +1658,27 @@ export default function PlanCanvas({
 
     if (tool === "select") {
       const t = transformNow();
+
+      // 0. Correct a pin. Only while the column is showing Review, and first
+      //    in the order because these are drawn on top: in Review the pins ARE
+      //    the subject, and a bed corner linked to a shot point sits exactly
+      //    on it, so whichever is checked first is the one you can ever grab.
+      if (pinsDraggable) {
+        for (const photo of photos ?? []) {
+          if (dist(cp, toCanvas(toWorld(photo.at), t)) <= VERTEX_GRAB_PX) {
+            dragRef.current = { kind: "pin", pin: "photo", id: photo.id };
+            onSelectPhoto(photo.id);
+            return;
+          }
+        }
+        for (const point of survey?.points ?? []) {
+          if (point.hidden) continue;
+          if (dist(cp, toCanvas(toWorld(point.at), t)) <= VERTEX_GRAB_PX) {
+            dragRef.current = { kind: "pin", pin: "survey", id: point.id };
+            return;
+          }
+        }
+      }
 
       // 1. Grab a corner of any shape. What is grabbed is the CORNER, so a
       //    shared one carries every shape holding it.
@@ -1213,6 +1845,12 @@ export default function PlanCanvas({
 
     const cp = canvasPoint(e);
     const world = fromCanvas(cp, transformNow());
+    if (drag.kind === "pin") {
+      // No snapping. A corner is joined to other corners; a pin is a record of
+      // where something was, and there is nothing for it to be joined to.
+      setDragPin({ id: drag.id, at: toLatLng(world) });
+      return;
+    }
     if (drag.kind === "vertex") {
       setDragNodes({ [drag.nodeId]: toLatLng(world) });
       // Offered while the finger is still down, so a join is something you
@@ -1270,17 +1908,31 @@ export default function PlanCanvas({
     dragRef.current = null;
     pressRef.current = null;
 
+    // A corrected pin, once. This one leaves the app: it PATCHes Upright's own
+    // row, and unlike the local writes below it can fail, so the page reports
+    // that rather than leaving a correction that only ever existed on screen.
+    if (drag && drag.kind === "pin") {
+      const moved = dragPin;
+      setDragPin(null);
+      if (moved && press?.moved) onMovePin(drag.pin, drag.id, moved.at);
+      return;
+    }
+
     // One write per drag, on release, rather than one per move event.
     if (dragNodes && drag && drag.kind !== "pan") {
       const target = snapTo;
       const moved = dragNodes;
       setSnapTo(null);
       setDragNodes(null);
-      if (drag.kind === "vertex" && target) {
+      if (drag.kind === "vertex" && target?.kind === "node") {
         // Dropped onto another corner: land it exactly where the target
         // already is, then fold the two together.
-        onMoveNodes({ [drag.nodeId]: liveNodes[target] ?? moved[drag.nodeId] });
-        onMergeNodes(drag.nodeId, target);
+        onMoveNodes({ [drag.nodeId]: target.at });
+        onMergeNodes(drag.nodeId, target.nodeId);
+      } else if (drag.kind === "vertex" && target?.kind === "survey") {
+        // Dropped onto a shot point: land exactly on it and record that it is
+        // there, so the shape can report a measured elevation at this corner.
+        onLinkSurvey(drag.nodeId, target.at, target.link);
       } else {
         onMoveNodes(moved);
       }
@@ -1303,6 +1955,7 @@ export default function PlanCanvas({
     dragRef.current = null;
     pressRef.current = null;
     setDragNodes(null);
+    setDragPin(null);
   }
 
   return (

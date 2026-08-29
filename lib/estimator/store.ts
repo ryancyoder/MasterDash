@@ -6,11 +6,17 @@ import {
   planId,
   pruneNodes,
   topologyFrom,
+  type NodeSurveyLink,
   type PendingPoint,
   type PlanShape,
   type PlanState,
   type ShapeKind,
 } from "./plan";
+import {
+  withPhotoLink,
+  withoutPhotoLink,
+  type ShapePhotoLink,
+} from "./photoLink";
 import { isLatLng, type LatLng } from "./geo";
 import { sharedNodeIds } from "./plan";
 import type { Basemap, MapAnchor } from "./mapLayers";
@@ -197,10 +203,32 @@ function planFrom(value: unknown): PlanState {
   if (!value || typeof value !== "object") return emptyPlan();
   const v = value as Record<string, unknown>;
   const { nodes, shapes } = topologyFrom(v);
+  const rawSurvey = (v.survey ?? null) as Record<string, unknown> | null;
+  const rawReview = (v.review ?? null) as Record<string, unknown> | null;
   return {
     anchor: anchorFrom(v.anchor),
     basemap: v.basemap === "none" ? "none" : "satellite",
     nodes,
+    survey:
+      rawSurvey && typeof rawSurvey.sessionId === "string" && rawSurvey.sessionId
+        ? {
+            sessionId: rawSurvey.sessionId,
+            label:
+              typeof rawSurvey.label === "string" && rawSurvey.label
+                ? rawSurvey.label
+                : "Upright survey",
+          }
+        : null,
+    review:
+      rawReview && typeof rawReview.sessionId === "string" && rawReview.sessionId
+        ? {
+            sessionId: rawReview.sessionId,
+            label:
+              typeof rawReview.label === "string" && rawReview.label
+                ? rawReview.label
+                : "Upright visit",
+          }
+        : null,
     shapes,
     hiddenOverlayIds: Array.isArray(v.hiddenOverlayIds)
       ? v.hiddenOverlayIds.filter((id): id is string => typeof id === "string")
@@ -433,6 +461,28 @@ export function setBasemap(basemap: Basemap) {
  * what anybody else sees of that yard — it is a preference about this screen,
  * not an edit to the layer.
  */
+/**
+ * Show one Upright session's elevation survey under the take-off, or none.
+ *
+ * A view preference on this estimate, not an edit to anything of Upright's.
+ * The survey is read-only here: it was measured on site and the estimator is
+ * laying beds out against it, not correcting it.
+ */
+export function setSurveySession(survey: { sessionId: string; label: string } | null) {
+  mutatePlan((plan) => ({ ...plan, survey }));
+}
+
+/**
+ * Replay one Upright session beside the plan, or none.
+ *
+ * Sits next to `setSurveySession` and deliberately does not touch it: the
+ * visit you listen to and the survey you lay beds out against are chosen
+ * separately, because the two lists rarely hold the same sessions.
+ */
+export function setReviewSession(review: { sessionId: string; label: string } | null) {
+  mutatePlan((plan) => ({ ...plan, review }));
+}
+
 export function setOverlayHidden(overlayId: string, hidden: boolean) {
   mutatePlan((plan) => {
     const without = plan.hiddenOverlayIds.filter((id) => id !== overlayId);
@@ -451,11 +501,20 @@ export function setOverlayHidden(overlayId: string, hidden: boolean) {
  * joined to the lawn beside it — at the tap, when the person drawing could see
  * what they were aiming at, rather than by a proximity guess made afterwards.
  */
+/**
+ * Returns the new shape's id, so a caller can act on what it just drew.
+ *
+ * The id is minted here rather than after the fact, because "the shape that
+ * was added last" is not a safe way to find it: another device's save can land
+ * between the two, and this store is shared.
+ */
 export function addShape(
   type: ShapeKind,
   points: PendingPoint[],
   assemblyId: string | null,
-) {
+  smooth = false,
+): string {
+  const shapeId = planId("shape");
   mutatePlan((plan) => {
     const nodes = { ...plan.nodes };
     const vertices: string[] = [];
@@ -465,7 +524,9 @@ export function addShape(
         continue;
       }
       const id = planId("n");
-      nodes[id] = point.at;
+      // A corner placed on a surveyed point keeps the link, so the shape can
+      // report a real elevation at that corner rather than a guess.
+      nodes[id] = { at: point.at, ...(point.survey ? { survey: point.survey } : {}) };
       vertices.push(id);
     }
     return {
@@ -474,15 +535,17 @@ export function addShape(
       shapes: [
         ...plan.shapes,
         {
-          id: planId("shape"),
+          id: shapeId,
           type,
           vertices,
+          ...(smooth ? { smoothVertices: [...vertices] } : {}),
           color: nextShapeColor(plan.shapes.length),
           assemblyId,
         },
       ],
     };
   });
+  return shapeId;
 }
 
 /**
@@ -494,14 +557,35 @@ export function addShape(
  * from where it now is.
  */
 export function moveNode(nodeId: string, at: LatLng) {
-  mutatePlan((plan) =>
-    plan.nodes[nodeId] ? { ...plan, nodes: { ...plan.nodes, [nodeId]: at } } : plan,
-  );
+  moveNodes({ [nodeId]: at });
 }
 
-/** Move several at once, for dragging a whole shape. */
+/**
+ * Move corners. Dragging one off a surveyed point BREAKS its link.
+ *
+ * It has to. The link says "this corner is on that shot point", and once the
+ * corner has been dragged somewhere else that is simply no longer true —
+ * keeping it would attach a measured elevation to a position nobody measured,
+ * which is the one failure mode worth spending code on here.
+ */
 export function moveNodes(moves: Record<string, LatLng>) {
-  mutatePlan((plan) => ({ ...plan, nodes: { ...plan.nodes, ...moves } }));
+  mutatePlan((plan) => {
+    const nodes = { ...plan.nodes };
+    for (const [id, at] of Object.entries(moves)) {
+      if (!nodes[id]) continue;
+      nodes[id] = { at };
+    }
+    return { ...plan, nodes };
+  });
+}
+
+/** Put a corner exactly on a surveyed point, and record that it is there. */
+export function linkNodeToSurvey(nodeId: string, at: LatLng, survey: NodeSurveyLink) {
+  mutatePlan((plan) =>
+    plan.nodes[nodeId]
+      ? { ...plan, nodes: { ...plan.nodes, [nodeId]: { at, survey } } }
+      : plan,
+  );
 }
 
 /**
@@ -522,7 +606,14 @@ export function mergeNodes(fromId: string, intoId: string) {
         const deduped = repointed.filter(
           (id, i) => id !== repointed[(i + 1) % repointed.length],
         );
-        return { ...shape, vertices: deduped };
+        const smooth = (shape.smoothVertices ?? []).map((v) =>
+          v === fromId ? intoId : v,
+        );
+        return {
+          ...shape,
+          vertices: deduped,
+          ...(smooth.length ? { smoothVertices: [...new Set(smooth)] } : {}),
+        };
       })
       // A merge can take a triangle down to a two-corner ring, which is a line
       // pretending to be an area. Dropping it beats keeping something that
@@ -540,10 +631,23 @@ export function insertVertex(shapeId: string, index: number, at: LatLng): string
     if (!shape) return plan;
     const vertices = [...shape.vertices];
     vertices.splice(index, 0, id);
+    // If the side it split was rounded, the new corner is too — otherwise
+    // adding detail to a curve would put a kink in it.
+    const smooth = shape.smoothVertices ?? [];
+    const neighbours = [shape.vertices[index - 1], shape.vertices[index % shape.vertices.length]];
+    const rounded = neighbours.every((v) => v !== undefined && smooth.includes(v));
     return {
       ...plan,
-      nodes: { ...plan.nodes, [id]: at },
-      shapes: plan.shapes.map((s) => (s.id === shapeId ? { ...s, vertices } : s)),
+      nodes: { ...plan.nodes, [id]: { at } },
+      shapes: plan.shapes.map((s) =>
+        s.id === shapeId
+          ? {
+              ...s,
+              vertices,
+              ...(rounded ? { smoothVertices: [...smooth, id] } : {}),
+            }
+          : s,
+      ),
     };
   });
   return id;
@@ -576,17 +680,79 @@ export function detachShape(shapeId: string) {
       nodes,
       shapes: plan.shapes.map((s) =>
         s.id === shapeId
-          ? { ...s, vertices: s.vertices.map((v) => swap.get(v) ?? v) }
+          ? {
+              ...s,
+              vertices: s.vertices.map((v) => swap.get(v) ?? v),
+              ...(s.smoothVertices
+                ? { smoothVertices: s.smoothVertices.map((v) => swap.get(v) ?? v) }
+                : {}),
+            }
           : s,
       ),
     };
   });
 }
 
+/** Round every corner of a shape, or none of them. */
+export function setShapeSmooth(shapeId: string, smooth: boolean) {
+  mutatePlan((plan) => ({
+    ...plan,
+    shapes: plan.shapes.map((s) =>
+      s.id === shapeId
+        ? smooth
+          ? { ...s, smoothVertices: [...s.vertices] }
+          : { ...s, smoothVertices: [] }
+        : s,
+    ),
+  }));
+}
+
+/**
+ * Make one corner sharp, or round it again.
+ *
+ * The whole point of storing this per corner: a bed that runs straight along a
+ * drive and sweeps round the lawn is two sharp corners and the rest rounded.
+ */
+export function toggleVertexSmooth(shapeId: string, nodeId: string) {
+  mutatePlan((plan) => ({
+    ...plan,
+    shapes: plan.shapes.map((s) => {
+      if (s.id !== shapeId) return s;
+      const current = s.smoothVertices ?? [];
+      return {
+        ...s,
+        smoothVertices: current.includes(nodeId)
+          ? current.filter((v) => v !== nodeId)
+          : [...current, nodeId],
+      };
+    }),
+  }));
+}
+
 export function updateShape(id: string, patch: Partial<Omit<PlanShape, "id">>) {
   mutatePlan((plan) => ({
     ...plan,
     shapes: plan.shapes.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+  }));
+}
+
+/**
+ * Attach a photograph from a visit to the shape it is a picture of.
+ *
+ * Goes through `withPhotoLink`, so tapping a bed that already carries this
+ * photo is a no-op rather than a second identical thumbnail.
+ */
+export function linkPhotoToShape(shapeId: string, link: ShapePhotoLink) {
+  mutatePlan((plan) => ({
+    ...plan,
+    shapes: plan.shapes.map((s) => (s.id === shapeId ? withPhotoLink(s, link) : s)),
+  }));
+}
+
+export function unlinkPhotoFromShape(shapeId: string, photoId: string) {
+  mutatePlan((plan) => ({
+    ...plan,
+    shapes: plan.shapes.map((s) => (s.id === shapeId ? withoutPhotoLink(s, photoId) : s)),
   }));
 }
 
@@ -680,6 +846,21 @@ export function addIncrements(
 export function setJobName(jobName: string) {
   mutate((d) => {
     d.jobName = jobName;
+  });
+}
+
+/**
+ * The property this estimate is for.
+ *
+ * Separate from the map's anchor, which only says where to open. The anchor
+ * has carried a property id since the picker was added and this column never
+ * did — so every estimate on the project reads `property_id: null`, and
+ * anything looking for "the take-off for this yard" finds nothing. This is the
+ * join, and it is the one Upright needs to show a bed on the map.
+ */
+export function attachProperty(propertyId: number | null) {
+  mutate((d) => {
+    d.propertyId = propertyId;
   });
 }
 

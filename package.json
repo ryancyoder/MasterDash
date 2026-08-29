@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:review": "node --experimental-strip-types scripts/test-review.ts",
+    "test:plan": "node --experimental-strip-types --import ./scripts/ts-resolve.mjs scripts/test-plan.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",

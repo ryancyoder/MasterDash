@@ -1,7 +1,31 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import PlanCanvas, { type PlanTool } from "@/components/estimator/PlanCanvas";
+import PlanCanvas, {
+  type PhotoDot,
+  type PlanTool,
+  type SurveyLayer,
+} from "@/components/estimator/PlanCanvas";
+import {
+  ReviewCard,
+  ReviewColumn,
+  ReviewFilmstrip,
+  ReviewTransport,
+  ReviewVideo,
+} from "@/components/estimator/ReviewPanel";
+import { useReviewAudio } from "@/components/estimator/useReviewAudio";
+import {
+  driftScale,
+  locatedPhotoAt,
+  type GradeFrame,
+  type ReviewSegment,
+  type ReviewSession,
+} from "@/lib/estimator/review";
+import {
+  fetchReviewSession,
+  fetchReviewTranscript,
+  movePoint,
+} from "@/lib/estimator/reviewData";
 import {
   ASSEMBLY_MODELS,
   getAssembly,
@@ -16,6 +40,7 @@ import {
   type Georef,
   type LatLng,
 } from "@/lib/estimator/geo";
+import { SURVEY_COLORS, elevationFeet } from "@/lib/estimator/survey";
 import {
   ANCHOR_BLURB,
   anchorIsReal,
@@ -27,31 +52,45 @@ import {
   bucketsForMeasurement,
   measurementOf,
   sharedNodeIds,
+  surveyedCorners,
   workBought,
   type PendingPoint,
   type PlanNodes,
   type PlanShape,
   type ShapeKind,
 } from "@/lib/estimator/plan";
+import { shapesForPhoto, type ShapePhotoLink } from "@/lib/estimator/photoLink";
+import { photoTakeoffLabel } from "@/lib/estimator/pendingTakeoff";
 import {
   addOverlayFromFile,
   deleteLayer,
   fetchLayers,
   fetchProperties,
+  fetchSurvey,
+  fetchSurveySessions,
   localOverlayUrl,
   saveLayer,
   type PropertyOption,
+  type UprightSurveySession,
 } from "@/lib/estimator/propertyLayers";
 import {
   addShape,
+  attachProperty,
   detachShape,
   insertVertex,
+  linkNodeToSurvey,
   mergeNodes,
   moveNodes,
+  linkPhotoToShape,
   removeShape,
   setBasemap,
   setOverlayHidden,
   setPlanAnchor,
+  setShapeSmooth,
+  setReviewSession,
+  setSurveySession,
+  toggleVertexSmooth,
+  unlinkPhotoFromShape,
   updateShape,
 } from "@/lib/estimator/store";
 import type { Estimate, EstimatorSettings } from "@/lib/estimator/types";
@@ -89,17 +128,51 @@ const HINTS: Record<PlanTool, string> = {
   linear: "Tap along the run · Finish when done",
 };
 
+/**
+ * "Draw this bed" — an assembly and the photographs of the thing.
+ *
+ * The photographs are attached to the shape the moment it is finished, which
+ * is the whole point of arriving with one: the link that makes the take-off
+ * carry its own evidence is made without anybody being asked to make it.
+ */
+export interface PlanDrawIntent {
+  assemblyId: string;
+  /** area or linear, from the assembly's own unit of work. */
+  kind: ShapeKind;
+  label: string;
+  photos: ShapePhotoLink[];
+}
+
 export default function PlanPage({
   estimate,
   settings,
+  intent,
+  onIntentDone,
 }: {
   estimate: Estimate;
   settings: EstimatorSettings;
+  /**
+   * A take-off somebody tagged in the field and came here to draw.
+   *
+   * Carried in rather than read from the plan, because it is not part of the
+   * estimate — it is one navigation's worth of intent, and it dies the moment
+   * the shape is drawn or the tool is changed.
+   */
+  intent?: PlanDrawIntent | null;
+  onIntentDone?: () => void;
 }) {
   const { plan } = estimate;
   const [tool, setTool] = useState<PlanTool>("area");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showMeasurements, setShowMeasurements] = useState(true);
+  /**
+   * Square corners up while drawing. On by default because beds and patios
+   * are mostly rectangles; off because some yards are not, and a snap you
+   * cannot turn off stops being a help.
+   */
+  const [rightAngle, setRightAngle] = useState(true);
+  /** Round the corners of shapes drawn from here on. Off by default. */
+  const [smoothNew, setSmoothNew] = useState(false);
   /**
    * The shape being drawn, owned here rather than in the canvas. The canvas
    * reports taps; Finish, Undo and Cancel are buttons on this page, and a
@@ -117,6 +190,17 @@ export default function PlanPage({
   /** Object URLs for overlays this device holds the bytes for. */
   const [localUrls, setLocalUrls] = useState<Record<string, string>>({});
   const [picking, setPicking] = useState(false);
+  const [survey, setSurvey] = useState<SurveyLayer | null>(null);
+  /**
+   * The side panel, on a phone.
+   *
+   * On an iPad in landscape it is a column beside the map and always open.
+   * Below that it was simply `hidden`, which meant a phone had no property
+   * picker — and since the drawing tools stay disabled until a property is
+   * chosen, the whole screen was unusable rather than merely cramped.
+   */
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [pickingSurvey, setPickingSurvey] = useState(false);
   /** The layer the gestures are acting on, if any. */
   const [aligningId, setAligningId] = useState<string | null>(null);
   /** Marking a dimension: layer gestures off, taps collect the two ends. */
@@ -188,6 +272,369 @@ export default function PlanPage({
     };
   }, [overlays]);
 
+  // --- the visit being replayed -------------------------------------------
+  //
+  // The column toggles between this and the plan's own cards; the canvas below
+  // is shared by both, which is the whole shape of the merged screen. Review
+  // is chosen and loaded independently of the survey — see PlanState.review
+  // for why the two are separate fields.
+  const [mode, setMode] = useState<"plan" | "review">("plan");
+  const [pickingReview, setPickingReview] = useState(false);
+  const [visit, setVisit] = useState<ReviewSession | null>(null);
+  const [segments, setSegments] = useState<ReviewSegment[]>([]);
+  const [transcriptStatus, setTranscriptStatus] = useState("none");
+  /**
+   * What the filmstrip has picked, as `photo:<id>` or `grade:<id>`.
+   *
+   * One key rather than two pieces of state, because only one thing can be
+   * picked: selecting a grade frame has to clear a photo pin and the reverse,
+   * exactly as Upright's strip behaves. Two flags would eventually light both.
+   */
+  const [stripPick, setStripPick] = useState<string | null>(null);
+  const selectedPhotoId = stripPick?.startsWith("photo:")
+    ? stripPick.slice("photo:".length)
+    : null;
+  const selectedSurveyId = stripPick?.startsWith("grade:")
+    ? stripPick.slice("grade:".length)
+    : null;
+  /** Which of the canvas and the clip is big. The other becomes a mini pane. */
+  const [videoOnStage, setVideoOnStage] = useState(false);
+  /** A correction that did not save. Shown, never swallowed. */
+  const [pinError, setPinError] = useState<string | null>(null);
+
+  const reviewSessionId = plan.review?.sessionId ?? null;
+
+  // Changing the visit invalidates everything loaded for the last one.
+  // Adjusted during render rather than in an effect, so there is never a frame
+  // showing one visit's transcript against another's photographs.
+  const [lastVisitId, setLastVisitId] = useState(reviewSessionId);
+  if (lastVisitId !== reviewSessionId) {
+    setLastVisitId(reviewSessionId);
+    setStripPick(null);
+    setPinError(null);
+    setVisit(null);
+    setSegments([]);
+    setTranscriptStatus("none");
+  }
+
+  useEffect(() => {
+    if (!reviewSessionId) return;
+    let live = true;
+    void fetchReviewSession(reviewSessionId).then((s) => {
+      if (live) setVisit(s);
+    });
+    void fetchReviewTranscript(reviewSessionId).then((t) => {
+      if (!live) return;
+      setSegments(t.segments);
+      setTranscriptStatus(t.status);
+    });
+    return () => {
+      live = false;
+    };
+  }, [reviewSessionId]);
+
+  // Destructured rather than kept as one object: the hook hands back a ref
+  // alongside plain values, and reading those off the object during render
+  // reads as touching a ref.
+  const {
+    ref: audioRef,
+    audioMs,
+    durationSec,
+    playing,
+    toggle: toggleAudio,
+    seekMs,
+    gainError,
+  } = useReviewAudio(visit?.audioUrl ?? null);
+  /**
+   * Wall-clock offsets onto the audio's clock.
+   *
+   * Derived from the file's real length against the session's wall length, so
+   * it settles only once metadata has loaded — until then it is 1, which is
+   * exactly the right answer for "we do not know yet".
+   */
+  const drift = useMemo(
+    () => driftScale(visit?.wallMs ?? null, durationSec),
+    [visit, durationSec],
+  );
+
+  /**
+   * Photo pins for the canvas.
+   *
+   * Only the located ones: a pin with no fix cannot be drawn on the earth,
+   * though it still belongs in the filmstrip, which is why the two lists are
+   * built from the same photos but filtered differently.
+   */
+  const photoDots = useMemo<PhotoDot[] | null>(() => {
+    if (!visit) return null;
+    return visit.photos
+      .filter((p) => p.lat !== null && p.lng !== null)
+      .map((p) => ({
+        id: p.id,
+        at: { lat: p.lat as number, lng: p.lng as number },
+        seq: p.seq,
+        headingDeg: p.headingDeg,
+      }));
+  }, [visit]);
+
+  /**
+   * The frames captured while shooting grade.
+   *
+   * THE VISIT'S OWN, when there is a visit. The strip is that session's record,
+   * so its grade shots have to come from it — reading them off the survey layer
+   * instead meant a replayed visit showed none of its own unless you had
+   * separately picked the same session in the Survey card, which is two pickers
+   * silently required to agree.
+   *
+   * The survey is the fallback rather than dead weight: most surveys on the
+   * project belong to sessions with no audio, so they can never be replayed,
+   * and their frames would otherwise have nowhere to appear at all.
+   */
+  const gradeFrames = useMemo<GradeFrame[]>(() => {
+    if (visit) return visit.frames;
+    return (survey?.points ?? [])
+      .filter((p) => !p.hidden && p.photoUrl)
+      .map((p) => ({
+        id: p.id,
+        url: p.photoUrl as string,
+        kind: p.kind,
+        label: p.label,
+        capturedAt: p.capturedAt ?? null,
+      }));
+  }, [visit, survey]);
+
+  /** What the strip has picked, resolved to something the preview can show. */
+  const pickedFrame = useMemo(() => {
+    if (!stripPick) return null;
+    if (selectedSurveyId) {
+      const f = gradeFrames.find((g) => g.id === selectedSurveyId);
+      return f ? { url: f.url, title: f.label, note: "Grade shot" } : null;
+    }
+    const p = visit?.photos.find((x) => x.id === selectedPhotoId);
+    if (!p) return null;
+    // The tag leads where there is one: "Mulch Bed 2 · 1 of 3" says what the
+    // picture is OF, and "Pin 7" only says where it sits in the roll. Rebuilt
+    // from the rows rather than carried across, so it agrees with Upright's
+    // own label by construction rather than by both sides remembering to.
+    const tag = photoTakeoffLabel(p, visit!.photos);
+    return {
+      url: p.url,
+      title: tag ?? `Pin ${p.seq}`,
+      note: tag ? [p.note, `Pin ${p.seq}`].filter(Boolean).join(" · ") : p.note,
+    };
+  }, [stripPick, selectedSurveyId, selectedPhotoId, gradeFrames, visit]);
+
+  /**
+   * Attaching a photograph to the take-off it is a picture of.
+   *
+   * ARM, ONE TAP, DISARM — Upright's slope runs set that rule and it applies
+   * for the same reason: the canvas tap that attaches is the same tap that
+   * selects a shape, so a mode left open would attach a photograph to every
+   * bed touched afterwards. It also clears when the photo changes, since the
+   * armed tap belongs to the frame that armed it.
+   */
+  const [linkArmed, setLinkArmed] = useState(false);
+
+  /** The pin the column is showing, when there is one that can be attached. */
+  const linkablePhoto = useMemo(() => {
+    if (!visit || selectedSurveyId) return null;
+    const p = visit.photos.find((x) => x.id === selectedPhotoId);
+    return p
+      ? { sessionId: visit.id, photoId: p.id, url: p.url, label: `Pin ${p.seq}` }
+      : null;
+  }, [visit, selectedPhotoId, selectedSurveyId]);
+
+  // Adjusted during render rather than in an effect: an armed tap belongs to
+  // the frame that armed it, so changing photo must disarm BEFORE anything
+  // reads the flag. React's documented way to reset state when an input
+  // changes, and the same pattern useReviewAudio uses to reset the playhead.
+  /*
+    Arm the tool for an intent, once, when it arrives.
+
+    Adjusted during render for the same reason the link arming is: the tool and
+    the assembly have to be set BEFORE anything reads them, and an effect would
+    render one frame with the intent present and the tool still on whatever it
+    was. React's documented way to reset state when an input changes.
+  */
+  const intentKey = intent ? `${intent.assemblyId}:${intent.label}` : null;
+  const [lastIntentKey, setLastIntentKey] = useState<string | null>(null);
+  if (intentKey && lastIntentKey !== intentKey) {
+    setLastIntentKey(intentKey);
+    setTool(intent!.kind);
+    setArmed((a) => ({ ...a, [intent!.kind]: intent!.assemblyId }));
+    setPending([]);
+  } else if (!intentKey && lastIntentKey !== null) {
+    setLastIntentKey(null);
+  }
+
+  const armedFor = linkablePhoto?.photoId ?? null;
+  const [lastArmedFor, setLastArmedFor] = useState(armedFor);
+  if (lastArmedFor !== armedFor) {
+    setLastArmedFor(armedFor);
+    setLinkArmed(false);
+  }
+
+  const attachPhoto = useCallback(
+    (shapeId: string) => {
+      if (!linkablePhoto) return;
+      linkPhotoToShape(shapeId, linkablePhoto);
+      setLinkArmed(false);
+      setSelectedId(shapeId);
+    },
+    [linkablePhoto],
+  );
+
+  /**
+   * A shape's photographs, with the loaded visit's own rows preferred.
+   *
+   * The link copies a url down so a card can draw with no session loaded, but
+   * Upright writes a NEW storage path whenever a picture is replaced — so a
+   * copied url can point at a superseded file. Where the session IS loaded its
+   * row is the truth; where it is not, the copy is all there is, and the card
+   * says which by marking the ones it could not confirm.
+   */
+  const resolvePhotos = useCallback(
+    (shape: PlanShape) =>
+      (shape.photos ?? []).map((p) => {
+        const live =
+          visit && visit.id === p.sessionId
+            ? visit.photos.find((x) => x.id === p.photoId)
+            : undefined;
+        return {
+          photoId: p.photoId,
+          url: live?.url ?? p.url,
+          label: live ? `Pin ${live.seq}` : p.label,
+          live: Boolean(live),
+        };
+      }),
+    [visit],
+  );
+
+  /** Which take-offs the shown photograph documents — the link read back. */
+  const photoDocuments = useMemo(() => {
+    if (!linkablePhoto) return [];
+    return shapesForPhoto(plan.shapes, linkablePhoto.photoId).map((sh) => ({
+      id: sh.id,
+      // Named by its assembly where it has one, and by its measurement where
+      // it does not — a take-off with no assembly is still a real thing to
+      // have photographed. Read directly rather than through labelFor(), which
+      // is declared several hundred lines below this.
+      label:
+        (sh.assemblyId
+          ? getAssembly(sh.assemblyId)?.name.replace(" – Standard", "")
+          : null) ??
+        `${Math.round(measurementOf(sh, plan.nodes)).toLocaleString()} ${
+          sh.type === "area" ? "sq ft" : "ln ft"
+        }`,
+    }));
+  }, [linkablePhoto, plan.shapes, plan.nodes]);
+
+  const livePhotoId = useMemo(
+    () =>
+      visit
+        ? (locatedPhotoAt(visit.photos, audioMs, drift)?.id ?? null)
+        : null,
+    [visit, audioMs, drift],
+  );
+
+  /**
+   * A corrected pin, written back to Upright.
+   *
+   * Applied locally first so the pin stays where it was dropped rather than
+   * springing back while the round trip runs — then reported if the write
+   * fails, because a correction someone made deliberately and watched
+   * disappear is worse than one that never appeared to save.
+   */
+  const handleMovePin = useCallback(
+    (kind: "survey" | "photo", id: string, at: LatLng) => {
+      setPinError(null);
+      if (kind === "photo") {
+        setVisit((s) =>
+          s
+            ? {
+                ...s,
+                photos: s.photos.map((p) =>
+                  p.id === id ? { ...p, lat: at.lat, lng: at.lng } : p,
+                ),
+              }
+            : s,
+        );
+      } else {
+        setSurvey((cur) =>
+          cur
+            ? {
+                ...cur,
+                points: cur.points.map((p) => (p.id === id ? { ...p, at, placed: true } : p)),
+              }
+            : cur,
+        );
+      }
+      void movePoint(kind, id, at).then((res) => {
+        if (res.ok) return;
+        setPinError(res.error);
+        // Put it back: showing a pin where it is not is the failure this
+        // whole path exists to avoid.
+        const surveyId = plan.survey?.sessionId ?? null;
+        if (kind === "survey" && surveyId) {
+          void fetchSurvey(surveyId).then((r) => {
+            if (r) setSurvey({ points: r.points, runs: r.runs } as SurveyLayer);
+          });
+        } else if (reviewSessionId) {
+          void fetchReviewSession(reviewSessionId).then((s) => s && setVisit(s));
+        }
+      });
+    },
+    [reviewSessionId, plan.survey?.sessionId],
+  );
+
+  const surveySessionId = plan.survey?.sessionId ?? null;
+  const surveyLabel = plan.survey?.label ?? null;
+  useEffect(() => {
+    let live = true;
+    const load = surveySessionId ? fetchSurvey(surveySessionId) : Promise.resolve(null);
+    void load.then((result) => {
+      if (!live) return;
+      const layer = result
+        ? ({ points: result.points, runs: result.runs } as SurveyLayer)
+        : null;
+      setSurvey(layer);
+
+      // A survey can anchor the map by itself.
+      //
+      // 47 of the 48 surveys on the project belong to a session with no
+      // property, so requiring a property first meant anchoring on some
+      // unrelated address and then pressing Fit to go and find the survey.
+      // The points are real surveyed positions — a better fix on the ground
+      // than half the property records, which have no coordinates at all —
+      // so they stand in until a property is chosen, and never override one.
+      if (!layer || anchorIsReal(plan.anchor)) return;
+      const placed = layer.points.filter((p) => !p.hidden);
+      if (placed.length === 0) return;
+      const centre = placed.reduce(
+        (acc, p) => ({
+          lat: acc.lat + p.at.lat / placed.length,
+          lng: acc.lng + p.at.lng / placed.length,
+        }),
+        { lat: 0, lng: 0 },
+      );
+      setPlanAnchor({
+        propertyId: plan.anchor?.propertyId ?? null,
+        // Deliberately not the survey's label: this anchors the MAP, it does
+        // not name the yard. The estimate still wants a property, and the
+        // card should keep saying so.
+        label: null,
+        centre,
+        source: "upright",
+      });
+    });
+    return () => {
+      live = false;
+    };
+    // `plan.anchor` is read but deliberately not a dependency: this should run
+    // when the SURVEY changes, not every time the anchor moves, or choosing a
+    // property afterwards would re-run it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [surveySessionId, surveyLabel]);
+
   /** Device copy first; the Storage URL is the fallback for a device that never held it. */
   const overlaySrc = useCallback(
     (o: MapOverlay) => localUrls[o.id] ?? o.imageUrl,
@@ -229,10 +676,17 @@ export default function PlanPage({
   const finish = useCallback(() => {
     if (tool !== "area" && tool !== "linear") return;
     if (pending.length < (tool === "area" ? 3 : 2)) return;
-    addShape(tool, pending, armed[tool]);
+    const shapeId = addShape(tool, pending, armed[tool], smoothNew);
+    // ARRIVING WITH AN INTENT MAKES THE LINK ITSELF. Somebody stood in the yard
+    // and said what this is; being asked to attach the photographs again, here,
+    // would be asking them to say it twice.
+    if (intent && armed[tool] === intent.assemblyId) {
+      for (const photo of intent.photos) linkPhotoToShape(shapeId, photo);
+      onIntentDone?.();
+    }
     setPending([]);
     setTool("select");
-  }, [tool, pending, armed]);
+  }, [tool, pending, armed, smoothNew, intent, onIntentDone]);
 
   const patchOverlay = useCallback(
     (id: string, patch: Partial<MapOverlay>) => {
@@ -354,6 +808,26 @@ export default function PlanPage({
           </button>
         ))}
         <div className="flex-1" />
+        <button
+          onClick={() => setSmoothNew((v) => !v)}
+          className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${
+            smoothNew ? "bg-accent text-black" : "bg-surface2 text-muted"
+          }`}
+          title={smoothNew ? "Curved edges: on" : "Curved edges: off"}
+          aria-label="Curved edges"
+        >
+          ◠
+        </button>
+        <button
+          onClick={() => setRightAngle((v) => !v)}
+          className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${
+            rightAngle ? "bg-accent text-black" : "bg-surface2 text-muted"
+          }`}
+          title={rightAngle ? "Square corners: on" : "Square corners: off"}
+          aria-label="Square corners"
+        >
+          ⊾
+        </button>
         <button
           onClick={() => setShowMeasurements((v) => !v)}
           className="shrink-0 rounded-xl bg-surface2 px-3 py-2 text-xs font-bold text-muted"
@@ -495,11 +969,38 @@ export default function PlanPage({
         </div>
       ) : (
         <p className="shrink-0 mb-2 text-[0.7rem] text-muted">
-          {ready ? HINTS[tool] : "Choose the property first — the map has to open somewhere."}
+          {ready
+          ? `${HINTS[tool]}${
+              tool === "select"
+                ? ""
+                : smoothNew
+                  ? " · edges curve"
+                  : rightAngle
+                    ? " · corners square up"
+                    : ""
+            }`
+          : "Choose the property first — the map has to open somewhere."}
         </p>
       )}
 
-      <div className="flex flex-1 min-h-0 gap-3">
+      <div className="relative flex flex-1 min-h-0 gap-3">
+        {/*
+          The stage: the canvas and the clip, both mounted for the whole life
+          of the screen, swapping which of them is big by CSS alone.
+
+          Neither is ever unmounted or re-parented. A <video> put back into the
+          tree restarts from zero on iOS Safari, and the canvas would lose its
+          measured size and its view — so the swap moves geometry, not nodes.
+          This is the same trick Upright's review uses for the same reason.
+        */}
+        <div className="relative flex-1 min-h-0">
+        <div
+          className={
+            videoOnStage
+              ? "absolute bottom-3 left-3 z-20 flex h-32 w-48 overflow-hidden rounded-xl border border-edge shadow-lg"
+              : "absolute inset-0 flex"
+          }
+        >
         <PlanCanvas
           anchor={anchor}
           basemap={plan.basemap}
@@ -507,16 +1008,39 @@ export default function PlanPage({
           overlaySrc={overlaySrc}
           nodes={plan.nodes}
           shapes={plan.shapes}
+          survey={survey}
+          surveySessionId={surveySessionId}
+          photos={photoDots}
+          livePhotoId={livePhotoId}
+          selectedPhotoId={selectedPhotoId}
+          onSelectPhoto={(id) => setStripPick(id ? `photo:${id}` : null)}
+          selectedSurveyId={selectedSurveyId}
+          pinsDraggable={mode === "review"}
+          onMovePin={handleMovePin}
+          rightAngle={rightAngle}
+          smoothNew={smoothNew}
           labelFor={labelFor}
           tool={tool}
           selectedShapeId={selectedId}
-          onSelectShape={setSelectedId}
+          onSelectShape={(id) => {
+            // While armed, a tap on a take-off attaches rather than selects.
+            // A tap on bare ground (null) cancels, which is the same way out
+            // as the button and needs no aiming.
+            if (linkArmed && linkablePhoto) {
+              if (id) attachPhoto(id);
+              else setLinkArmed(false);
+              return;
+            }
+            setSelectedId(id);
+          }}
           pending={pending}
           onPendingChange={setPending}
           onCloseArea={finish}
           onMoveNodes={moveNodes}
           onMergeNodes={mergeNodes}
+          onLinkSurvey={linkNodeToSurvey}
           onInsertVertex={insertVertex}
+          onToggleVertexSmooth={toggleVertexSmooth}
           showMeasurements={showMeasurements}
           aligning={aligning}
           onAlignCommit={(georef: Georef) =>
@@ -527,11 +1051,151 @@ export default function PlanPage({
           onScalePointsChange={setScalePoints}
         />
 
-        <aside className="hidden w-64 shrink-0 flex-col gap-2 overflow-y-auto md-scroll sm:flex">
+        {/*
+          The clip for wherever the playhead is, over the canvas.
+
+          Mounted for the whole life of the screen and hidden with `hidden`,
+          NEVER rendered conditionally: unmounting a <video> and putting it
+          back restarts playback from zero on iOS Safari, which is the same
+          reason Upright's review swaps its panes by class. It only takes the
+          stage while Review is showing and a clip is actually running.
+        */}
+        </div>
+
+        {/*
+          The clip is NOT gated on the column's mode.
+
+          It was, and that was the bug: the transport and the filmstrip belong
+          to the screen, so audio played in either mode while the picture only
+          appeared in Review — audio with no video, and nothing saying why. The
+          clip is the fourth piece of the same shared replay, and the moment you
+          most want to see what the yard looked like is while you are in Plan
+          laying beds out against it.
+        */}
+        {visit && (
+          <ReviewVideo
+            session={visit}
+            drift={drift}
+            audioRef={audioRef}
+            onStage={videoOnStage}
+          />
+        )}
+
+        </div>
+
+        {/*
+          The way in on a phone. Top right of the map, clear of the zoom
+          controls bottom left and the running-total pill bottom right, and
+          outside the tool row — which scrolls sideways, so anything in it can
+          be off screen exactly when it is needed. Ringed while there is no
+          property, because then it is the only thing worth pressing.
+        */}
+        <button
+          onClick={() => setPanelOpen(true)}
+          className={`absolute right-3 top-3 z-30 flex h-11 items-center gap-2 rounded-2xl px-4 text-sm font-bold backdrop-blur sm:hidden ${
+            ready ? "bg-bg/90 text-ink" : "bg-accent text-black"
+          }`}
+        >
+          <span aria-hidden="true">☰</span>
+          {ready ? "Panel" : "Choose property"}
+        </button>
+
+        {panelOpen && (
+          <div
+            className="fixed inset-0 z-30 bg-black/60 sm:hidden"
+            onPointerDown={() => setPanelOpen(false)}
+          />
+        )}
+
+        <aside
+          className={`shrink-0 flex-col gap-2 overflow-y-auto md-scroll sm:static sm:z-auto sm:flex sm:w-64 sm:max-w-none sm:border-0 sm:bg-transparent sm:p-0 ${
+            panelOpen
+              ? "fixed inset-y-0 right-0 z-40 flex w-72 max-w-[85vw] border-l border-edge bg-bg p-3"
+              : "hidden"
+          }`}
+        >
+          <button
+            onClick={() => setPanelOpen(false)}
+            className="shrink-0 rounded-xl bg-surface2 px-4 py-2.5 text-sm font-bold text-ink sm:hidden"
+          >
+            Close
+          </button>
+
+          {/*
+            The one switch this screen turns on. The column is the only thing
+            that changes: the canvas, the filmstrip and the transport below are
+            shared, so the visit and the take-off are two readings of one yard
+            rather than two screens.
+          */}
+          <div className="flex shrink-0 gap-1 rounded-xl bg-surface2 p-1">
+            {(["review", "plan"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-bold capitalize ${
+                  mode === m ? "bg-accent text-black" : "text-muted"
+                }`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+
+          {mode === "review" ? (
+            <>
+              <ReviewCard
+                chosen={plan.review}
+                propertyId={estimate.propertyId ?? null}
+                picking={pickingReview}
+                onPicking={setPickingReview}
+                onChoose={setReviewSession}
+              />
+              {pinError && (
+                <p className="shrink-0 rounded-xl border border-[#fca5a5] bg-surface p-2 text-xs leading-relaxed text-[#fca5a5]">
+                  {pinError}
+                </p>
+              )}
+              {visit && (
+                <p className="shrink-0 px-1 text-[0.65rem] leading-relaxed text-muted">
+                  Drag a pin to correct where it sits. That writes back to
+                  Upright and every elevation derived from it moves with it.
+                </p>
+              )}
+              <ReviewColumn
+                session={visit}
+                segments={segments}
+                transcriptStatus={transcriptStatus}
+                audioMs={audioMs}
+                drift={drift}
+                playing={playing}
+                onSeek={seekMs}
+                picked={pickedFrame}
+                link={
+                  linkablePhoto
+                    ? {
+                        documents: photoDocuments,
+                        arming: linkArmed,
+                        onArm: () => setLinkArmed(true),
+                        onCancel: () => setLinkArmed(false),
+                        onUnlink: (shapeId) =>
+                          unlinkPhotoFromShape(shapeId, linkablePhoto.photoId),
+                      }
+                    : null
+                }
+              />
+            </>
+          ) : (
+          <>
           <AnchorCard
             estimate={estimate}
             picking={picking}
             onPicking={setPicking}
+          />
+          <SurveyCard
+            chosen={plan.survey}
+            layer={survey}
+            picking={pickingSurvey}
+            onPicking={setPickingSurvey}
           />
           {overlays.length > 0 && (
             <LayersCard
@@ -558,6 +1222,7 @@ export default function PlanPage({
                 key={shape.id}
                 shape={shape}
                 nodes={plan.nodes}
+                survey={survey}
                 sharedCount={
                   shape.vertices.filter((v) => shared.has(v)).length
                 }
@@ -570,11 +1235,47 @@ export default function PlanPage({
                 }}
                 onLink={(id) => updateShape(shape.id, { assemblyId: id })}
                 onRemove={() => removeShape(shape.id)}
+                photos={resolvePhotos(shape)}
+                onUnlinkPhoto={(photoId) => unlinkPhotoFromShape(shape.id, photoId)}
               />
             ))
           )}
+          </>
+          )}
         </aside>
       </div>
+
+      {/*
+        The filmstrip and the transport belong to the SCREEN, not to the
+        column — they stay put when the column switches to the plan's cards, so
+        the pictures of the yard and the playhead are still to hand while beds
+        are being drawn. That is what makes this one tool rather than two.
+
+        The <audio> is mounted here for the life of the screen and carries no
+        `src` attribute: the hook assigns it after setting crossOrigin, because
+        the wrong order is captured as a tainted source and plays silence.
+      */}
+      <ReviewFilmstrip
+        session={visit}
+        frames={gradeFrames}
+        audioMs={audioMs}
+        drift={drift}
+        onSeek={seekMs}
+        selectedId={stripPick}
+        onSelect={setStripPick}
+      />
+      <ReviewTransport
+        session={visit}
+        audioMs={audioMs}
+        durationSec={durationSec}
+        playing={playing}
+        onToggle={toggleAudio}
+        onSeek={seekMs}
+        gainError={gainError}
+        videoOnStage={videoOnStage}
+        onToggleStage={() => setVideoOnStage((v) => !v)}
+      />
+      <audio ref={audioRef} preload="metadata" className="hidden" />
 
       {/*
         Finish / Undo / Cancel as buttons, present for the whole of a drawing
@@ -583,29 +1284,29 @@ export default function PlanPage({
         that just placed a corner. The buttons disable instead.
       */}
       {drawing && (
-        <div className="shrink-0 mt-2 flex items-center gap-2 pr-36">
-          <span className="text-xs font-bold tabular-nums text-muted">
+        <div className="shrink-0 mt-2 mb-16 flex items-center gap-2 pr-2 sm:mb-0 sm:pr-36">
+          <span className="hidden text-xs font-bold tabular-nums text-muted sm:inline">
             {pending.length} point{pending.length === 1 ? "" : "s"}
           </span>
           <div className="flex-1" />
           <button
             onClick={() => setPending([])}
             disabled={pending.length === 0}
-            className="rounded-xl bg-surface2 px-4 py-2.5 text-sm font-bold text-muted disabled:opacity-30"
+            className="shrink-0 rounded-xl bg-surface2 px-4 py-2.5 text-sm font-bold text-muted disabled:opacity-30"
           >
             Cancel
           </button>
           <button
             onClick={() => setPending((p) => p.slice(0, -1))}
             disabled={pending.length === 0}
-            className="rounded-xl bg-surface2 px-4 py-2.5 text-sm font-bold text-ink disabled:opacity-30"
+            className="shrink-0 rounded-xl bg-surface2 px-4 py-2.5 text-sm font-bold text-ink disabled:opacity-30"
           >
-            Undo point
+            Undo<span className="hidden sm:inline"> point</span>
           </button>
           <button
             onClick={finish}
             disabled={!canFinish}
-            className="rounded-xl bg-accent px-5 py-2.5 text-sm font-bold text-black disabled:opacity-30"
+            className="shrink-0 rounded-xl bg-accent px-5 py-2.5 text-sm font-bold text-black disabled:opacity-30"
           >
             Finish
           </button>
@@ -614,7 +1315,7 @@ export default function PlanPage({
 
       {/* The selected shape's controls, reachable without the side list. */}
       {!drawing && selected && (
-        <div className="shrink-0 mt-2 flex items-center gap-2 pr-36 sm:hidden">
+        <div className="shrink-0 mt-2 mb-16 flex items-center gap-2 pr-2 sm:hidden">
           <span
             className="h-3 w-3 shrink-0 rounded-full"
             style={{ background: selected.color }}
@@ -693,6 +1394,8 @@ function AnchorCard({
               <button
                 key={p.id}
                 onClick={() => {
+                  // The estimate is for this yard, not merely looking at it.
+                  attachProperty(p.id);
                   setPlanAnchor({
                     propertyId: p.id,
                     label: p.address,
@@ -745,6 +1448,11 @@ function AnchorCard({
       <p className="mt-1 text-sm leading-snug text-ink">
         {anchor?.label ?? (anchor?.propertyId ? `#${anchor.propertyId}` : "Not chosen")}
       </p>
+      {anchor?.source === "upright" && anchor.propertyId === null && (
+        <p className="mt-0.5 text-[0.65rem] leading-tight text-muted">
+          The map is on the survey — pick the property to attach the estimate.
+        </p>
+      )}
       {anchor && (
         <p
           className={`mt-0.5 text-[0.65rem] leading-tight ${
@@ -752,6 +1460,146 @@ function AnchorCard({
           }`}
         >
           {ANCHOR_BLURB[anchor.source]}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Upright's elevation survey, as a layer.
+ *
+ * Chosen by session rather than by property because that is what the data
+ * supports: 48 sessions carry survey points and one carries a property_id. The
+ * list is the sessions that actually have points — not the same set as the
+ * ones with audio, since most grade work is shot without recording anything.
+ *
+ * Read-only. It was measured on site with the anchor cancellation that makes
+ * it mean something; this screen lays beds out against it rather than
+ * correcting it.
+ */
+function SurveyCard({
+  chosen,
+  layer,
+  picking,
+  onPicking,
+}: {
+  chosen: { sessionId: string; label: string } | null;
+  layer: SurveyLayer | null;
+  picking: boolean;
+  onPicking: (v: boolean) => void;
+}) {
+  const [rows, setRows] = useState<UprightSurveySession[] | null>(null);
+
+  useEffect(() => {
+    if (!picking) return;
+    let live = true;
+    void fetchSurveySessions().then((r) => {
+      if (live) setRows(r);
+    });
+    return () => {
+      live = false;
+    };
+  }, [picking]);
+
+  if (picking) {
+    return (
+      <div className="rounded-2xl border border-accent bg-surface p-3">
+        <span className="text-[0.65rem] font-bold tracking-widest text-muted">
+          UPRIGHT SURVEY
+        </span>
+        <div className="mt-2 flex max-h-56 flex-col gap-1 overflow-y-auto md-scroll">
+          {rows === null ? (
+            <p className="text-xs text-muted">Looking…</p>
+          ) : rows.length === 0 ? (
+            <p className="text-xs leading-relaxed text-muted">
+              No sessions with survey points. Shoot grade in Upright and it
+              shows up here.
+            </p>
+          ) : (
+            rows.map((r) => {
+              const when = r.startedAt
+                ? new Date(r.startedAt).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })
+                : "undated";
+              return (
+                <button
+                  key={r.id}
+                  onClick={() => {
+                    setSurveySession({
+                      sessionId: r.id,
+                      label: r.propertyAddress
+                        ? `${r.propertyAddress} · ${when}`
+                        : `Survey · ${when}`,
+                    });
+                    onPicking(false);
+                  }}
+                  className="rounded-lg bg-surface2 px-2 py-2 text-left text-xs text-ink"
+                >
+                  <span className="block truncate font-bold">
+                    {r.propertyAddress ?? "Untagged session"}
+                  </span>
+                  <span className="text-[0.65rem] text-muted">
+                    {when} · {r.elevationPointCount} points
+                  </span>
+                </button>
+              );
+            })
+          )}
+        </div>
+        <button
+          onClick={() => onPicking(false)}
+          className="mt-2 w-full rounded-lg bg-surface2 py-2 text-xs font-bold text-muted"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  const measured =
+    layer?.points.filter((p) => p.elevation.state === "measured").length ?? 0;
+  const unplaced =
+    layer?.points.filter((p) => p.elevation.state === "unplaced").length ?? 0;
+
+  return (
+    <div className="rounded-2xl border border-edge bg-surface p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[0.65rem] font-bold tracking-widest text-muted">
+          SURVEY
+        </span>
+        <div className="flex items-center gap-2">
+          {chosen && (
+            <button
+              onClick={() => setSurveySession(null)}
+              className="text-xs font-bold text-[#fca5a5]"
+            >
+              Hide
+            </button>
+          )}
+          <button
+            onClick={() => onPicking(true)}
+            className="text-xs font-bold text-accent"
+          >
+            {chosen ? "Change" : "Show"}
+          </button>
+        </div>
+      </div>
+      <p className="mt-1 text-sm leading-snug text-ink">
+        {chosen?.label ?? "None"}
+      </p>
+      {chosen && layer && (
+        <p className="mt-0.5 text-[0.65rem] leading-tight text-muted">
+          {measured} measured
+          {layer.runs.length > 0 && ` · ${layer.runs.length} slope runs`}
+          {/* An unplaced pin is not a measurement, and saying so beats
+              quietly drawing it as though it were. */}
+          {unplaced > 0 && (
+            <span className="text-[#fbbf24]"> · {unplaced} still to place</span>
+          )}
         </p>
       )}
     </div>
@@ -919,6 +1767,7 @@ function LayersCard({
 function ShapeCard({
   shape,
   nodes,
+  survey,
   sharedCount,
   onDetach,
   settings,
@@ -926,9 +1775,12 @@ function ShapeCard({
   onSelect,
   onLink,
   onRemove,
+  photos,
+  onUnlinkPhoto,
 }: {
   shape: PlanShape;
   nodes: PlanNodes;
+  survey: SurveyLayer | null;
   /** How many of this shape's corners another shape also holds. */
   sharedCount: number;
   onDetach: () => void;
@@ -937,6 +1789,16 @@ function ShapeCard({
   onSelect: () => void;
   onLink: (assemblyId: string | null) => void;
   onRemove: () => void;
+  /**
+   * The photographs attached to this shape, resolved against the loaded visit.
+   *
+   * Resolved rather than read straight off the link, because a stored url can
+   * be superseded — Upright writes a NEW storage path when a picture is
+   * replaced. The live row wins where there is one; the copied url is the
+   * fallback that keeps the card drawable with no session loaded at all.
+   */
+  photos: { photoId: string; url: string; label: string; live: boolean }[];
+  onUnlinkPhoto: (photoId: string) => void;
 }) {
   const measurement = measurementOf(shape, nodes);
   const options = assembliesForShape(ASSEMBLY_MODELS, shape.type);
@@ -951,6 +1813,36 @@ function ShapeCard({
         )
       : 0;
   const unit = shape.type === "area" ? "sq ft" : "ln ft";
+  const isRounded = (shape.smoothVertices?.length ?? 0) > 0;
+
+  /**
+   * What the survey makes of this shape's corners.
+   *
+   * The fall across a bed is the number worth having: an area tells you how
+   * much mulch, and the fall tells you whether it drains. It is only reported
+   * when at least two corners are on shot points, because one measured corner
+   * and three guessed ones is not a grade.
+   */
+  const grade = useMemo(() => {
+    const linked = surveyedCorners(shape, nodes);
+    if (linked.length === 0) return null;
+    const heights: { label: string; ft: number }[] = [];
+    for (const { link } of linked) {
+      const point = survey?.points.find((p) => p.id === link.pointId);
+      const ft = point ? elevationFeet(point.elevation) : null;
+      if (ft !== null) heights.push({ label: link.label, ft });
+    }
+    if (heights.length < 2) {
+      return { corners: linked.length, measured: heights.length, fall: null };
+    }
+    const low = heights.reduce((a, b) => (b.ft < a.ft ? b : a));
+    const high = heights.reduce((a, b) => (b.ft > a.ft ? b : a));
+    return {
+      corners: linked.length,
+      measured: heights.length,
+      fall: { ft: high.ft - low.ft, from: high.label, to: low.label },
+    };
+  }, [shape, nodes, survey]);
 
   return (
     <div
@@ -992,6 +1884,86 @@ function ShapeCard({
           </option>
         ))}
       </select>
+
+      <div className="mt-2 flex items-center gap-1.5">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setShapeSmooth(shape.id, !isRounded);
+          }}
+          className={`rounded-lg px-2.5 py-1 text-[0.65rem] font-bold ${
+            isRounded ? "bg-accent text-black" : "bg-surface2 text-ink"
+          }`}
+        >
+          {isRounded ? "Curved" : "Straight"}
+        </button>
+        {isRounded && (
+          // The per-corner control has no button of its own: tapping a corner
+          // of the selected shape on the map is the whole gesture.
+          <span className="text-[0.65rem] leading-tight text-muted">
+            tap a corner on the map to hold it sharp
+          </span>
+        )}
+      </div>
+
+      {grade && (
+        <p className="mt-1.5 text-[0.7rem] leading-snug text-muted">
+          <span style={{ color: SURVEY_COLORS.target }}>◎</span>{" "}
+          {grade.corners} corner{grade.corners === 1 ? "" : "s"} surveyed
+          {grade.fall ? (
+            <>
+              {" · falls "}
+              <span className="font-bold text-ink">
+                {grade.fall.ft.toFixed(2)}&apos;
+              </span>
+              {` from ${grade.fall.from} to ${grade.fall.to}`}
+            </>
+          ) : grade.measured < 2 ? (
+            // One measured corner is a height, not a grade. Saying so beats
+            // reporting a fall of zero from a shape nobody levelled.
+            <span className="text-[#fbbf24]">
+              {" "}
+              · link a second corner for a fall
+            </span>
+          ) : null}
+        </p>
+      )}
+
+      {photos.length > 0 && (
+        <div className="mt-2">
+          <p className="mb-1 text-[0.7rem] text-muted">
+            {photos.length} photo{photos.length === 1 ? "" : "s"} from the visit
+          </p>
+          {/*
+            A row that scrolls sideways rather than a grid that grows downward:
+            the card sits in a column beside the map, and a bed with eight
+            photographs must not push the next bed off the screen.
+          */}
+          <ul className="flex gap-1.5 overflow-x-auto pb-1">
+            {photos.map((p) => (
+              <li key={p.photoId} className="relative shrink-0">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={p.url}
+                  alt={p.label}
+                  title={p.live ? p.label : `${p.label} — from another visit`}
+                  className="h-14 w-20 rounded-lg object-cover"
+                />
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUnlinkPhoto(p.photoId);
+                  }}
+                  aria-label={`Detach ${p.label}`}
+                  className="absolute right-0.5 top-0.5 rounded-md bg-black/70 px-1 text-[0.6rem] font-bold text-white"
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {sharedCount > 0 && (
         <p className="mt-1.5 flex items-center gap-1.5 text-[0.7rem] text-muted">

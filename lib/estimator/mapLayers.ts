@@ -90,7 +90,10 @@ export interface MapAnchor {
 
 export const ANCHOR_BLURB: Record<MapAnchor["source"], string> = {
   property: "From the property record",
-  upright: "From an Upright session's GPS",
+  // Surveyed pin positions, which are placed against an aligned plan rather
+  // than taken from a 3–5 m fix — a better location than half the property
+  // records, which have no coordinates at all.
+  upright: "Anchored on the Upright survey",
   placed: "Placed by hand",
   fallback: "No location yet — find the property to anchor the map",
 };

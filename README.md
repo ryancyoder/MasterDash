@@ -29,8 +29,10 @@ now the whole app, at the root.
     lib/estimator/assemblies.ts  bucket maths
     lib/estimator/geo.ts      lat/lng, Web Mercator, and geodesic measurement
     lib/estimator/plan.ts     the map take-off: shapes and load maths
+    lib/estimator/curve.ts    curved bed edges, derived from the corners
     lib/estimator/tiles.ts    the satellite basemap, as tiles
     lib/estimator/mapLayers.ts   georeferenced overlays, and the anchor
+    lib/estimator/survey.ts   Upright's elevations, derived not stored
     lib/estimator/planImage.ts  layer images, device first, uploaded later
     lib/estimator/visit.ts    the site visit: findings and their validation
     lib/server/upright.ts      the Upright session, read through its own API
@@ -374,6 +376,202 @@ it, the same way an empty job name never un-names this estimate.
 The loads it implies stay out of `assemblyBuckets` for the matching reason: they
 are projected from the shapes on every read, so a pull that replays ops can
 never double-count them.
+
+#### Upright's elevation survey, as a layer
+
+**SURVEY → Show** puts an Upright grade survey under the take-off: the anchor,
+the positions it was shot from, every target with its height above the anchor,
+and any slope runs. This is what the whole move to lat/lng was for — the survey
+was already in WGS84, so putting it on this map is a join rather than a
+conversion.
+
+Chosen **by session**, not by property, because that is what the data supports:
+48 sessions carry survey points and exactly one carries a `property_id`. The
+picker lists sessions that actually have points — deliberately not the same
+filter as the transcript picker, since of those 48 only 9 also have audio. Most
+grade work is shot without recording anything, and a single "is this session any
+use" test would have hidden 39 surveys.
+
+It is **read-only**. It was measured on site with the anchor cancellation that
+makes it mean anything; this screen lays beds out against it rather than
+correcting it. Drag a pin in Upright and the numbers here follow, because
+neither app stores an elevation.
+
+**Elevation is derived, never stored** — `upright_elevation_points` holds
+positions, `upright_elevation_shots` holds sightings, and the figure is worked
+out on every read. Two sightings from the *same* position cancel the device's
+own height, so a target is `d_t·tan(θ_t) − d_a·tan(θ_a)` and no instrument
+height is stored anywhere. An anchor sighting taken from one standing position
+can never be reused from another; a position without one contributes nothing.
+
+The two accuracy figures stay separate, as they do in Upright. **`repeat`**
+measures how steadily the iPad was held and nothing else — five shots at a pin
+dropped two feet off the mark will agree beautifully and all be wrong.
+**`agree`**, across observation positions, is the only figure that catches a
+mis-placed pin, which is why a single-observation point is labelled
+*unverified* rather than folded into one "confidence" number.
+
+Slope runs store only which two points they join; percent, fall and run are
+worked out at draw time. **The arrow points downhill**, the way water runs, and
+the percent is a magnitude because the arrow already carries the sign.
+
+Glyphs and colours are Upright's, unchanged: a green tripod for where you
+stood, a yellow benchmark triangle for the anchor, a red crosshair for a target.
+A thing that changed colour when it crossed into the estimator would break the
+one rule that makes a yard full of pins readable. Labels that would land on top
+of one already drawn are dropped — an observation, the anchor and the first
+target are often within a couple of feet, and three labels on one spot read as
+none. The glyph always stays, and zooming in separates them.
+
+**The maths is a port, and that is a debt.** It is defined by `elevationOf()`
+and `slopeOf()` in Upright's `index.html`; `lib/estimator/survey.ts` mirrors
+them. A second implementation can drift, and the honest fix is a derived
+endpoint on `upright-api` that both apps read — not done here because it would
+mean redeploying the Edge Function the field tool depends on. Until then the
+numbers are pinned by a test against a real three-observation survey off the
+project, so a drift fails an expectation instead of quietly mispricing a grade.
+The one deliberate difference: distances use MasterDash's WGS84 tangent plane
+where Upright uses haversine on a 6371 km sphere, which moves the answers by at
+most 0.019' on that survey — a quarter of an inch, against a field
+repeatability of ±0.1'.
+
+#### Squaring corners
+
+Beds and patios are mostly rectangles, and a rectangle tapped out by hand on a
+moving truck never is. **⊾** in the toolbar squares corners as they are placed;
+it is on by default and can be turned off, because some yards are not square
+and a snap you cannot switch off stops being a help.
+
+Two things happen, in this order:
+
+**Closing the rectangle.** Once three corners are down there is exactly one
+position for the fourth that makes both the corner at the last point and the
+corner back at the first square. It is marked on the map with a small box
+labelled *square*; tapping near it snaps to it, and the shape comes out a true
+rectangle rather than one that is 89.2° and measures accordingly.
+
+**Squaring one corner.** Otherwise the new edge is constrained to run at a
+multiple of 90° from the previous one — the tap sets how LONG the side is, the
+constraint sets which way it runs. That is the right split: which way a bed
+edge runs is a decision about the geometry, how long it is is a decision about
+the yard. Straight on is allowed, since a long side often gets tapped in two
+goes; doubling back is not, because that is never a corner.
+
+Both come **after** the corner and survey snaps, never before. Landing on a
+shot point says *this corner is there*, and squaring only says *this side runs
+that way* — a real position always wins over a tidy-up.
+
+The tolerance is in screen pixels (26), measured from where the squared corner
+would be to where the tap actually landed, so it means the same thing at every
+zoom and on a side of any length. Because there is no hover on a touch screen,
+the allowed directions are drawn as dashed guides from the last corner — the
+snap is something to aim at rather than something that happens to you.
+
+**It is the ground that is squared, not the screen.** The constraint is solved
+on the tangent plane at the corner. Mercator is conformal, so at site scale the
+two agree and the guides can be drawn in screen space — but the geometry that
+gets stored is square on the ground, which is what a contractor is buying.
+
+Measured: a deliberately sloppy rectangle whose worst corner was 0.81° out came
+back at **90.000° on all four**.
+
+#### Publishing the take-off for other apps
+
+The saved row carries a `takeoff` alongside `plan`: the same shapes with their
+**outlines already resolved** — curves worked out, node ids resolved to
+positions — plus the assembly name, the measurement and the load count. Upright
+draws it on its map from that and owns none of the geometry.
+
+Everything else here is derived and never stored, and this is the one
+deliberate exception. It is the same kind of exception `lines` already is: that
+column is a projection so a report, or Aspire, or anything else gets one flat
+row and never has to fold the op log itself. This is that, for the shapes.
+
+The alternative was to hand out the corners and let each reader resolve the
+curves — which means the centripetal Catmull-Rom in `curve.ts` living in every
+app that wants to show a bed, including inside an Edge Function, and a bed that
+measures one area here and draws a different shape there. The app that owns the
+definition resolves it once, at save; everyone else draws points.
+
+`property_id` is now written from the property picker too. It had existed
+unused since the table was created — the map anchor carried a property id and
+the column never did, so every estimate on the project read `property_id: null`
+and nothing looking for "the take-off for this yard" could find one.
+
+#### Curved edges
+
+A bed is rarely a polygon. **◠** in the toolbar rounds the edges of shapes
+drawn from then on, and the shape card flips an existing one between
+**Curved** and **Straight**.
+
+This is not cosmetic. A chord always cuts inside the arc it stands for, so a
+curve tapped as straight segments **under-reads** — and under-reading is how a
+job runs out of mulch. A circle tapped at eight points measures 90.0% of its
+true area as a polygon and 99.0% smoothed; the sweeping bed in testing came out
+20.9% larger curved than straight. That difference is material, not decorative.
+
+**The curve is derived, never stored.** The shape keeps the handful of corners
+somebody actually tapped and the outline is rebuilt from them on every read —
+so dragging a corner corrects the curve, the area and the load count together.
+Storing a tessellated outline would freeze a bed into forty points nobody
+placed and nobody could meaningfully move.
+
+**Centripetal Catmull-Rom**, and the parameterisation is the whole reason it
+works. A Catmull-Rom spline passes *through* its control points, which is what
+a bed edge needs — the estimator tapped where the bed goes, not where a handle
+goes. The uniform version overshoots badly on unevenly spaced points, throwing
+loops outside the shape, and points tapped by hand at a walking pace are never
+evenly spaced. Centripetal (α = 0.5) is provably free of cusps and
+self-intersection within a span, at no extra cost.
+
+Twelve points per span. Going to 96 moves a test circle's area by 0.03%, so
+twelve is effectively converged; what is left is the spline's fit, and that is
+bought by tapping another corner rather than by a bigger number here.
+
+**Corners can be held sharp, one at a time.** A span runs straight when *both*
+its ends are sharp and curves otherwise — which is what makes the common bed
+expressible: straight along a drive, swept round the lawn. Tap a corner of the
+selected shape on the map to hold it sharp; there is no control for it, because
+the gesture is the control. Sharp corners draw as squares and rounded ones as
+circles, and at a sharp corner the neighbouring point is clamped so the curve
+takes its tangent only from the side it is on — without that, a curve arriving
+at a corner would be bent by whatever lies beyond it and the corner would not
+look like one.
+
+Splitting a rounded side gives the new corner the side's roundness, so adding
+detail to a curve does not put a kink in it.
+
+#### Drawing a bed onto surveyed points
+
+A take-off corner drawn within 18 pixels of a shot point becomes **linked** to
+it: the corner lands exactly on the surveyed position and records which point
+it is. Snapping works while drawing and by dropping an existing corner onto a
+point; the target is ringed and named while the finger is still down, so a
+join to another shape and a link to a survey are distinguishable before either
+happens. Linked corners are drawn ringed in the survey's own red.
+
+**A link, not a derivation — and that is the load-bearing choice.** Deriving
+the corner's position from the survey would be tidier and is wrong: the survey
+belongs to another app and arrives over the network, so a bed whose corners
+came from it would have no geometry when the survey is not loaded. The
+take-off has to draw and price with no signal. An estimate that needs a round
+trip to know where its own beds are is not an estimate.
+
+So the position is the estimate's and the link is provenance: *this corner is
+on a shot point, and therefore has a measured height*. If the pin later moves
+in Upright the two disagree, and the honest response is to say so rather than
+to follow silently or diverge silently.
+
+**Dragging a linked corner off its point breaks the link.** It has to — the
+link asserts the corner is on that point, and once it has been dragged
+elsewhere that is no longer true. Keeping it would attach a measured elevation
+to a position nobody measured.
+
+What this buys is on the shape card: **the fall across a shape**. An area tells
+you how much mulch; the fall tells you whether it drains. It is only reported
+once at least two corners are on shot points, because one measured corner and
+three guessed ones is a height, not a grade — a bed with one link says so and
+asks for a second rather than reporting a fall of zero.
 
 #### Anchoring, and the half of the properties with no coordinates
 

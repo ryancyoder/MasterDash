@@ -30,6 +30,12 @@ import { useCatalogPhotos } from "@/lib/estimator/catalogPhotos";
 import { useCatalogPrices } from "@/lib/estimator/catalogPrices";
 import { useHomeTiles } from "@/lib/estimator/tileTree";
 import { visitPendingCount } from "@/lib/estimator/visit";
+import { pendingTakeoffs } from "@/lib/estimator/pendingTakeoff";
+import { shapeKindFor } from "@/lib/estimator/plan";
+import { getAssembly } from "@/lib/estimator/assemblies";
+import { fetchReviewSession } from "@/lib/estimator/reviewData";
+import type { ReviewPhoto } from "@/lib/estimator/review";
+import type { PlanDrawIntent } from "@/components/estimator/PlanPage";
 import { photoTarget } from "@/lib/estimator/photos";
 import TileOptionsSheet from "@/components/estimator/TileOptionsSheet";
 import {
@@ -85,6 +91,51 @@ export default function EstimatorPage() {
 
   /** Drill path. Empty = home. */
   const [stack, setStack] = useState<TileNode[]>([]);
+
+  /*
+    TAKE-OFFS SOMEBODY TAGGED IN THE YARD AND HAS NOT DRAWN YET.
+
+    Upright's tiles let a crew say "this is a mulch bed" while standing in front
+    of one. Those photographs arrive carrying an assembly, so the work of
+    turning a visit into an estimate can start from a list rather than from
+    somebody scrubbing through the pictures deciding what they were of.
+
+    Read from the visit this estimate has chosen, so it follows the same
+    per-estimate, per-session rule the survey and review layers already use. No
+    session chosen means no placeholders, which is correct rather than empty:
+    there is nothing to be waiting for.
+  */
+  const [visitPhotos, setVisitPhotos] = useState<ReviewPhoto[]>([]);
+  const [drawIntent, setDrawIntent] = useState<PlanDrawIntent | null>(null);
+  const reviewSessionId = estimate.plan.review?.sessionId ?? null;
+
+  // Cleared during render rather than in the effect below: dropping the visit
+  // must not leave one render showing the old visit's placeholders against the
+  // new state. Same pattern as everywhere else here.
+  const [lastReviewId, setLastReviewId] = useState(reviewSessionId);
+  if (lastReviewId !== reviewSessionId) {
+    setLastReviewId(reviewSessionId);
+    setVisitPhotos([]);
+  }
+
+  useEffect(() => {
+    if (!reviewSessionId) return;
+    let live = true;
+    void fetchReviewSession(reviewSessionId).then((s) => {
+      if (live) setVisitPhotos(s?.photos ?? []);
+    });
+    return () => {
+      live = false;
+    };
+  }, [reviewSessionId]);
+
+  // Only the ones still to draw. A bed whose photograph is already attached to
+  // a shape is done, and a placeholder for it would be a job asking to be done
+  // twice.
+  const waiting = useMemo(
+    () => pendingTakeoffs(visitPhotos, estimate.plan.shapes).filter((t) => !t.plotted),
+    [visitPhotos, estimate.plan.shapes],
+  );
   const [openAssembly, setOpenAssembly] = useState<string | null>(null);
   const [plants, setPlants] = useState<PlantRow[] | null>(null);
   /**
@@ -253,6 +304,34 @@ export default function EstimatorPage() {
       drillInto(node);
     },
     [drillInto],
+  );
+
+  /**
+   * Open the plan with a tagged take-off ready to draw.
+   *
+   * The tile row is on the home screen, so this has to navigate as well as
+   * arm. The plan tile is found by its page rather than by name, since it is
+   * the destination that matters and the label is a caption.
+   */
+  const plotTakeoff = useCallback(
+    (t: (typeof waiting)[number]) => {
+      const model = getAssembly(t.assemblyId);
+      const planTile = homeTiles.find((n) => n.page === "plan");
+      if (!planTile) return;
+      setDrawIntent({
+        assemblyId: t.assemblyId,
+        kind: shapeKindFor(model?.unitOfWork ?? "sq_ft"),
+        label: t.label,
+        photos: t.photos.map((p) => ({
+          sessionId: reviewSessionId!,
+          photoId: p.id,
+          url: p.url,
+          label: `Pin ${p.seq}`,
+        })),
+      });
+      drillInto(planTile);
+    },
+    [homeTiles, drillInto, reviewSessionId],
   );
 
   /**
@@ -720,7 +799,12 @@ export default function EstimatorPage() {
         }`}
       >
         {onPlanPage ? (
-          <PlanPage estimate={estimate} settings={settings} />
+          <PlanPage
+            estimate={estimate}
+            settings={settings}
+            intent={drawIntent}
+            onIntentDone={() => setDrawIntent(null)}
+          />
         ) : onVisitPage ? (
           <VisitPage estimate={estimate} settings={settings} />
         ) : onAssembliesPage ? (
@@ -738,6 +822,44 @@ export default function EstimatorPage() {
             the job.
           </p>
         ) : (
+          <>
+          {!current && waiting.length > 0 && (
+            <div className="mb-3">
+              <p className="mb-1.5 text-xs text-muted">
+                {waiting.length} tagged on the visit, not drawn yet
+              </p>
+              {/*
+                A row that scrolls sideways rather than a block that pushes the
+                grid down. These are a prompt, not the job: the tiles below are
+                still what the screen is for.
+              */}
+              <ul className="flex gap-2 overflow-x-auto pb-1">
+                {waiting.map((t) => (
+                  <li key={t.key} className="shrink-0">
+                    <button
+                      onClick={() => plotTakeoff(t)}
+                      className="flex w-40 flex-col overflow-hidden rounded-2xl border border-dashed border-accent bg-surface text-left"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={t.photos[0].url}
+                        alt={t.label}
+                        className="aspect-[4/3] w-full object-cover"
+                      />
+                      <span className="px-2.5 py-2">
+                        <span className="block text-xs font-bold text-ink">{t.label}</span>
+                        <span className="block text-[0.65rem] text-muted">
+                          {t.photos.length === 1
+                            ? "tap to plot"
+                            : `${t.photos.length} photos · tap to plot`}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <TileGrid
             nodes={displayNodes}
             editing={editing}
@@ -760,6 +882,7 @@ export default function EstimatorPage() {
             onOpenOptions={setOptionsNode}
             onEnterEdit={enterEditing}
           />
+          </>
         )}
       </div>
 

@@ -27,8 +27,14 @@
 // instead of leaving a stale number behind.
 
 import type { AssemblyModel } from "./assemblies";
+import { smoothOutline } from "./curve";
 import { areaSqFt, latLngFrom, lengthFt, type LatLng } from "./geo";
 import type { Basemap, MapAnchor } from "./mapLayers";
+import type { ShapePhotoLink } from "./photoLink";
+
+// Re-exported so a take-off's type and its photographs' type still read
+// as one thing from a call site, though they are written apart.
+export type { ShapePhotoLink };
 
 export type ShapeKind = "area" | "linear";
 
@@ -47,7 +53,36 @@ export type ShapeKind = "area" | "linear";
  * joins and works the grade out at draw time, so dragging a pin corrects the
  * slope, which a stored percentage could not do.
  */
-export type PlanNodes = Record<string, LatLng>;
+export interface NodeSurveyLink {
+  /** The Upright session the point belongs to. */
+  sessionId: string;
+  pointId: string;
+  /** How it read when it was linked — "Target 4" — so a card can name it. */
+  label: string;
+}
+
+export interface PlanNode {
+  at: LatLng;
+  /**
+   * The surveyed point this corner was placed on, when it was placed on one.
+   *
+   * A LINK, not a derivation — the corner keeps its own position. That is the
+   * important distinction and it is not the tidier-looking choice. Deriving
+   * the position from the survey would mean a bed whose corners vanish when
+   * the survey is not loaded: it belongs to another app, it is fetched over
+   * the network, and the take-off has to draw and price with no signal. An
+   * estimate that needs a round trip to know where its own beds are is not an
+   * estimate.
+   *
+   * So the position is ours and the link is provenance: this corner is on a
+   * shot point, and therefore has a measured elevation. If the pin later moves
+   * in Upright the two disagree, and the honest thing is to SAY so rather than
+   * to follow silently or diverge silently.
+   */
+  survey?: NodeSurveyLink;
+}
+
+export type PlanNodes = Record<string, PlanNode>;
 
 export interface PlanShape {
   id: string;
@@ -62,8 +97,25 @@ export interface PlanShape {
    */
   vertices: string[];
   color: string;
+  /**
+   * Which of this shape's corners round, by node id. Absent or empty is a
+   * plain polygon, which is what most take-offs are.
+   *
+   * Per SHAPE rather than per node, because a corner shared with the lawn next
+   * door can perfectly well be a sweep on the bed's side and a hard corner on
+   * the lawn's — they agree about where the corner IS, which is all sharing
+   * ever claimed.
+   */
+  smoothVertices?: string[];
   /** The assembly this shape's measurement buys loads of. Null = unlinked. */
   assemblyId: string | null;
+  /**
+   * Photographs of what this shape is measuring, from a visit.
+   *
+   * Optional, so every plan drawn before this reads as a shape with no
+   * photographs rather than as a broken one.
+   */
+  photos?: ShapePhotoLink[];
 }
 
 /** A corner tapped while drawing: either a new position, or one that snapped. */
@@ -71,6 +123,8 @@ export interface PendingPoint {
   at: LatLng;
   /** The existing corner this landed on, if it landed on one. */
   nodeId: string | null;
+  /** The surveyed point it landed on, if it landed on one of those instead. */
+  survey?: NodeSurveyLink;
 }
 
 /**
@@ -87,6 +141,27 @@ export interface PlanState {
   basemap: Basemap;
   /** Every corner on the plan, shared or not. */
   nodes: PlanNodes;
+  /**
+   * The Upright session whose elevation survey is drawn under the take-off.
+   *
+   * Per-estimate, and by SESSION rather than by property: only one session on
+   * the project carries a property_id, so a property-keyed join would find
+   * almost nothing. The label rides along so the card can name the visit
+   * instead of showing a uuid.
+   */
+  survey: { sessionId: string; label: string } | null;
+  /**
+   * The Upright session being replayed beside the plan.
+   *
+   * Separate from `survey` on purpose, even though both name a session and
+   * both are usually the same visit. They answer different questions and are
+   * chosen from different lists: a survey needs elevation points and most
+   * grade work is shot silently, while review needs master audio and most
+   * recorded visits carry no survey. Folding them into one field would mean
+   * choosing a visit to listen to could silently swap the measured grade the
+   * beds are being laid out against.
+   */
+  review: { sessionId: string; label: string } | null;
   shapes: PlanShape[];
   /** Overlay ids switched off for this estimate. Absence means shown. */
   hiddenOverlayIds: string[];
@@ -97,6 +172,8 @@ export function emptyPlan(): PlanState {
     anchor: null,
     basemap: "satellite",
     nodes: {},
+    survey: null,
+    review: null,
     shapes: [],
     hiddenOverlayIds: [],
   };
@@ -140,8 +217,28 @@ export function planId(prefix: string): string {
 export function pointsOf(shape: PlanShape, nodes: PlanNodes): LatLng[] {
   const out: LatLng[] = [];
   for (const id of shape.vertices) {
-    const at = nodes[id];
-    if (at) out.push(at);
+    const node = nodes[id];
+    if (node) out.push(node.at);
+  }
+  return out;
+}
+
+/** Just the positions, for the canvas — which draws and hit-tests on them. */
+export function positionsOf(nodes: PlanNodes): Record<string, LatLng> {
+  const out: Record<string, LatLng> = {};
+  for (const [id, node] of Object.entries(nodes)) out[id] = node.at;
+  return out;
+}
+
+/** The surveyed corners of one shape, in vertex order. */
+export function surveyedCorners(
+  shape: PlanShape,
+  nodes: PlanNodes,
+): { nodeId: string; link: NodeSurveyLink }[] {
+  const out: { nodeId: string; link: NodeSurveyLink }[] = [];
+  for (const id of shape.vertices) {
+    const link = nodes[id]?.survey;
+    if (link) out.push({ nodeId: id, link });
   }
   return out;
 }
@@ -170,22 +267,45 @@ export function sharedNodeIds(shapes: PlanShape[]): Set<string> {
 export function pruneNodes(nodes: PlanNodes, shapes: PlanShape[]): PlanNodes {
   const live = new Set(shapes.flatMap((s) => s.vertices));
   const out: PlanNodes = {};
-  for (const [id, at] of Object.entries(nodes)) if (live.has(id)) out[id] = at;
+  for (const [id, node] of Object.entries(nodes)) if (live.has(id)) out[id] = node;
   return out;
 }
 
 // --- Measurement ----------------------------------------------------------
 
 /**
+ * What the shape actually encloses: the corners, with any curves resolved.
+ *
+ * Everything downstream measures and draws THIS rather than the corner list,
+ * so a curved bed prices as the ground it covers rather than as the chords
+ * somebody tapped across it.
+ */
+export function outlineOf(shape: PlanShape, nodes: PlanNodes): LatLng[] {
+  const smooth = new Set(shape.smoothVertices ?? []);
+  if (smooth.size === 0) return pointsOf(shape, nodes);
+
+  const points: LatLng[] = [];
+  const flags: boolean[] = [];
+  for (const id of shape.vertices) {
+    const node = nodes[id];
+    if (!node) continue;
+    points.push(node.at);
+    flags.push(smooth.has(id));
+  }
+  return smoothOutline(points, flags, shape.type === "area");
+}
+
+/**
  * A shape's measurement in feet: square for an area, linear for a run.
  *
  * Derived on every read, from wherever the corners are now — which is what
  * makes dragging a shared corner correct the loads on BOTH shapes at once
- * rather than leaving one of them holding a stale number.
+ * rather than leaving one of them holding a stale number, and what makes
+ * rounding a bed's edge re-price it without anything else being touched.
  */
 export function measurementOf(shape: PlanShape, nodes: PlanNodes): number {
-  const points = pointsOf(shape, nodes);
-  return shape.type === "area" ? areaSqFt(points) : lengthFt(points);
+  const outline = outlineOf(shape, nodes);
+  return shape.type === "area" ? areaSqFt(outline) : lengthFt(outline);
 }
 
 /** The unit a shape can be linked against. */
@@ -200,6 +320,18 @@ export function assembliesForShape(
 ): AssemblyModel[] {
   const unit = unitForShape(type);
   return models.filter((m) => m.unitOfWork === unit && m.bucketSize !== null);
+}
+
+/**
+ * The kind of shape an assembly is measured by.
+ *
+ * The reverse of unitForShape(), and it is what lets a take-off tagged in the
+ * field arrive here already knowing whether it is a bed or a run. An assembly
+ * measured in tons (outcropping) has no shape of its own; it is drawn as an
+ * area, which is the shape somebody pacing out a rock garden would draw.
+ */
+export function shapeKindFor(unitOfWork: string): ShapeKind {
+  return unitOfWork === "ln_ft" ? "linear" : "area";
 }
 
 /**
@@ -236,6 +368,41 @@ export function workBought(buckets: number, bucketSize: number | null): number {
  * upgrade, which is right, because two corners that merely happened to be
  * drawn in the same spot were never the same corner.
  */
+function linkFrom(value: unknown): { survey: NodeSurveyLink } | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.sessionId !== "string" || !v.sessionId) return null;
+  if (typeof v.pointId !== "string" || !v.pointId) return null;
+  return {
+    survey: {
+      sessionId: v.sessionId,
+      pointId: v.pointId,
+      label: typeof v.label === "string" && v.label ? v.label : "surveyed point",
+    },
+  };
+}
+
+/**
+ * A stored photograph link, or null if it cannot name a picture.
+ *
+ * `url` is what the card draws when the session is not loaded, and `photoId`
+ * is what lets a loaded session supersede it, so a row missing either has
+ * nothing to show and is dropped rather than kept as a broken thumbnail.
+ */
+function photoLinkFrom(value: unknown): ShapePhotoLink | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.sessionId !== "string" || !v.sessionId) return null;
+  if (typeof v.photoId !== "string" || !v.photoId) return null;
+  if (typeof v.url !== "string" || !v.url) return null;
+  return {
+    sessionId: v.sessionId,
+    photoId: v.photoId,
+    url: v.url,
+    label: typeof v.label === "string" && v.label ? v.label : "photo",
+  };
+}
+
 export function topologyFrom(value: unknown): {
   nodes: PlanNodes;
   shapes: PlanShape[];
@@ -244,9 +411,14 @@ export function topologyFrom(value: unknown): {
 
   const nodes: PlanNodes = {};
   if (v.nodes && typeof v.nodes === "object" && !Array.isArray(v.nodes)) {
-    for (const [id, at] of Object.entries(v.nodes as Record<string, unknown>)) {
-      const point = latLngFrom(at);
-      if (id && point) nodes[id] = point;
+    for (const [id, raw] of Object.entries(v.nodes as Record<string, unknown>)) {
+      if (!id) continue;
+      // Two shapes here: `{at, survey?}`, and the bare LatLng corners were
+      // stored as before there was anything to link them to.
+      const asNode = (raw ?? {}) as Record<string, unknown>;
+      const point = latLngFrom(asNode.at) ?? latLngFrom(raw);
+      if (!point) continue;
+      nodes[id] = { at: point, ...(linkFrom(asNode.survey) ?? {}) };
     }
   }
 
@@ -268,7 +440,7 @@ export function topologyFrom(value: unknown): {
       const point = latLngFrom(entry);
       if (!point) continue;
       const id = planId("n");
-      nodes[id] = point;
+      nodes[id] = { at: point };
       ids.push(id);
     }
 
@@ -276,13 +448,38 @@ export function topologyFrom(value: unknown): {
     // nothing and measures nothing, so it is dropped rather than kept as a
     // shape that quietly contributes zero loads.
     if (ids.length < (type === "area" ? 3 : 2)) continue;
+    // Only ids this shape actually has: a stale one would round nothing and
+    // sit in the list for ever.
+    const held = new Set(ids);
+    const smooth = (Array.isArray(r.smoothVertices) ? r.smoothVertices : []).filter(
+      (v): v is string => typeof v === "string" && held.has(v),
+    );
+
+    // One attachment per picture, even if the stored list somehow holds two:
+    // a duplicate is invisible on the card and doubles what an export carries.
+    const seen = new Set<string>();
+    const photos: ShapePhotoLink[] = [];
+    for (const entry of Array.isArray(r.photos) ? r.photos : []) {
+      const link = photoLinkFrom(entry);
+      if (!link || seen.has(link.photoId)) continue;
+      seen.add(link.photoId);
+      photos.push(link);
+    }
+
     shapes.push({
       id: r.id,
       type,
       vertices: ids,
+      ...(smooth.length ? { smoothVertices: smooth } : {}),
       color: typeof r.color === "string" && r.color ? r.color : SHAPE_COLORS[0],
       assemblyId:
         typeof r.assemblyId === "string" && r.assemblyId ? r.assemblyId : null,
+      // EVERY FIELD ON A SHAPE HAS TO BE READ BACK HERE. This function rebuilds
+      // a shape rather than casting one, which is what makes a hand-edited or
+      // half-written estimate safe to open — but it also means anything not
+      // named is silently dropped on the next load. Photographs attached to a
+      // bed would have vanished on reopening the estimate, with no error.
+      ...(photos.length ? { photos } : {}),
     });
   }
 

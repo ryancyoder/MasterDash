@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { ReviewSegment } from "@/lib/estimator/review";
 import { MAX_TRANSCRIPT_CHARS } from "@/lib/estimator/visit";
 import { configReport, serverConfig } from "@/lib/server/supabase";
 import { transcriptText, uprightApi } from "@/lib/server/upright";
@@ -36,6 +37,39 @@ function sessionId(value: unknown): string | null {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value)
     ? value
     : null;
+}
+
+/**
+ * The utterances, with their timings kept.
+ *
+ * `transcriptText()` flattens the transcript for the extractor, which reads it
+ * as prose and has no playhead. Review does have one, so it needs the opposite:
+ * every utterance separate, with the window it covers, so the line being spoken
+ * can be lit as the audio runs.
+ *
+ * These timings come from AssemblyAI, which read the AUDIO — so they are
+ * already on the audio's own clock and must never be drift-scaled. See the two
+ * clocks note in review.ts.
+ */
+function timedSegments(segments: unknown): ReviewSegment[] {
+  const rows = Array.isArray(segments) ? segments : [];
+  return rows
+    .map((raw, i) => {
+      const r = (raw ?? {}) as Record<string, unknown>;
+      const text = typeof r.text === "string" ? r.text.trim() : "";
+      const startMs = typeof r.start_ms === "number" && Number.isFinite(r.start_ms) ? r.start_ms : null;
+      const endMs = typeof r.end_ms === "number" && Number.isFinite(r.end_ms) ? r.end_ms : null;
+      if (!text || startMs === null || endMs === null) return null;
+      return {
+        id: typeof r.id === "number" ? r.id : i,
+        startMs,
+        endMs,
+        speaker: typeof r.speaker === "string" && r.speaker ? r.speaker : "?",
+        text,
+      };
+    })
+    .filter((s): s is ReviewSegment => s !== null)
+    .sort((a, b) => a.startMs - b.startMs);
 }
 
 export async function GET(request: Request) {
@@ -91,7 +125,14 @@ export async function GET(request: Request) {
   const truncated = full.length > MAX_TRANSCRIPT_CHARS;
   const text = truncated ? full.slice(0, MAX_TRANSCRIPT_CHARS) : full;
 
-  return NextResponse.json({ ok: true, status: "completed", text, truncated });
+  // `segments` is additive — the Visit page reads `text` and ignores it.
+  return NextResponse.json({
+    ok: true,
+    status: "completed",
+    text,
+    truncated,
+    segments: timedSegments(body.segments),
+  });
 }
 
 export async function POST(request: Request) {
