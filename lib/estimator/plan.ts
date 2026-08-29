@@ -30,6 +30,11 @@ import type { AssemblyModel } from "./assemblies";
 import { smoothOutline } from "./curve";
 import { areaSqFt, latLngFrom, lengthFt, type LatLng } from "./geo";
 import type { Basemap, MapAnchor } from "./mapLayers";
+import type { ShapePhotoLink } from "./photoLink";
+
+// Re-exported so a take-off's type and its photographs' type still read
+// as one thing from a call site, though they are written apart.
+export type { ShapePhotoLink };
 
 export type ShapeKind = "area" | "linear";
 
@@ -104,6 +109,13 @@ export interface PlanShape {
   smoothVertices?: string[];
   /** The assembly this shape's measurement buys loads of. Null = unlinked. */
   assemblyId: string | null;
+  /**
+   * Photographs of what this shape is measuring, from a visit.
+   *
+   * Optional, so every plan drawn before this reads as a shape with no
+   * photographs rather than as a broken one.
+   */
+  photos?: ShapePhotoLink[];
 }
 
 /** A corner tapped while drawing: either a new position, or one that snapped. */
@@ -358,6 +370,27 @@ function linkFrom(value: unknown): { survey: NodeSurveyLink } | null {
   };
 }
 
+/**
+ * A stored photograph link, or null if it cannot name a picture.
+ *
+ * `url` is what the card draws when the session is not loaded, and `photoId`
+ * is what lets a loaded session supersede it, so a row missing either has
+ * nothing to show and is dropped rather than kept as a broken thumbnail.
+ */
+function photoLinkFrom(value: unknown): ShapePhotoLink | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.sessionId !== "string" || !v.sessionId) return null;
+  if (typeof v.photoId !== "string" || !v.photoId) return null;
+  if (typeof v.url !== "string" || !v.url) return null;
+  return {
+    sessionId: v.sessionId,
+    photoId: v.photoId,
+    url: v.url,
+    label: typeof v.label === "string" && v.label ? v.label : "photo",
+  };
+}
+
 export function topologyFrom(value: unknown): {
   nodes: PlanNodes;
   shapes: PlanShape[];
@@ -410,6 +443,17 @@ export function topologyFrom(value: unknown): {
       (v): v is string => typeof v === "string" && held.has(v),
     );
 
+    // One attachment per picture, even if the stored list somehow holds two:
+    // a duplicate is invisible on the card and doubles what an export carries.
+    const seen = new Set<string>();
+    const photos: ShapePhotoLink[] = [];
+    for (const entry of Array.isArray(r.photos) ? r.photos : []) {
+      const link = photoLinkFrom(entry);
+      if (!link || seen.has(link.photoId)) continue;
+      seen.add(link.photoId);
+      photos.push(link);
+    }
+
     shapes.push({
       id: r.id,
       type,
@@ -418,6 +462,12 @@ export function topologyFrom(value: unknown): {
       color: typeof r.color === "string" && r.color ? r.color : SHAPE_COLORS[0],
       assemblyId:
         typeof r.assemblyId === "string" && r.assemblyId ? r.assemblyId : null,
+      // EVERY FIELD ON A SHAPE HAS TO BE READ BACK HERE. This function rebuilds
+      // a shape rather than casting one, which is what makes a hand-edited or
+      // half-written estimate safe to open — but it also means anything not
+      // named is silently dropped on the next load. Photographs attached to a
+      // bed would have vanished on reopening the estimate, with no error.
+      ...(photos.length ? { photos } : {}),
     });
   }
 

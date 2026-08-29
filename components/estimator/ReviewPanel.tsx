@@ -351,6 +351,7 @@ export function ReviewColumn({
   playing,
   onSeek,
   picked,
+  link,
 }: {
   session: ReviewSession | null;
   segments: ReviewSegment[];
@@ -367,6 +368,21 @@ export function ReviewColumn({
    * the preview is the ONLY place it can appear.
    */
   picked: { url: string; title: string; note: string | null } | null;
+  /**
+   * Attaching the shown photograph to the bed it is a picture of.
+   *
+   * Absent when there is nothing to attach — a grade frame, or a preview with
+   * no pin behind it — so the control is not offered where it cannot work.
+   */
+  link?: {
+    /** Beds this photograph already documents, for the reverse readout. */
+    documents: { id: string; label: string }[];
+    /** True while the next tap on the canvas will attach it. */
+    arming: boolean;
+    onArm: () => void;
+    onCancel: () => void;
+    onUnlink: (shapeId: string) => void;
+  } | null;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const current = useMemo(() => segmentAt(segments, audioMs), [segments, audioMs]);
@@ -418,6 +434,45 @@ export function ReviewColumn({
             <div className="px-3 py-2">
               <p className="text-xs font-bold text-ink">{shown.title}</p>
               {shown.note && <p className="mt-0.5 text-xs text-muted">{shown.note}</p>}
+              {link && (
+                <div className="mt-2 border-t border-edge pt-2">
+                  {/*
+                    THE LINK READ BACKWARDS. A bed's card says which photographs
+                    document it; this says which beds a photograph documents,
+                    and one frame routinely covers several — stand at the corner
+                    of a house and you have the bed, the lawn and the edging
+                    between them in one shot.
+                  */}
+                  {link.documents.length > 0 && (
+                    <ul className="mb-1.5 flex flex-wrap gap-1">
+                      {link.documents.map((d) => (
+                        <li key={d.id}>
+                          <button
+                            onClick={() => link.onUnlink(d.id)}
+                            title="Detach from this take-off"
+                            className="rounded-lg bg-surface2 px-2 py-1 text-[0.65rem] text-ink"
+                          >
+                            {d.label} <span className="text-muted">✕</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {/*
+                    ARM, ONE TAP, DISARM — the rule Upright's slope runs already
+                    set. Leaving the mode open would make every later tap on the
+                    plan attach a photograph nobody asked to attach.
+                  */}
+                  <button
+                    onClick={link.arming ? link.onCancel : link.onArm}
+                    className={`w-full rounded-lg px-2 py-1.5 text-[0.65rem] font-bold ${
+                      link.arming ? "bg-accent text-black" : "bg-surface2 text-ink"
+                    }`}
+                  >
+                    {link.arming ? "Tap a take-off on the plan — or cancel" : "Link to a take-off"}
+                  </button>
+                </div>
+              )}
             </div>
           </>
         ) : (

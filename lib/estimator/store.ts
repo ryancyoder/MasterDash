@@ -12,6 +12,11 @@ import {
   type PlanState,
   type ShapeKind,
 } from "./plan";
+import {
+  withPhotoLink,
+  withoutPhotoLink,
+  type ShapePhotoLink,
+} from "./photoLink";
 import { isLatLng, type LatLng } from "./geo";
 import { sharedNodeIds } from "./plan";
 import type { Basemap, MapAnchor } from "./mapLayers";
@@ -719,6 +724,26 @@ export function updateShape(id: string, patch: Partial<Omit<PlanShape, "id">>) {
   mutatePlan((plan) => ({
     ...plan,
     shapes: plan.shapes.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+  }));
+}
+
+/**
+ * Attach a photograph from a visit to the shape it is a picture of.
+ *
+ * Goes through `withPhotoLink`, so tapping a bed that already carries this
+ * photo is a no-op rather than a second identical thumbnail.
+ */
+export function linkPhotoToShape(shapeId: string, link: ShapePhotoLink) {
+  mutatePlan((plan) => ({
+    ...plan,
+    shapes: plan.shapes.map((s) => (s.id === shapeId ? withPhotoLink(s, link) : s)),
+  }));
+}
+
+export function unlinkPhotoFromShape(shapeId: string, photoId: string) {
+  mutatePlan((plan) => ({
+    ...plan,
+    shapes: plan.shapes.map((s) => (s.id === shapeId ? withoutPhotoLink(s, photoId) : s)),
   }));
 }
 

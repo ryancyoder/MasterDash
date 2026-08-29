@@ -59,6 +59,7 @@ import {
   type PlanShape,
   type ShapeKind,
 } from "@/lib/estimator/plan";
+import { shapesForPhoto } from "@/lib/estimator/photoLink";
 import {
   addOverlayFromFile,
   deleteLayer,
@@ -79,6 +80,7 @@ import {
   linkNodeToSurvey,
   mergeNodes,
   moveNodes,
+  linkPhotoToShape,
   removeShape,
   setBasemap,
   setOverlayHidden,
@@ -87,6 +89,7 @@ import {
   setReviewSession,
   setSurveySession,
   toggleVertexSmooth,
+  unlinkPhotoFromShape,
   updateShape,
 } from "@/lib/estimator/store";
 import type { Estimate, EstimatorSettings } from "@/lib/estimator/types";
@@ -382,6 +385,92 @@ export default function PlanPage({
     const p = visit?.photos.find((x) => x.id === selectedPhotoId);
     return p ? { url: p.url, title: `Pin ${p.seq}`, note: p.note } : null;
   }, [stripPick, selectedSurveyId, selectedPhotoId, gradeFrames, visit]);
+
+  /**
+   * Attaching a photograph to the take-off it is a picture of.
+   *
+   * ARM, ONE TAP, DISARM — Upright's slope runs set that rule and it applies
+   * for the same reason: the canvas tap that attaches is the same tap that
+   * selects a shape, so a mode left open would attach a photograph to every
+   * bed touched afterwards. It also clears when the photo changes, since the
+   * armed tap belongs to the frame that armed it.
+   */
+  const [linkArmed, setLinkArmed] = useState(false);
+
+  /** The pin the column is showing, when there is one that can be attached. */
+  const linkablePhoto = useMemo(() => {
+    if (!visit || selectedSurveyId) return null;
+    const p = visit.photos.find((x) => x.id === selectedPhotoId);
+    return p
+      ? { sessionId: visit.id, photoId: p.id, url: p.url, label: `Pin ${p.seq}` }
+      : null;
+  }, [visit, selectedPhotoId, selectedSurveyId]);
+
+  // Adjusted during render rather than in an effect: an armed tap belongs to
+  // the frame that armed it, so changing photo must disarm BEFORE anything
+  // reads the flag. React's documented way to reset state when an input
+  // changes, and the same pattern useReviewAudio uses to reset the playhead.
+  const armedFor = linkablePhoto?.photoId ?? null;
+  const [lastArmedFor, setLastArmedFor] = useState(armedFor);
+  if (lastArmedFor !== armedFor) {
+    setLastArmedFor(armedFor);
+    setLinkArmed(false);
+  }
+
+  const attachPhoto = useCallback(
+    (shapeId: string) => {
+      if (!linkablePhoto) return;
+      linkPhotoToShape(shapeId, linkablePhoto);
+      setLinkArmed(false);
+      setSelectedId(shapeId);
+    },
+    [linkablePhoto],
+  );
+
+  /**
+   * A shape's photographs, with the loaded visit's own rows preferred.
+   *
+   * The link copies a url down so a card can draw with no session loaded, but
+   * Upright writes a NEW storage path whenever a picture is replaced — so a
+   * copied url can point at a superseded file. Where the session IS loaded its
+   * row is the truth; where it is not, the copy is all there is, and the card
+   * says which by marking the ones it could not confirm.
+   */
+  const resolvePhotos = useCallback(
+    (shape: PlanShape) =>
+      (shape.photos ?? []).map((p) => {
+        const live =
+          visit && visit.id === p.sessionId
+            ? visit.photos.find((x) => x.id === p.photoId)
+            : undefined;
+        return {
+          photoId: p.photoId,
+          url: live?.url ?? p.url,
+          label: live ? `Pin ${live.seq}` : p.label,
+          live: Boolean(live),
+        };
+      }),
+    [visit],
+  );
+
+  /** Which take-offs the shown photograph documents — the link read back. */
+  const photoDocuments = useMemo(() => {
+    if (!linkablePhoto) return [];
+    return shapesForPhoto(plan.shapes, linkablePhoto.photoId).map((sh) => ({
+      id: sh.id,
+      // Named by its assembly where it has one, and by its measurement where
+      // it does not — a take-off with no assembly is still a real thing to
+      // have photographed. Read directly rather than through labelFor(), which
+      // is declared several hundred lines below this.
+      label:
+        (sh.assemblyId
+          ? getAssembly(sh.assemblyId)?.name.replace(" – Standard", "")
+          : null) ??
+        `${Math.round(measurementOf(sh, plan.nodes)).toLocaleString()} ${
+          sh.type === "area" ? "sq ft" : "ln ft"
+        }`,
+    }));
+  }, [linkablePhoto, plan.shapes, plan.nodes]);
 
   const livePhotoId = useMemo(
     () =>
@@ -870,7 +959,17 @@ export default function PlanPage({
           labelFor={labelFor}
           tool={tool}
           selectedShapeId={selectedId}
-          onSelectShape={setSelectedId}
+          onSelectShape={(id) => {
+            // While armed, a tap on a take-off attaches rather than selects.
+            // A tap on bare ground (null) cancels, which is the same way out
+            // as the button and needs no aiming.
+            if (linkArmed && linkablePhoto) {
+              if (id) attachPhoto(id);
+              else setLinkArmed(false);
+              return;
+            }
+            setSelectedId(id);
+          }}
           pending={pending}
           onPendingChange={setPending}
           onCloseArea={finish}
@@ -1008,6 +1107,18 @@ export default function PlanPage({
                 playing={playing}
                 onSeek={seekMs}
                 picked={pickedFrame}
+                link={
+                  linkablePhoto
+                    ? {
+                        documents: photoDocuments,
+                        arming: linkArmed,
+                        onArm: () => setLinkArmed(true),
+                        onCancel: () => setLinkArmed(false),
+                        onUnlink: (shapeId) =>
+                          unlinkPhotoFromShape(shapeId, linkablePhoto.photoId),
+                      }
+                    : null
+                }
               />
             </>
           ) : (
@@ -1061,6 +1172,8 @@ export default function PlanPage({
                 }}
                 onLink={(id) => updateShape(shape.id, { assemblyId: id })}
                 onRemove={() => removeShape(shape.id)}
+                photos={resolvePhotos(shape)}
+                onUnlinkPhoto={(photoId) => unlinkPhotoFromShape(shape.id, photoId)}
               />
             ))
           )}
@@ -1599,6 +1712,8 @@ function ShapeCard({
   onSelect,
   onLink,
   onRemove,
+  photos,
+  onUnlinkPhoto,
 }: {
   shape: PlanShape;
   nodes: PlanNodes;
@@ -1611,6 +1726,16 @@ function ShapeCard({
   onSelect: () => void;
   onLink: (assemblyId: string | null) => void;
   onRemove: () => void;
+  /**
+   * The photographs attached to this shape, resolved against the loaded visit.
+   *
+   * Resolved rather than read straight off the link, because a stored url can
+   * be superseded — Upright writes a NEW storage path when a picture is
+   * replaced. The live row wins where there is one; the copied url is the
+   * fallback that keeps the card drawable with no session loaded at all.
+   */
+  photos: { photoId: string; url: string; label: string; live: boolean }[];
+  onUnlinkPhoto: (photoId: string) => void;
 }) {
   const measurement = measurementOf(shape, nodes);
   const options = assembliesForShape(ASSEMBLY_MODELS, shape.type);
@@ -1739,6 +1864,42 @@ function ShapeCard({
             </span>
           ) : null}
         </p>
+      )}
+
+      {photos.length > 0 && (
+        <div className="mt-2">
+          <p className="mb-1 text-[0.7rem] text-muted">
+            {photos.length} photo{photos.length === 1 ? "" : "s"} from the visit
+          </p>
+          {/*
+            A row that scrolls sideways rather than a grid that grows downward:
+            the card sits in a column beside the map, and a bed with eight
+            photographs must not push the next bed off the screen.
+          */}
+          <ul className="flex gap-1.5 overflow-x-auto pb-1">
+            {photos.map((p) => (
+              <li key={p.photoId} className="relative shrink-0">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={p.url}
+                  alt={p.label}
+                  title={p.live ? p.label : `${p.label} — from another visit`}
+                  className="h-14 w-20 rounded-lg object-cover"
+                />
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUnlinkPhoto(p.photoId);
+                  }}
+                  aria-label={`Detach ${p.label}`}
+                  className="absolute right-0.5 top-0.5 rounded-md bg-black/70 px-1 text-[0.6rem] font-bold text-white"
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {sharedCount > 0 && (
