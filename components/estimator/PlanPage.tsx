@@ -900,27 +900,24 @@ export default function PlanPage({
         */}
         </div>
 
-        <div
-          className={
-            videoOnStage
-              ? "absolute inset-0"
-              : "absolute bottom-3 left-3 z-20 h-32 w-48 overflow-hidden rounded-xl border border-edge shadow-lg"
-          }
-          hidden={mode !== "review" || !visit}
-        >
+        {/*
+          The clip is NOT gated on the column's mode.
+
+          It was, and that was the bug: the transport and the filmstrip belong
+          to the screen, so audio played in either mode while the picture only
+          appeared in Review — audio with no video, and nothing saying why. The
+          clip is the fourth piece of the same shared replay, and the moment you
+          most want to see what the yard looked like is while you are in Plan
+          laying beds out against it.
+        */}
+        {visit && (
           <ReviewVideo
             session={visit}
             drift={drift}
             audioRef={audioRef}
-            visible
+            onStage={videoOnStage}
           />
-          <button
-            onClick={() => setVideoOnStage((v) => !v)}
-            className="absolute right-2 top-2 z-30 rounded-lg bg-bg/90 px-2 py-1 text-[0.65rem] font-bold text-ink backdrop-blur"
-          >
-            {videoOnStage ? "Show map" : "Show video"}
-          </button>
-        </div>
+        )}
 
         </div>
 
@@ -1099,6 +1096,8 @@ export default function PlanPage({
         onToggle={toggleAudio}
         onSeek={seekMs}
         gainError={gainError}
+        videoOnStage={videoOnStage}
+        onToggleStage={() => setVideoOnStage((v) => !v)}
       />
       <audio ref={audioRef} preload="metadata" className="hidden" />
 

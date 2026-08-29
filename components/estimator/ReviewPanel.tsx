@@ -42,12 +42,13 @@ export function ReviewVideo({
   session,
   drift,
   audioRef,
-  visible,
+  onStage,
 }: {
   session: ReviewSession | null;
   drift: number;
   audioRef: React.RefObject<HTMLAudioElement | null>;
-  visible: boolean;
+  /** True when the clip has the main stage and the canvas is the mini pane. */
+  onStage: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [gap, setGap] = useState(true);
@@ -68,10 +69,17 @@ export function ReviewVideo({
           shownClip = hit.clip.id;
           video.src = hit.clip.url;
         }
-        // Only nudge when it has actually slipped. Assigning currentTime every
-        // frame would re-seek continuously and stutter the picture.
-        if (Math.abs(video.currentTime - hit.withinSec) > 0.15) {
-          video.currentTime = hit.withinSec;
+        // Only nudge when it has actually slipped, and only once the file has
+        // metadata. Assigning currentTime every frame would re-seek
+        // continuously and stutter the picture; assigning it before
+        // HAVE_METADATA is a no-op in some browsers and throws in others, and
+        // a throw inside the frame loop would take the whole sync with it.
+        if (video.readyState >= 1 && Math.abs(video.currentTime - hit.withinSec) > 0.15) {
+          try {
+            video.currentTime = hit.withinSec;
+          } catch {
+            // Seek refused; the next frame tries again once it is ready.
+          }
         }
         if (!audio.paused && video.paused) void video.play().catch(() => {});
         if (audio.paused && !video.paused) video.pause();
@@ -90,19 +98,27 @@ export function ReviewVideo({
     return () => cancelAnimationFrame(raf);
   }, [clips, drift, audioRef]);
 
+  // The element carries its own geometry so the wrapper is never swapped out
+  // from under it. Between clips the mini pane is dropped entirely rather than
+  // sitting in the corner as an empty black box — but on the main stage the
+  // gap is stated, because there the silence needs explaining.
+  const hideEmptyMini = gap && !onStage;
+
   return (
     <div
-      className="absolute inset-0 z-10 flex items-center justify-center bg-black"
-      hidden={!visible}
+      className={
+        onStage
+          ? "absolute inset-0 z-10 flex items-center justify-center bg-black"
+          : "absolute bottom-3 left-3 z-20 flex h-32 w-48 items-center justify-center overflow-hidden rounded-xl border border-edge bg-black shadow-lg"
+      }
+      // `visibility` rather than the `hidden` attribute or a display class: a
+      // Tailwind display utility would win over [hidden] in the cascade, and
+      // display:none on a playing <video> is a good way to have Safari drop
+      // the decode. This keeps it laid out and merely unseen.
+      style={hideEmptyMini ? { visibility: "hidden" } : undefined}
     >
-      <video
-        ref={videoRef}
-        muted
-        playsInline
-        className="max-h-full max-w-full"
-        hidden={gap}
-      />
-      {gap && (
+      <video ref={videoRef} muted playsInline className="max-h-full max-w-full" hidden={gap} />
+      {gap && onStage && (
         <p className="px-6 text-center text-sm text-muted">
           No video at this point — the audio continues.
         </p>
@@ -327,6 +343,8 @@ export function ReviewTransport({
   onToggle,
   onSeek,
   gainError,
+  videoOnStage,
+  onToggleStage,
 }: {
   session: ReviewSession | null;
   audioMs: number;
@@ -335,6 +353,8 @@ export function ReviewTransport({
   onToggle: () => void;
   onSeek: (ms: number) => void;
   gainError: string | null;
+  videoOnStage: boolean;
+  onToggleStage: () => void;
 }) {
   if (!session) return null;
   // The audio's own length is the truth for the scrubber. Falling back to the
@@ -363,6 +383,20 @@ export function ReviewTransport({
       <span className="shrink-0 tabular-nums text-xs text-muted">
         {fmtClock(audioMs)} / {fmtClock(totalMs)}
       </span>
+      {/*
+        The stage swap sits here rather than on the clip itself. It used to be
+        a button inside the video pane, which is unfindable when that pane is a
+        128px corner — and impossible when there is no clip running to put a
+        button on. Playback controls belong with the playhead.
+      */}
+      {session.clips.length > 0 && (
+        <button
+          onClick={onToggleStage}
+          className="shrink-0 rounded-lg bg-surface2 px-3 py-1.5 text-xs font-bold text-ink"
+        >
+          {videoOnStage ? "Show map" : "Show video"}
+        </button>
+      )}
       {gainError && (
         <span className="hidden shrink-0 text-[0.65rem] text-muted sm:inline">{gainError}</span>
       )}
