@@ -499,49 +499,6 @@ export function canPlayHevc(): boolean {
 
 // --- when the picture has not arrived -------------------------------------
 
-/** How long a clip may sit un-decoded before the pane says something. */
-export const CLIP_SLOW_MS = 4000;
-
-/** What a HEAD of the clip's own URL came back with. */
-export interface ClipReachability {
-  ok: boolean;
-  status: number;
-  /** Content-Length, when the response stated one. */
-  bytes: number | null;
-  /** Set when the request could not be made at all. */
-  error?: string;
-}
-
-function mb(bytes: number): string {
-  return `${(bytes / 1e6).toFixed(bytes < 1e7 ? 1 : 0)} MB`;
-}
-
-/**
- * What to say while a clip has not produced a frame.
- *
- * "Still loading" on its own is the least useful true statement available: a
- * 33 MB clip on a slow line and a request that is never going to arrive look
- * exactly the same from the outside, and they need opposite responses — wait,
- * or go and look. So the note carries how much of the clip is actually ready
- * and whether the file answers at all.
- *
- * A probe that THREW is reported as a failed check rather than as an
- * unreachable clip, and the distinction is not pedantry: the `<video>` element
- * fetches without CORS and does not care what a `fetch()` is refused, so a
- * blocked probe says nothing about whether the clip itself can load.
- */
-export function clipLoadingMessage(
-  reach: ClipReachability | null,
-  bufferedSec: number,
-): string {
-  const ready = bufferedSec > 0 ? ` — ${bufferedSec.toFixed(1)}s ready` : "";
-  if (!reach) return `Still loading the clip${ready}\u2026`;
-  if (reach.error) return `Still loading the clip${ready}\u2026 (could not check the file: ${reach.error})`;
-  if (!reach.ok) return `The clip is not there — the file answered HTTP ${reach.status}.`;
-  const size = reach.bytes ? `, ${mb(reach.bytes)}` : "";
-  return `Still loading the clip${ready}\u2026 The file is reachable${size}.`;
-}
-
 /**
  * What a rejected `play()` means — or null when it means nothing at all.
  *
@@ -566,4 +523,33 @@ export function playFailureMessage(
   if (name === "NotSupportedError") return clipErrorMessage(4, canPlayHevc, message);
   const note = message && message.trim() ? ` (${message.trim()})` : "";
   return `The clip would not start.${note}`;
+}
+
+function mb(bytes: number): string {
+  return `${(bytes / 1e6).toFixed(bytes < 1e7 ? 1 : 0)} MB`;
+}
+
+/**
+ * What to say while a clip is being fetched whole.
+ *
+ * MASTERDASH FETCHES THE FILE BEFORE IT PLAYS IT, and that is deliberate
+ * rather than lazy. Upright's own review plays a just-recorded clip from
+ * `URL.createObjectURL(blob)` — the bytes are already in memory, so there is
+ * no streaming, no range request, and no question of where the MP4 keeps its
+ * index. That path demonstrably works. Pointing a <video> at a Storage URL is
+ * a different path, and it is the one that was black.
+ *
+ * So this app takes the same route: fetch, blob, object URL. The cost is that
+ * a 33 MB clip must arrive before its first frame, which is why the wait is
+ * counted out loud rather than left as a black rectangle.
+ */
+export function clipFetchMessage(
+  receivedBytes: number,
+  totalBytes: number | null,
+  error?: string | null,
+): string {
+  if (error) return `The clip could not be fetched — ${error}.`;
+  if (!totalBytes) return `Fetching the clip\u2026 ${mb(receivedBytes)} so far.`;
+  const pct = Math.min(100, Math.round((receivedBytes / totalBytes) * 100));
+  return `Fetching the clip\u2026 ${pct}% of ${mb(totalBytes)}.`;
 }

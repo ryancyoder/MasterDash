@@ -4,10 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   PHOTO_WINDOW_MS,
   clipAt,
-  CLIP_SLOW_MS,
   canPlayHevc,
   clipErrorMessage,
-  clipLoadingMessage,
+  clipFetchMessage,
   clipSeekTarget,
   playFailureMessage,
   fmtClock,
@@ -75,14 +74,7 @@ export function ReviewVideo({
     such a file as Infinity and then REFINES it as the bytes arrive, firing
     `durationchange` again and again. Each one changed `drift`, which is in
     this effect's dependencies, which tore the loop down and built a new one —
-    and a new loop has forgotten which clip is showing, so it assigns
-    `video.src` again and the download starts over from zero. On a 33 MB clip
-    that is a lot of progress thrown away, repeatedly, for nothing.
-
-    Whether it is enough to starve a load outright was NOT reproduced —
-    Chromium reaches a frame from a partial file and recovers from each
-    restart. It is fixed because discarding a download to react to a number
-    the loop reads every frame anyway is wrong regardless of what it costs.
+    and a new loop has forgotten which clip is showing, so it starts over.
 
     The values go through refs instead: the loop reads the current drift on
     every frame without the loop's own life depending on it.
@@ -105,31 +97,101 @@ export function ReviewVideo({
     let raf = 0;
     let shownClip: string | null = null;
     let seeded = false;
-    let loadedAt = 0;
-    let slowSaid = false;
+    let failed = false;
+    let playPending = false;
+    let dead = false;
 
-    // The element's own complaints. Without these every failure on this path
-    // is a black rectangle: a 404, a codec this browser will not decode and a
-    // clip that is merely slow all look exactly alike, and all three look like
-    // a visit recorded with the camera switched off.
+    /*
+      THE CLIP IS FETCHED WHOLE, THEN PLAYED FROM MEMORY.
+
+      This is the one real difference between this screen and Upright's own
+      review, which plays the same clips without trouble: Upright hands the
+      <video> a `blob:` URL made from the recording it still has in memory, so
+      there is no streaming, no range request and no question of where a
+      MediaRecorder MP4 keeps its index. A Storage URL on a <video> is a
+      different path through the browser, and it is the one that was black.
+
+      So this takes the same route Upright takes. It costs the wait — a 33 MB
+      clip has to arrive before its first frame — which is counted out loud
+      below rather than left as a black rectangle.
+
+      Only a couple are kept: these are tens of megabytes each, and a visit
+      can have a lot of them.
+    */
+    const local = new Map<string, string>();
+    const fetching = new Set<string>();
+    const KEEP = 2;
+
+    const dropOldest = () => {
+      while (local.size > KEEP) {
+        const oldest = local.keys().next().value;
+        if (oldest === undefined) break;
+        const url = local.get(oldest);
+        if (url) URL.revokeObjectURL(url);
+        local.delete(oldest);
+      }
+    };
+
+    const ensureLocal = (clip: { id: string; url: string }): string | null => {
+      const have = local.get(clip.id);
+      if (have) return have;
+      if (fetching.has(clip.id)) return null;
+      fetching.add(clip.id);
+      void (async () => {
+        try {
+          const res = await fetch(clip.url);
+          if (!res.ok) throw new Error(`the file answered HTTP ${res.status}`);
+          const len = res.headers.get("content-length");
+          const total = len ? Number(len) : null;
+          // Read it through rather than await res.blob(), so the wait can be
+          // counted. On a 33 MB clip the difference between "loading" and
+          // "63% of 34 MB" is the difference between waiting and giving up.
+          const reader = res.body?.getReader();
+          let received = 0;
+          const parts: BlobPart[] = [];
+          if (reader) {
+            let last = 0;
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (dead) return;
+              if (value) {
+                parts.push(value as BlobPart);
+                received += value.byteLength;
+              }
+              const now = performance.now();
+              if (now - last > 250) {
+                last = now;
+                if (shownClip !== clip.id && !failed) {
+                  setTrouble(clipFetchMessage(received, total));
+                }
+              }
+            }
+          } else {
+            parts.push(await res.blob());
+          }
+          if (dead) return;
+          local.set(clip.id, URL.createObjectURL(new Blob(parts, { type: "video/mp4" })));
+          dropOldest();
+          setTrouble(null);
+        } catch (e: unknown) {
+          if (dead) return;
+          setTrouble(clipFetchMessage(0, null, e instanceof Error ? e.message : "it could not be reached"));
+        } finally {
+          fetching.delete(clip.id);
+        }
+      })();
+      return null;
+    };
+
     const hevc = canPlayHevc();
     /*
       AN ERROR OUTRANKS EVERYTHING, and it has to be a flag rather than just
-      the last call to setTrouble() to win.
-
-      The slow-clip probe below is a fetch, so its answer lands whole seconds
-      after it is asked — comfortably after a codec refusal has already been
-      reported. Without this it overwrote "recorded as HEVC" with "still
-      loading, the file is reachable", which is a strictly worse statement
-      about a clip that is never going to play, and it reads as progress.
-      Checking readyState was not enough: a refused clip sits at 0 forever,
-      which looks exactly like one that has not started.
+      the last call to setTrouble() to win: the fetch's progress lands whole
+      seconds after it is asked, comfortably after a codec refusal has already
+      been reported, and "63% of 34 MB" reads as progress on a clip that is
+      never going to play.
     */
-    let failed = false;
-    let playPending = false;
-    // Set when the effect is torn down, so nothing that is already in flight
-    // can report about a screen that has moved on.
-    let dead = false;
     const onError = () => {
       failed = true;
       setTrouble(
@@ -137,7 +199,6 @@ export function ReviewVideo({
       );
     };
     const onPlayable = () => {
-      slowSaid = false;
       failed = false;
       setTrouble(null);
     };
@@ -149,93 +210,62 @@ export function ReviewVideo({
       const hit = clipAt(clipsRef.current, audio.currentTime * 1000, driftRef.current);
       if (hit) {
         if (shownClip !== hit.clip.id) {
-          shownClip = hit.clip.id;
-          seeded = false;
-          slowSaid = false;
-          failed = false;
-          playPending = false;
-          loadedAt = performance.now();
-          setTrouble(null);
-          video.src = hit.clip.url;
-        }
-
-        // SEEK RARELY, AND NEVER ON TOP OF A SEEK. These are MediaRecorder
-        // files with no seek index, so a seek is a scan; reissuing one every
-        // frame is how the picture stays black for a whole clip while
-        // everything else looks right. clipSeekTarget() holds that reasoning.
-        const target = clipSeekTarget(
-          {
-            readyState: video.readyState,
-            seeking: video.seeking,
-            currentTime: video.currentTime,
-            seeded,
-          },
-          hit.withinSec,
-        );
-        if (video.readyState >= 2) seeded = true;
-        if (target !== null) {
-          try {
-            video.currentTime = target;
-          } catch {
-            // Refused; the tolerance will ask again once it is ready.
+          const src = ensureLocal(hit.clip);
+          if (src) {
+            shownClip = hit.clip.id;
+            seeded = false;
+            failed = false;
+            playPending = false;
+            setTrouble(null);
+            video.src = src;
           }
         }
 
-        // ONE play() AT A TIME. `paused` stays true until the promise settles,
-        // so calling it on every frame starts a fresh attempt sixty times a
-        // second — and the moment anything pauses or re-sources the element,
-        // every one of them rejects at once.
-        if (!audio.paused && video.paused && !playPending) {
-          playPending = true;
-          void video.play().then(
-            () => {
-              playPending = false;
+        if (shownClip === hit.clip.id) {
+          // SEEK RARELY, AND NEVER ON TOP OF A SEEK. clipSeekTarget() holds
+          // the reasoning; the short version is that a correction costs a
+          // decode and the clip is silent, so half a second out is nothing.
+          const target = clipSeekTarget(
+            {
+              readyState: video.readyState,
+              seeking: video.seeking,
+              currentTime: video.currentTime,
+              seeded,
             },
-            (e: unknown) => {
-              playPending = false;
-              if (dead || shownClip === null) return;
-              const err = e instanceof Error ? e : null;
-              const said = playFailureMessage(err?.name, err?.message, hevc);
-              if (said) {
-                failed = true;
-                setTrouble(said);
-              }
-            },
+            hit.withinSec,
           );
-        }
-        if (audio.paused && !video.paused) video.pause();
+          if (video.readyState >= 2) seeded = true;
+          if (target !== null) {
+            try {
+              video.currentTime = target;
+            } catch {
+              // Refused; the tolerance asks again once it is ready.
+            }
+          }
 
-        // Slow is a state, not a failure — but an unexplained black rectangle
-        // is indistinguishable from a broken one, so after a few seconds it
-        // says which it is, with the numbers that tell the two apart.
-        if (!failed && !slowSaid && video.readyState < 2 && performance.now() - loadedAt > CLIP_SLOW_MS) {
-          slowSaid = true;
-          const url = hit.clip.url;
-          const buffered = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
-          setTrouble(clipLoadingMessage(null, buffered));
-          // HEAD, not a ranged GET: Range is not a CORS-safelisted header, so
-          // asking for one would add a preflight that can fail on its own and
-          // tell us about the preflight rather than about the clip.
-          void fetch(url, { method: "HEAD" })
-            .then((r) => {
-              if (dead || failed || shownClip === null) return;
-              const len = r.headers.get("content-length");
-              setTrouble(
-                clipLoadingMessage(
-                  { ok: r.ok, status: r.status, bytes: len ? Number(len) : null },
-                  buffered,
-                ),
-              );
-            })
-            .catch((e: unknown) => {
-              if (dead || failed || shownClip === null) return;
-              setTrouble(
-                clipLoadingMessage(
-                  { ok: false, status: 0, bytes: null, error: e instanceof Error ? e.message : "blocked" },
-                  buffered,
-                ),
-              );
-            });
+          // ONE play() AT A TIME. `paused` stays true until the promise
+          // settles, so calling it every frame starts a fresh attempt sixty
+          // times a second — and the moment anything pauses or re-sources the
+          // element, every one of them rejects together.
+          if (!audio.paused && video.paused && !playPending) {
+            playPending = true;
+            void video.play().then(
+              () => {
+                playPending = false;
+              },
+              (e: unknown) => {
+                playPending = false;
+                if (dead || shownClip === null) return;
+                const err = e instanceof Error ? e : null;
+                const said = playFailureMessage(err?.name, err?.message, hevc);
+                if (said) {
+                  failed = true;
+                  setTrouble(said);
+                }
+              },
+            );
+          }
+          if (audio.paused && !video.paused) video.pause();
         }
         setGap(false);
       } else {
@@ -262,6 +292,8 @@ export function ReviewVideo({
       video.removeEventListener("error", onError);
       video.removeEventListener("loadeddata", onPlayable);
       video.removeEventListener("canplay", onPlayable);
+      for (const url of local.values()) URL.revokeObjectURL(url);
+      local.clear();
     };
   }, [sessionId, audioRef]);
 
@@ -285,13 +317,12 @@ export function ReviewVideo({
       style={hideEmptyMini ? { visibility: "hidden" } : undefined}
     >
       {/*
-        THE ELEMENT IS NEVER HIDDEN AND NEVER RESIZED, and that is the same
-        rule the wrapper above states rather than a second one. It used to
-        carry `hidden={gap}` — display:none, applied by React a frame AFTER
-        the loop had set the src and called play() on it. Whatever a given
-        engine does with a video hidden at exactly that moment, none of it is
-        worth finding out. It fills the pane instead and simply has no source
-        between clips, which paints nothing and lets the black through.
+        THE ELEMENT IS NEVER HIDDEN AND NEVER RESIZED, which is the same rule
+        the wrapper above states rather than a second one. It used to carry
+        `hidden={gap}` — display:none, applied by React a frame AFTER the loop
+        had set the src and called play() on it. It fills the pane instead and
+        simply has no source between clips, which paints nothing and lets the
+        black through.
       */}
       <video
         ref={videoRef}

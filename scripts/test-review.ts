@@ -12,7 +12,7 @@ import {
   CLIP_SYNC_TOLERANCE_SEC,
   clipAt,
   clipErrorMessage,
-  clipLoadingMessage,
+  clipFetchMessage,
   playFailureMessage,
   clipSeekTarget,
   driftScale,
@@ -321,40 +321,23 @@ ok(
 }
 
 {
-  // What the pane says while a clip has produced no frame. "Still loading" on
-  // its own cannot tell a 33 MB clip on a slow line from a request that will
-  // never arrive, and those need opposite responses.
+  // What the pane says while the clip is coming down. The wait is real -- a
+  // 33 MB clip has to arrive whole before its first frame -- so the difference
+  // between "loading" and "63% of 34 MB" is the difference between waiting and
+  // giving up.
   ok(
-    "with nothing checked yet it just says it is loading",
-    clipLoadingMessage(null, 0) === "Still loading the clip\u2026",
+    "progress is stated against the total when there is one",
+    clipFetchMessage(21000000, 33822147) === "Fetching the clip\u2026 62% of 34 MB.",
   );
   ok(
-    "and reports what has actually arrived",
-    clipLoadingMessage(null, 2.34).includes("2.3s ready"),
+    "and by what has arrived when there is not",
+    clipFetchMessage(3575896, null) === "Fetching the clip\u2026 3.6 MB so far.",
   );
+  ok("it cannot report past 100%", clipFetchMessage(40000000, 33822147).includes("100%"));
   ok(
-    "a file that answers is reported as reachable, with its size",
-    clipLoadingMessage({ ok: true, status: 200, bytes: 33822147 }, 0).includes("34 MB"),
-  );
-  ok(
-    "a smaller one keeps a decimal",
-    clipLoadingMessage({ ok: true, status: 200, bytes: 3575896 }, 0).includes("3.6 MB"),
-  );
-  ok(
-    "a missing file names the status and does not say 'loading'",
-    clipLoadingMessage({ ok: false, status: 404, bytes: null }, 0) ===
-      "The clip is not there — the file answered HTTP 404.",
-  );
-  ok(
-    "a probe that could not run is NOT reported as a missing clip",
-    clipLoadingMessage({ ok: false, status: 0, bytes: null, error: "Failed to fetch" }, 0)
-      .startsWith("Still loading"),
-    "the <video> fetches without CORS, so a blocked probe says nothing about the clip",
-  );
-  ok(
-    "and it still names why the check failed",
-    clipLoadingMessage({ ok: false, status: 0, bytes: null, error: "Failed to fetch" }, 0)
-      .includes("Failed to fetch"),
+    "a failed fetch says so instead of counting",
+    clipFetchMessage(0, null, "the file answered HTTP 404") ===
+      "The clip could not be fetched — the file answered HTTP 404.",
   );
 }
 
