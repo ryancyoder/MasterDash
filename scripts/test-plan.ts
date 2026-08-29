@@ -22,8 +22,12 @@ import {
 import type { ReviewPhoto } from "../lib/estimator/review.ts";
 import {
   anchorFromProperty,
+  layersNeedingUpload,
+  mergeLayerRows,
   shouldAdoptAnchor,
+  visibleOverlays,
   type MapAnchor,
+  type MapOverlay,
 } from "../lib/estimator/mapLayers.ts";
 
 let pass = 0;
@@ -279,6 +283,78 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   // losing a placement.
   ok("but a DIFFERENT property replaces even a hand-placed pin",
     shouldAdoptAnchor(placed, 46));
+}
+
+{
+  console.log("\n--- a layer must survive leaving the plan view ---");
+
+  const layer = (over: Partial<MapOverlay> & { id: string }): MapOverlay => ({
+    propertyId: 13, label: "Plan", imageId: null, storagePath: null, imageUrl: null,
+    georef: { centre: { lat: 41.3, lng: -87.2 }, widthM: 60, aspect: 1, rotDeg: 0 },
+    opacity: 0.85, z: 0, locked: false, scaleLocked: false, source: "masterdash",
+    updatedAt: null, ...over,
+  });
+
+  // What the server hands back. It never claims a local image, and until the
+  // bytes have been uploaded it has no remote one either.
+  const fromServer = [layer({ id: "L1" })];
+
+  // THE BUG. Coming back to the plan view is a fresh mount, so there is no
+  // state to remember the IndexedDB key from -- and the merge used to take it
+  // from exactly there.
+  const forgotten = mergeLayerRows(fromServer, [], new Set());
+  ok("without the device's own answer a fetched layer has no image",
+    forgotten[0].imageId === null);
+  ok("SO IT DOES NOT DRAW, while the layers panel goes on listing it",
+    visibleOverlays(forgotten, []).length === 0);
+
+  // The fix: ask IndexedDB. addOverlayFromFile() uses one uuid for both the
+  // row id and the image key, so the question has an answer.
+  const remembered = mergeLayerRows(fromServer, [], new Set(["L1"]));
+  ok("asking the device restores the layer's own bytes",
+    remembered[0].imageId === "L1");
+  ok("and it draws again", visibleOverlays(remembered, []).length === 1);
+
+  // A row that has reached Storage draws anywhere, held or not.
+  const uploaded = mergeLayerRows(
+    [layer({ id: "L2", storagePath: "p/x.jpg", imageUrl: "https://x/p/x.jpg" })],
+    [], new Set(),
+  );
+  ok("a layer whose image is in Storage draws on any device",
+    visibleOverlays(uploaded, []).length === 1);
+
+  // A layer added a moment ago has bytes and no row yet; the fetch must not
+  // drop it, and it must not be resurrected from a stale local imageId either.
+  const justAdded = layer({ id: "L3", imageId: "L3" });
+  const kept = mergeLayerRows(fromServer, [justAdded], new Set(["L1", "L3"]));
+  ok("a layer added on this device survives a fetch that has not seen it",
+    kept.some((o) => o.id === "L3"));
+  ok("and the fetched rows come first, in draw order",
+    kept.map((o) => o.id).join(",") === "L1,L3");
+
+  const stale = mergeLayerRows(fromServer, [layer({ id: "L1", imageId: "L1" })], new Set());
+  ok("but bytes this device no longer holds are not claimed from memory",
+    stale[0].imageId === null);
+
+  // Draw order is the row's own, not the order they arrived in.
+  const ordered = mergeLayerRows(
+    [layer({ id: "A", z: 2 }), layer({ id: "B", z: 1 })], [], new Set(),
+  );
+  ok("layers are sorted by z", ordered.map((o) => o.id).join(",") === "B,A");
+
+  console.log("\n--- and its bytes must reach Storage ---");
+  ok("a layer held here with no storage path is waiting to be uploaded",
+    layersNeedingUpload([layer({ id: "L1", imageId: "L1" })]).length === 1);
+  ok("one already in Storage is not, so the retry stops",
+    layersNeedingUpload([
+      layer({ id: "L1", imageId: "L1", storagePath: "p/x.jpg" }),
+    ]).length === 0);
+  // A row merged from another device: there is nothing here to send.
+  ok("and one this device does not hold is not either",
+    layersNeedingUpload([layer({ id: "L1" })]).length === 0);
+
+  ok("a hidden layer still does not draw",
+    visibleOverlays(remembered, ["L1"]).length === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

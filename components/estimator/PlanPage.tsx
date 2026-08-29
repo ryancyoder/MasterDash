@@ -44,6 +44,8 @@ import { SURVEY_COLORS, elevationFeet } from "@/lib/estimator/survey";
 import {
   ANCHOR_BLURB,
   anchorIsReal,
+  layersNeedingUpload,
+  mergeLayerRows,
   visibleOverlays,
   type MapOverlay,
 } from "@/lib/estimator/mapLayers";
@@ -59,10 +61,12 @@ import {
   type PlanShape,
   type ShapeKind,
 } from "@/lib/estimator/plan";
+import { heldPlanImages } from "@/lib/estimator/planImage";
 import { shapesForPhoto, type ShapePhotoLink } from "@/lib/estimator/photoLink";
 import { photoTakeoffLabel } from "@/lib/estimator/pendingTakeoff";
 import {
   addOverlayFromFile,
+  uploadLayerImage,
   deleteLayer,
   fetchLayers,
   fetchProperties,
@@ -215,32 +219,64 @@ export default function PlanPage({
 
   // The property's layers. Fetched, because they are shared — another device,
   // or Upright on site, may have placed one since this estimate was opened.
+  //
+  // The local half — whether THIS device holds the image bytes — is settled by
+  // asking IndexedDB, not by remembering. See `mergeLayerRows()`: remembering
+  // is what made a layer vanish the moment you left this view and came back.
   useEffect(() => {
     let live = true;
-    // Nothing is set before the first await, including the empty case: state
-    // moves once, when the answer is in.
-    const load = propertyId === null ? Promise.resolve([]) : fetchLayers(propertyId);
-    void load.then((rows) => {
+    void (async () => {
+      // Nothing is set before the first await, including the empty case:
+      // state moves once, when the answer is in.
+      const rows = propertyId === null ? [] : await fetchLayers(propertyId);
+      const held = await heldPlanImages(rows.map((r) => r.id));
       if (!live) return;
       if (propertyId === null) {
         setOverlays([]);
         return;
       }
       // A layer this device just added has bytes here and no row yet; the
-      // fetch must not drop it. Merged by id, local copy winning on imageId.
-      setOverlays((current) => {
-        const mine = new Map(current.map((o) => [o.id, o]));
-        const merged = rows.map((r) => ({ ...r, imageId: mine.get(r.id)?.imageId ?? null }));
-        const seen = new Set(merged.map((o) => o.id));
-        return [...merged, ...current.filter((o) => !seen.has(o.id))].sort(
-          (a, b) => a.z - b.z,
-        );
-      });
-    });
+      // fetch must not drop it.
+      setOverlays((current) => mergeLayerRows(rows, current, held));
+    })();
     return () => {
       live = false;
     };
   }, [propertyId]);
+
+  /**
+   * Push the bytes of any layer this device holds that Storage does not.
+   *
+   * The other half of the same bug: nothing ever uploaded a layer image, so
+   * the picture lived in one iPad's IndexedDB and a second device listed a
+   * layer it could never draw. Retried on every load rather than queued, so a
+   * layer added with no signal lands the moment there is some, and a failed
+   * upload fixes itself the next time the map is opened.
+   *
+   * Fire-and-forget, like every other write in this flow: the layer already
+   * draws from the device's own copy, so a failure here costs nothing that is
+   * on screen.
+   */
+  useEffect(() => {
+    let live = true;
+    const pending = layersNeedingUpload(overlays);
+    if (pending.length === 0) return;
+    void (async () => {
+      for (const o of pending) {
+        const saved = await uploadLayerImage(o);
+        if (!live || !saved) continue;
+        setOverlays((current) =>
+          current.map((c) => (c.id === saved.id ? { ...c, ...saved } : c)),
+        );
+      }
+    })();
+    return () => {
+      live = false;
+    };
+    // Keyed on WHICH layers still need it, not on the array: the effect writes
+    // to `overlays`, so depending on the array itself would re-run on its own
+    // result and upload the same file for ever.
+  }, [overlays.map((o) => (o.storagePath === null && o.imageId ? o.id : "")).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Object URLs for the local copies, minted once each and revoked together.
   useEffect(() => {

@@ -66,6 +66,30 @@ export async function getPlanImage(id: string): Promise<Blob | null> {
   }
 }
 
+/**
+ * Whether this device holds the bytes, without reading them.
+ *
+ * `getKey` rather than `get`: a plan is one to five megabytes and this runs
+ * once per layer on every visit to the map, so pulling every blob out of
+ * IndexedDB to ask a yes/no question is the whole cost of the page for none of
+ * the answer.
+ */
+export async function hasPlanImage(id: string): Promise<boolean> {
+  try {
+    const key = await tx<IDBValidKey | undefined>("readonly", (s) => s.getKey(id));
+    return key !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/** Which of these ids this device holds. */
+export async function heldPlanImages(ids: readonly string[]): Promise<Set<string>> {
+  const held = new Set<string>();
+  await Promise.all(ids.map(async (id) => { if (await hasPlanImage(id)) held.add(id); }));
+  return held;
+}
+
 export async function deletePlanImage(id: string): Promise<void> {
   try {
     await tx("readwrite", (s) => s.delete(id));

@@ -220,6 +220,57 @@ export function overlaysFrom(value: unknown): MapOverlay[] {
     .sort((a, b) => a.z - b.z);
 }
 
+/**
+ * Fold a fetched set of rows into what is on screen.
+ *
+ * THIS IS WHERE A LAYER USED TO VANISH. `imageId` is an IndexedDB key on this
+ * device, so a row from the server never claims one — and the merge took the
+ * local value from whatever was already in state. On a FRESH MOUNT there is no
+ * state: leave the plan view and come back and every fetched row arrived with
+ * `imageId: null`. The bytes were still in IndexedDB, under the row's own id,
+ * and nothing ever looked. Since a layer's image is not uploaded until it has
+ * signal, `imageUrl` was usually null too — so `visibleOverlays()` dropped it,
+ * the map went blank, and the layers panel went on listing a layer that could
+ * not be drawn. Exactly the reported symptom.
+ *
+ * So the local half is now settled by ASKING INDEXEDDB rather than by
+ * remembering. `addOverlayFromFile()` mints one uuid and uses it for both the
+ * row id and the image key — the id is the row's primary key and the upsert's
+ * conflict target — so "does this device hold bytes for this row" is a
+ * question with an answer, and it survives a remount, a reload and a restart.
+ *
+ * `held` is that answer, from `heldPlanImages()`. A layer added on this device
+ * and not yet fetched back is kept: its row may still be in flight.
+ */
+export function mergeLayerRows(
+  rows: MapOverlay[],
+  current: MapOverlay[],
+  held: ReadonlySet<string>,
+): MapOverlay[] {
+  // INDEXEDDB IS THE AUTHORITY, not what state happens to remember. A stale
+  // `imageId` is the same bug the other way round: the layer claims a picture,
+  // `visibleOverlays()` lets it through, and the canvas draws nothing. A layer
+  // added a moment ago is not in `rows` at all, so it keeps its own key
+  // through the branch below rather than needing a fallback here.
+  const merged = rows.map((r) => ({ ...r, imageId: held.has(r.id) ? r.id : null }));
+  const seen = new Set(merged.map((o) => o.id));
+  return [...merged, ...current.filter((o) => !seen.has(o.id))].sort((a, b) => a.z - b.z);
+}
+
+/**
+ * Layers whose bytes are on this device but not in Storage yet.
+ *
+ * The other half of the same bug: nothing ever uploaded a layer image. The row
+ * was saved with a null `storage_path` and the picture lived in one iPad's
+ * IndexedDB, so a second device — or this one after its site data was cleared
+ * — listed a layer it could never draw. Re-checked on every load rather than
+ * queued, so a failed upload retries by itself the next time the map is
+ * opened, and a layer added with no signal lands the moment there is some.
+ */
+export function layersNeedingUpload(overlays: MapOverlay[]): MapOverlay[] {
+  return overlays.filter((o) => o.imageId !== null && o.storagePath === null);
+}
+
 /** What actually draws: placed, has bytes somewhere, and not hidden here. */
 export function visibleOverlays(
   overlays: MapOverlay[],

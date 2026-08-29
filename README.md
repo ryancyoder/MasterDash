@@ -192,7 +192,7 @@ tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 43 checks. A throw is reported as a failure rather than crashing
+is showing: 46 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
 
@@ -824,6 +824,52 @@ suite's reason to exist: `lib/estimator/visit.ts` had none). `test:board-ui`
 opens the picker and reads it: the yard heads the first group, only its own
 visits are under it, the toggle counts the rest, and a visit at another yard is
 still one tap away rather than filtered out of existence.
+
+#### A layer has to survive leaving the view
+
+Reported from the field: *added a plan overlay, left the plan view, and it
+disappeared — the panel still lists it, but it is not on the map.* Two bugs,
+both about where a layer's picture lives.
+
+**`imageId` was remembered rather than asked about.** It is an IndexedDB key on
+this device, so a row from the server never claims one, and the merge took the
+local value from whatever was already in React state. Coming back to the plan
+is a **fresh mount** — there is no state — so every fetched row arrived with
+`imageId: null`. The bytes were still in IndexedDB, under the row's own id, and
+nothing ever looked. `visibleOverlays()` then dropped the layer for having no
+picture anywhere, while the layers panel, which lists them all, went on showing
+it. The panel and the map disagreed, which is exactly what was reported.
+
+`mergeLayerRows()` settles it by **asking IndexedDB**. `addOverlayFromFile()`
+mints one uuid and uses it for both the row id and the image key — the id is
+the row's primary key and the upsert's conflict target — so *does this device
+hold bytes for this row* is a question with an answer, and the answer survives
+a remount, a reload and a restart. **IndexedDB is the authority**, not what
+state remembers: a stale `imageId` is the same bug the other way round — the
+layer claims a picture, `visibleOverlays()` lets it through, and the canvas
+draws nothing.
+
+**And the bytes were never uploaded at all.** `queuePlanUpload()` and
+`setPlanUploadHandler()` existed and nothing called either, so every layer row
+was saved with a null `storage_path` and the picture lived in one iPad's
+IndexedDB. That is why the first bug was fatal rather than cosmetic: with no
+remote copy there was nothing to fall back to. `uploadLayerImage()` pushes them
+and re-saves the row with the path, filed under the **property** rather than
+the estimate — a layer belongs to the yard and outlives any one quote of it.
+
+**Retried on load rather than queued.** `layersNeedingUpload()` is recomputed
+every time the map opens, so a layer added with no signal lands the moment
+there is some and a failed upload fixes itself next time, with no queue to keep
+in step. It is fire-and-forget like every other write here: the layer already
+draws from the device's own copy, so a failure costs nothing that is on screen.
+
+**The check reads the canvas, not the DOM.** A layer is painted with
+`drawImage`, so there is no `<img>` to find — and *listed in the panel while
+absent from the map* is precisely what the bug did, so a DOM check would have
+passed against the broken build. `test:board-ui` writes an opaque magenta PNG
+into IndexedDB under the row's id, reloads the page, opens the plan and counts
+magenta pixels in the rendered canvas. Against the old merge it reports **0 of
+500,916**.
 
 #### Placing a layer, and scaling it off the drawing
 

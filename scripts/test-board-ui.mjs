@@ -126,8 +126,36 @@ try {
   // committed tree when the catalog cannot be read, which is the point.
   await page.route("**/api/estimates**", (r) =>
     r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, estimates: [], estimate: null, ops: [] }) }));
-  await page.route("**/api/property-layers**", (r) =>
-    r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, layers: [] }) }));
+  // A layer at property 13 with NO storage_path — the state every layer added
+  // on a device was left in, because nothing ever uploaded the bytes.
+  // The shape the ROUTE emits, not the database row it reads — the route is
+  // what is stubbed, so its own conversion never runs.
+  const LAYER = {
+    id: "11111111-2222-4333-8444-555555555555",
+    propertyId: 13, label: "Back yard plan",
+    imageId: null, storagePath: null, imageUrl: null,
+    georef: { centre: { lat: 41.31, lng: -87.15 }, widthM: 60, aspect: 1, rotDeg: 0 },
+    opacity: 0.85, z: 0, locked: false, scaleLocked: false,
+    source: "masterdash", updatedAt: null,
+  };
+  let layerSaves = 0;
+  await page.route("**/api/property-layers**", (r) => {
+    if (r.request().method() === "POST") {
+      layerSaves++;
+      return r.fulfill({ contentType: "application/json",
+        body: JSON.stringify({ ok: true,
+          layer: { ...LAYER, storagePath: "property-13/x.jpg",
+                   imageUrl: "https://x/property-13/x.jpg" } }) });
+    }
+    return r.fulfill({ contentType: "application/json",
+      body: JSON.stringify({ ok: true, layers: [LAYER] }) });
+  });
+  let imageUploads = 0;
+  await page.route("**/api/plan-image**", (r) => {
+    imageUploads++;
+    return r.fulfill({ contentType: "application/json",
+      body: JSON.stringify({ ok: true, path: "property-13/x.jpg", url: "https://x/property-13/x.jpg" }) });
+  });
   // Deal 5 sits on property 13. Two visits there, two somewhere else, one
   // Upright has not tagged at all — which is the ordinary case on this data.
   const SESSIONS = [
@@ -332,6 +360,72 @@ try {
     /from the job/i.test(card.text), card.text);
   ok("and that the anchor is the property's own record, not a guess",
     /from the property record/i.test(card.text), card.text);
+
+  // 7c-ii. A PLAN OVERLAY SURVIVES LEAVING THE VIEW.
+  //
+  // Reported from the field: add an overlay, leave the plan, come back, and it
+  // is gone from the map while the layers panel still lists it. Coming back is
+  // a fresh mount, so nothing remembered the IndexedDB key -- and since a
+  // layer's bytes were never uploaded there was no remote copy either.
+  //
+  // The bytes are put into IndexedDB under the row's own id, which is what
+  // addOverlayFromFile() does, and then the page is reloaded so the mount is
+  // as fresh as it gets.
+  await page.evaluate(async (id) => {
+    // Opaque magenta, so the check can be "is the picture ON THE MAP" rather
+    // than "is a row in a list" — the layer is painted into a canvas, and a
+    // transparent pixel would prove nothing.
+    const blob = await (await fetch("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAE0lEQVR4nGP4z/D/Pz7MMDIUAACD5r9BB2dd7wAAAABJRU5ErkJggg==")).blob();
+    await new Promise((res, rej) => {
+      const open = indexedDB.open("qe-plans", 1);
+      open.onupgradeneeded = () => open.result.createObjectStore("images");
+      open.onsuccess = () => {
+        const t = open.result.transaction("images", "readwrite");
+        t.objectStore("images").put(blob, id);
+        t.oncomplete = () => res(null);
+        t.onerror = () => rej(t.error);
+      };
+      open.onerror = () => rej(open.error);
+    });
+  }, "11111111-2222-4333-8444-555555555555");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("main button.aspect-square");
+  const planIndex2 = await page.$$eval("main button.aspect-square", (els) =>
+    els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
+  await page.locator("main button.aspect-square").nth(planIndex2).click();
+  await page.waitForSelector("text=Back yard plan", { timeout: 15000 });
+  await page.waitForTimeout(1200);
+
+  // Read the RENDERED canvas, not a list. The layers panel listing a layer is
+  // exactly what the bug did while the map stayed blank, so a DOM check would
+  // have passed against the broken build.
+  const drawn = await page.evaluate(() => {
+    const c = document.querySelector("canvas");
+    if (!c) return { error: "no canvas" };
+    const ctx = c.getContext("2d");
+    const w = c.width, h = c.height;
+    let magenta = 0;
+    try {
+      const d = ctx.getImageData(0, 0, w, h).data;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] > 150) magenta++;
+      }
+    } catch (e) {
+      return { error: String(e).slice(0, 80) };
+    }
+    return { magenta, pixels: w * h };
+  });
+  ok("A LAYER ADDED HERE IS PAINTED ON THE MAP AGAIN AFTER A FRESH MOUNT",
+    (drawn.magenta ?? 0) > 500, JSON.stringify(drawn));
+
+  // The other half: its bytes go to Storage, so a second device can draw it
+  // too. Retried on load rather than queued, so this happens on the way in.
+  await page.waitForFunction(() => true);
+  await page.waitForTimeout(800);
+  ok("and the bytes are pushed to Storage, so it is not one iPad's secret",
+    imageUploads > 0, `${imageUploads} uploads`);
+  ok("with the row updated to say where they landed", layerSaves > 0, `${layerSaves} saves`);
 
   // 7d. AND THE VISIT TAB LEADS WITH THIS YARD.
   //

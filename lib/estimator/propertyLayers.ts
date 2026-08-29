@@ -228,3 +228,55 @@ export async function fetchSurvey(sessionId: string): Promise<{
     return null;
   }
 }
+
+/**
+ * Push a layer's bytes to Storage and record where they landed.
+ *
+ * The row and the image are saved separately and always have been — the
+ * geometry is small and shared, the picture is megabytes and belongs on the
+ * device first. What was missing is this: the picture was never sent at all,
+ * so `storage_path` stayed null and a layer that looked perfectly fine on the
+ * iPad that added it was undrawable everywhere else.
+ *
+ * Returns the saved row so the caller can take the `storagePath` — which is
+ * also what stops this being retried on every load for ever.
+ */
+export async function uploadLayerImage(overlay: MapOverlay): Promise<MapOverlay | null> {
+  if (!overlay.imageId) return null;
+  try {
+    const blob = await getPlanImage(overlay.imageId);
+    // The bytes are gone — a cleared store, or a row from another device that
+    // this one only merged. Nothing to send and nothing to retry.
+    if (!blob) return null;
+    const res = await fetch("/api/plan-image", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        // Filed under the PROPERTY, not the estimate: a layer belongs to the
+        // yard and outlives any one quote of it.
+        clientId: `property-${overlay.propertyId}`,
+        imageId: overlay.imageId,
+        dataBase64: await toBase64(blob),
+      }),
+    });
+    if (!res.ok) return null;
+    const { path } = (await res.json()) as { path?: string };
+    if (!path) return null;
+    return await saveLayer({ ...overlay, storagePath: path });
+  } catch {
+    // Offline, most likely. The device's own copy still draws, and the next
+    // load tries again.
+    return null;
+  }
+}
+
+/** Bytes to base64, chunked — see planImage.ts for why apply() is not used. */
+async function toBase64(blob: Blob): Promise<string> {
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < buf.length; i += CHUNK) {
+    binary += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
