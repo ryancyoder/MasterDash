@@ -4,8 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   PHOTO_WINDOW_MS,
   clipAt,
+  CLIP_SLOW_MS,
   canPlayHevc,
   clipErrorMessage,
+  clipLoadingMessage,
   clipSeekTarget,
   fmtClock,
   photoAt,
@@ -64,6 +66,37 @@ export function ReviewVideo({
 
   const clips = useMemo(() => session?.clips ?? [], [session]);
 
+  /*
+    THE LOOP MUST NOT BE REBUILT WHEN THE DRIFT SETTLES.
+
+    `drift` is derived from the audio's own duration, and the master audio is
+    a MediaRecorder file with no duration in its header. A browser reports
+    such a file as Infinity and then REFINES it as the bytes arrive, firing
+    `durationchange` again and again. Each one changed `drift`, which is in
+    this effect's dependencies, which tore the loop down and built a new one —
+    and a new loop has forgotten which clip is showing, so it assigns
+    `video.src` again and the download starts over from zero. On a 33 MB clip
+    that is a lot of progress thrown away, repeatedly, for nothing.
+
+    Whether it is enough to starve a load outright was NOT reproduced —
+    Chromium reaches a frame from a partial file and recovers from each
+    restart. It is fixed because discarding a download to react to a number
+    the loop reads every frame anyway is wrong regardless of what it costs.
+
+    The values go through refs instead: the loop reads the current drift on
+    every frame without the loop's own life depending on it.
+  */
+  const driftRef = useRef(drift);
+  const clipsRef = useRef(clips);
+  useEffect(() => {
+    driftRef.current = drift;
+  }, [drift]);
+  useEffect(() => {
+    clipsRef.current = clips;
+  }, [clips]);
+
+  const sessionId = session?.id ?? null;
+
   useEffect(() => {
     const video = videoRef.current;
     const audio = audioRef.current;
@@ -89,7 +122,7 @@ export function ReviewVideo({
     video.addEventListener("canplay", onPlayable);
 
     const tick = () => {
-      const hit = clipAt(clips, audio.currentTime * 1000, drift);
+      const hit = clipAt(clipsRef.current, audio.currentTime * 1000, driftRef.current);
       if (hit) {
         if (shownClip !== hit.clip.id) {
           shownClip = hit.clip.id;
@@ -135,10 +168,36 @@ export function ReviewVideo({
 
         // Slow is a state, not a failure — but an unexplained black rectangle
         // is indistinguishable from a broken one, so after a few seconds it
-        // says which it is.
-        if (!slowSaid && video.readyState < 2 && performance.now() - loadedAt > 4000) {
+        // says which it is, with the numbers that tell the two apart.
+        if (!slowSaid && video.readyState < 2 && performance.now() - loadedAt > CLIP_SLOW_MS) {
           slowSaid = true;
-          setTrouble("Still loading the clip\u2026");
+          const url = hit.clip.url;
+          const buffered = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
+          setTrouble(clipLoadingMessage(null, buffered));
+          // HEAD, not a ranged GET: Range is not a CORS-safelisted header, so
+          // asking for one would add a preflight that can fail on its own and
+          // tell us about the preflight rather than about the clip.
+          void fetch(url, { method: "HEAD" })
+            .then((r) => {
+              if (shownClip !== null && videoRef.current?.readyState !== undefined &&
+                  videoRef.current.readyState < 2) {
+                const len = r.headers.get("content-length");
+                setTrouble(
+                  clipLoadingMessage(
+                    { ok: r.ok, status: r.status, bytes: len ? Number(len) : null },
+                    buffered,
+                  ),
+                );
+              }
+            })
+            .catch((e: unknown) => {
+              setTrouble(
+                clipLoadingMessage(
+                  { ok: false, status: 0, bytes: null, error: e instanceof Error ? e.message : "blocked" },
+                  buffered,
+                ),
+              );
+            });
         }
         setGap(false);
       } else {
@@ -164,7 +223,7 @@ export function ReviewVideo({
       video.removeEventListener("loadeddata", onPlayable);
       video.removeEventListener("canplay", onPlayable);
     };
-  }, [clips, drift, audioRef]);
+  }, [sessionId, audioRef]);
 
   // The element carries its own geometry so the wrapper is never swapped out
   // from under it. Between clips the mini pane is dropped entirely rather than

@@ -486,3 +486,48 @@ export function canPlayHevc(): boolean {
     v.canPlayType('video/mp4; codecs="hev1"') !== ""
   );
 }
+
+// --- when the picture has not arrived -------------------------------------
+
+/** How long a clip may sit un-decoded before the pane says something. */
+export const CLIP_SLOW_MS = 4000;
+
+/** What a HEAD of the clip's own URL came back with. */
+export interface ClipReachability {
+  ok: boolean;
+  status: number;
+  /** Content-Length, when the response stated one. */
+  bytes: number | null;
+  /** Set when the request could not be made at all. */
+  error?: string;
+}
+
+function mb(bytes: number): string {
+  return `${(bytes / 1e6).toFixed(bytes < 1e7 ? 1 : 0)} MB`;
+}
+
+/**
+ * What to say while a clip has not produced a frame.
+ *
+ * "Still loading" on its own is the least useful true statement available: a
+ * 33 MB clip on a slow line and a request that is never going to arrive look
+ * exactly the same from the outside, and they need opposite responses — wait,
+ * or go and look. So the note carries how much of the clip is actually ready
+ * and whether the file answers at all.
+ *
+ * A probe that THREW is reported as a failed check rather than as an
+ * unreachable clip, and the distinction is not pedantry: the `<video>` element
+ * fetches without CORS and does not care what a `fetch()` is refused, so a
+ * blocked probe says nothing about whether the clip itself can load.
+ */
+export function clipLoadingMessage(
+  reach: ClipReachability | null,
+  bufferedSec: number,
+): string {
+  const ready = bufferedSec > 0 ? ` — ${bufferedSec.toFixed(1)}s ready` : "";
+  if (!reach) return `Still loading the clip${ready}\u2026`;
+  if (reach.error) return `Still loading the clip${ready}\u2026 (could not check the file: ${reach.error})`;
+  if (!reach.ok) return `The clip is not there — the file answered HTTP ${reach.status}.`;
+  const size = reach.bytes ? `, ${mb(reach.bytes)}` : "";
+  return `Still loading the clip${ready}\u2026 The file is reachable${size}.`;
+}

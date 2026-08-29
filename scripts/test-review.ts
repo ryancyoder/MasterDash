@@ -12,6 +12,7 @@ import {
   CLIP_SYNC_TOLERANCE_SEC,
   clipAt,
   clipErrorMessage,
+  clipLoadingMessage,
   clipSeekTarget,
   driftScale,
   fmtClock,
@@ -303,6 +304,44 @@ ok(
   );
   ok("no error is no message", clipErrorMessage(null) === null);
   ok("an unknown code still says something", clipErrorMessage(99) !== null);
+}
+
+{
+  // What the pane says while a clip has produced no frame. "Still loading" on
+  // its own cannot tell a 33 MB clip on a slow line from a request that will
+  // never arrive, and those need opposite responses.
+  ok(
+    "with nothing checked yet it just says it is loading",
+    clipLoadingMessage(null, 0) === "Still loading the clip\u2026",
+  );
+  ok(
+    "and reports what has actually arrived",
+    clipLoadingMessage(null, 2.34).includes("2.3s ready"),
+  );
+  ok(
+    "a file that answers is reported as reachable, with its size",
+    clipLoadingMessage({ ok: true, status: 200, bytes: 33822147 }, 0).includes("34 MB"),
+  );
+  ok(
+    "a smaller one keeps a decimal",
+    clipLoadingMessage({ ok: true, status: 200, bytes: 3575896 }, 0).includes("3.6 MB"),
+  );
+  ok(
+    "a missing file names the status and does not say 'loading'",
+    clipLoadingMessage({ ok: false, status: 404, bytes: null }, 0) ===
+      "The clip is not there — the file answered HTTP 404.",
+  );
+  ok(
+    "a probe that could not run is NOT reported as a missing clip",
+    clipLoadingMessage({ ok: false, status: 0, bytes: null, error: "Failed to fetch" }, 0)
+      .startsWith("Still loading"),
+    "the <video> fetches without CORS, so a blocked probe says nothing about the clip",
+  );
+  ok(
+    "and it still names why the check failed",
+    clipLoadingMessage({ ok: false, status: 0, bytes: null, error: "Failed to fetch" }, 0)
+      .includes("Failed to fetch"),
+  );
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
