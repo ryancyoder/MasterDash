@@ -9,6 +9,7 @@
 
 import {
   eventLabel,
+  groupPhotoRows,
   photoCount,
   photoGroups,
   type PhotoEvent,
@@ -498,6 +499,68 @@ ok(
   photoGroups(source);
   ok("grouping does not reorder its input",
     source[0].photos.map((p) => p.id).join(",") === "b,a");
+}
+
+{
+  console.log("\n--- rows to groups, which is where this shipped broken ---");
+
+  // The Gordon appointment, as it actually is: one event, fifteen photographs,
+  // all of them plain stills. Reported from the field as "the pictures didn't
+  // show up", and they had not: the route built its map with `get(id) ?? []`,
+  // pushed onto the list and never `set` it back, so every event came out
+  // empty and the length filter dropped the lot.
+  const row = (id: number, over = {}) => ({
+    id, event_id: 141, storage_path: `event-141/${id}.jpg`, poster_path: null,
+    media_type: "photo", caption: null, taken_at: `2026-08-26T19:${String(id % 60).padStart(2, "0")}:00Z`,
+    created_at: "2026-08-26T19:00:00Z", is_outlier: false, ...over,
+  });
+  const gordon = [{ id: 141, name: "Tara Gordon", event_type: "Appointment",
+                    start_time: "2026-08-26T19:00:00Z" }];
+  const fifteen = Array.from({ length: 15 }, (_, i) => row(842 + i));
+
+  const built = groupPhotoRows(gordon, fifteen, (p) => `https://s/${p}`);
+  ok("A VISIT'S PHOTOGRAPHS REACH ITS GROUP",
+    built.length === 1 && built[0].photos.length === 15,
+    `${built.length} groups, ${built[0]?.photos.length ?? 0} photos`);
+  // Null-safe from here on: against the broken build `built[0]` is undefined,
+  // and a test that throws prints neither PASS nor FAIL, so the checks below
+  // it would simply stop existing rather than going red.
+  ok("the group is named for the visit",
+    built[0] !== undefined && eventLabel(built[0]) === "Aug 26, 2026 · Tara Gordon",
+    built[0] ? eventLabel(built[0]) : "(no group)");
+  ok("and the url is built from the storage path",
+    built[0]?.photos[0]?.url === "https://s/event-141/842.jpg",
+    built[0]?.photos[0]?.url ?? "(none)");
+
+  // Two visits, so the map holds more than one key -- the case the missing
+  // `set` would still have failed even with one photograph each.
+  const two = groupPhotoRows(
+    [{ id: 1, name: null, event_type: null, start_time: "2026-01-02T00:00:00Z" },
+     { id: 2, name: null, event_type: null, start_time: "2026-01-01T00:00:00Z" }],
+    [row(10, { event_id: 1 }), row(11, { event_id: 2 }), row(12, { event_id: 1 })],
+    (p) => p,
+  );
+  ok("photographs land on the visit they belong to",
+    two.map((g) => g.photos.length).join(",") === "2,1",
+    two.map((g) => `${g.id}:${g.photos.length}`).join(","));
+
+  // An id that arrives as a string on one side and a number on the other is
+  // exactly the kind of thing a Map key does not forgive.
+  ok("and a string id matches a number one",
+    groupPhotoRows([{ id: "141", name: null, event_type: null, start_time: null }],
+      [row(1)], (p) => p)[0]?.photos.length === 1);
+
+  ok("a video contributes its poster, not the clip",
+    groupPhotoRows(gordon, [row(1, { media_type: "video", poster_path: "poster.jpg" })],
+      (p) => p)[0]?.photos[0]?.url === "poster.jpg");
+  ok("and a video with no poster is left out rather than shown blank",
+    groupPhotoRows(gordon, [row(1, { media_type: "video", poster_path: null })], (p) => p).length === 0);
+  ok("an undated photograph falls back to when the row was made",
+    groupPhotoRows(gordon, [row(1, { taken_at: null })], (p) => p)[0]?.photos[0]?.takenAt
+      === "2026-08-26T19:00:00Z");
+  ok("a visit nobody photographed is not a group",
+    groupPhotoRows([...gordon, { id: 999, name: null, event_type: null, start_time: null }],
+      fifteen, (p) => p).length === 1);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

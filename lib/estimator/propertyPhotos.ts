@@ -91,14 +91,103 @@ export function photoGroups(events: PhotoEvent[]): PhotoEvent[] {
     });
 }
 
+/**
+ * Rows to groups.
+ *
+ * THIS LIVES HERE, NOT IN THE ROUTE, and the reason is a bug it shipped with:
+ * the route built its map with `get(id) ?? []`, pushed onto the list and never
+ * `set` it back, so every event came out with no photographs and the
+ * `length > 0` filter below dropped the lot. The endpoint answered `{events:
+ * []}` for a yard with fifteen pictures in it.
+ *
+ * What let that through is the shape of the tests rather than the mistake: the
+ * grouping was checked, the rendering was checked, and the glue between them
+ * was stubbed in both. So the glue moved in here, where it is checked with the
+ * rest — the route now maps rows and calls this, and has no logic of its own
+ * left to get wrong.
+ *
+ * `urlFor` is passed in because building a Storage URL needs credentials the
+ * browser does not have, and this module has to stay testable without them.
+ */
+export function groupPhotoRows(
+  events: {
+    id: number | string;
+    name: string | null;
+    event_type: string | null;
+    start_time: string | null;
+  }[],
+  photos: {
+    id: number | string;
+    event_id: number | string;
+    storage_path: string;
+    poster_path: string | null;
+    media_type: string;
+    caption: string | null;
+    taken_at: string | null;
+    created_at: string;
+    is_outlier: boolean;
+  }[],
+  urlFor: (path: string) => string,
+): PhotoEvent[] {
+  const byEvent = new Map<string, EventPhoto[]>();
+  for (const p of photos) {
+    // A VIDEO'S POSTER, NEVER THE CLIP. `storage_path` on a video row is the
+    // mp4, and an <img> pointed at one is a broken thumbnail. No poster means
+    // no thumbnail, so it is left out rather than shown as a blank frame.
+    const path = p.media_type === "video" ? p.poster_path : p.storage_path;
+    if (!path) continue;
+    const key = String(p.event_id);
+    const photo: EventPhoto = {
+      id: String(p.id),
+      url: urlFor(path),
+      caption: p.caption,
+      takenAt: p.taken_at ?? p.created_at,
+      isVideo: p.media_type === "video",
+      // Flagged where it was taken, not deleted. Somebody took the picture;
+      // the strip marks it rather than deciding for them.
+      isOutlier: p.is_outlier === true,
+    };
+    const list = byEvent.get(key);
+    if (list) list.push(photo);
+    else byEvent.set(key, [photo]);
+  }
+
+  return photoGroups(
+    events.map((e) => ({
+      id: String(e.id),
+      name: e.name,
+      type: e.event_type,
+      startedAt: e.start_time,
+      photos: byEvent.get(String(e.id)) ?? [],
+    })),
+  );
+}
+
 /** How many photographs there are across every visit. */
 export function photoCount(events: PhotoEvent[]): number {
   return events.reduce((n, e) => n + e.photos.length, 0);
 }
 
-export async function fetchPropertyPhotos(propertyId: number): Promise<PhotoEvent[]> {
-  const res = await fetch(`/api/property-photos?property=${propertyId}`);
-  const body = (await res.json()) as { ok?: boolean; events?: PhotoEvent[] };
-  if (!res.ok || !body.ok) return [];
-  return photoGroups(body.events ?? []);
+/**
+ * The yard's photographs, or what went wrong reading them.
+ *
+ * NOT an empty list on failure, which is what this shipped with. A read that
+ * never landed and a yard nobody has photographed then look identical on
+ * screen — "No photographs of this yard yet" — and reading the first as the
+ * second is how you conclude a feature does not work. It is the same rule the
+ * proposal helper's error reporting follows.
+ */
+export async function fetchPropertyPhotos(
+  propertyId: number,
+): Promise<{ events: PhotoEvent[]; error: string | null }> {
+  try {
+    const res = await fetch(`/api/property-photos?property=${propertyId}`);
+    const body = (await res.json()) as { ok?: boolean; events?: PhotoEvent[]; error?: string };
+    if (!res.ok || !body.ok) {
+      return { events: [], error: body.error ?? `The photographs could not be read (${res.status}).` };
+    }
+    return { events: photoGroups(body.events ?? []), error: null };
+  } catch {
+    return { events: [], error: "No signal — the yard's photographs need coverage." };
+  }
 }

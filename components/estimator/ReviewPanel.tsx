@@ -590,12 +590,15 @@ export function ReviewFilmstrip({
   */
   const [source, setSource] = useState<"visit" | "property">("visit");
   const [events, setEvents] = useState<PhotoEvent[] | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
 
   useEffect(() => {
     if (source !== "property" || propertyId === null) return;
     let live = true;
-    void fetchPropertyPhotos(propertyId).then((rows) => {
-      if (live) setEvents(rows);
+    void fetchPropertyPhotos(propertyId).then((r) => {
+      if (!live) return;
+      setEvents(r.events);
+      setPhotoError(r.error);
     });
     return () => {
       live = false;
@@ -611,6 +614,7 @@ export function ReviewFilmstrip({
   if (lastProperty !== propertyId) {
     setLastProperty(propertyId);
     setEvents(null);
+    setPhotoError(null);
   }
 
   const live = useMemo(
@@ -653,6 +657,12 @@ export function ReviewFilmstrip({
         {switcher}
         {events === null ? (
           <p className="self-center px-2 text-xs text-muted">Looking…</p>
+        ) : photoError ? (
+          // Named, not swallowed: a read that failed and a yard with no
+          // pictures must not look the same.
+          <p className="self-center px-2 text-xs leading-relaxed text-[#fca5a5]">
+            {photoError}
+          </p>
         ) : groups.length === 0 ? (
           <p className="self-center px-2 text-xs leading-relaxed text-muted">
             No photographs of this yard yet. They arrive with the appointments

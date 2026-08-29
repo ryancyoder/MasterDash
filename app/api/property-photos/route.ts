@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { configReport, publicObjectUrl, rest, serverConfig } from "@/lib/server/supabase";
-import type { EventPhoto, PhotoEvent } from "@/lib/estimator/propertyPhotos";
+import { groupPhotoRows } from "@/lib/estimator/propertyPhotos";
 
 // A property's photographs, by the visit they were taken on.
 //
@@ -86,38 +86,12 @@ export async function GET(request: Request) {
   }
   const photoRows = (await photosRes.json()) as PhotoRow[];
 
-  const byEvent = new Map<number, EventPhoto[]>();
-  for (const p of photoRows) {
-    // A VIDEO'S POSTER, NEVER THE CLIP. `storage_path` on a video row is the
-    // mp4, and an <img> pointed at one is a broken thumbnail. 15 of the rows
-    // on file are videos. No poster means no thumbnail, so it is left out
-    // rather than shown as a blank frame.
-    const path = p.media_type === "video" ? p.poster_path : p.storage_path;
-    if (!path) continue;
-    const list = byEvent.get(p.event_id) ?? [];
-    list.push({
-      id: String(p.id),
-      url: publicObjectUrl(cfg, BUCKET, path),
-      caption: p.caption,
-      takenAt: p.taken_at ?? p.created_at,
-      isVideo: p.media_type === "video",
-      // Flagged where it was taken, not deleted. Somebody took the picture;
-      // the strip marks it rather than deciding for them.
-      isOutlier: p.is_outlier === true,
-    });
-  }
-
-  const events: PhotoEvent[] = eventRows
-    .map((e) => ({
-      id: String(e.id),
-      name: e.name,
-      type: e.event_type,
-      startedAt: e.start_time,
-      photos: byEvent.get(e.id) ?? [],
-    }))
-    // A visit nobody photographed is not a group with nothing in it; it is not
-    // a group.
-    .filter((e) => e.photos.length > 0);
+  // The grouping lives in propertyPhotos.ts, where it is tested. It used to
+  // live here and shipped with a get-or-create that never put the list back,
+  // so this endpoint answered "no photographs" for a yard with fifteen.
+  const events = groupPhotoRows(eventRows, photoRows, (path) =>
+    publicObjectUrl(cfg, BUCKET, path),
+  );
 
   return NextResponse.json({ ok: true, events });
 }

@@ -922,6 +922,28 @@ above the plan's cards rather than a tap that does nothing. It is fetched
 inside the strip, on the first switch to it, so the page never holds a list
 nobody may ask for; the frame travels with the pick.
 
+**The grouping lives in `propertyPhotos.ts`, not in the route** — and that is
+where it moved after shipping broken. The route built its map with
+`get(id) ?? []`, pushed onto the list and **never `set` it back**, so every
+event came out with no photographs and the `length > 0` filter dropped the lot:
+the endpoint answered *no photographs* for a yard with fifteen of them, which
+is how it was reported from the field.
+
+What let it through was the shape of the tests rather than the mistake. The
+grouping was checked without a browser, the rendering was checked in one — and
+**the glue between them was stubbed in both**, so the route's own body had
+never run. It is the flow-arrow lesson in a new place: verify the thing that
+actually executes, not the two things either side of it. `groupPhotoRows()`
+now holds that step, the route maps rows and calls it, and the regression test
+is the real Gordon appointment: one event, fifteen stills. Against the original
+it reports `0 groups, 0 photos`.
+
+**And a failed read no longer reads as an empty yard.** `fetchPropertyPhotos()`
+returned `[]` on any failure, so a request that never landed and a yard nobody
+has photographed looked identical — *No photographs of this yard yet* — which
+is how you conclude a feature does not work. It returns the error now and the
+strip says it, the same rule the proposal helper's error reporting follows.
+
 **Not done, and worth knowing:** `deal_photos` carries `latitude`/`longitude`,
 so these could be pins on the map like Upright's are. That is a bigger change
 than a rail and was not what was asked for.
@@ -1268,7 +1290,7 @@ npm run dev      # http://localhost:3000
 npm run build
 npx eslint .
 
-npm run test:review     # the review screen's pure logic
+npm run test:review     # the review screen, and the property photo groups
 npm run test:plan       # the take-off's geometry and the map anchor
 npm run test:board      # the job board's pairing and filtering
 npm run test:visit      # which visit, for a yard already chosen
