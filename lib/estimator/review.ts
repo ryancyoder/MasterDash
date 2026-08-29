@@ -247,23 +247,76 @@ export function fmtClock(ms: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 }
 
-/** How a session reads in the review picker. */
-export function reviewLabel(s: {
-  name?: string | null;
-  propertyAddress?: string | null;
-  startedAt?: string | null;
-}): string {
-  const when = s.startedAt
-    ? new Date(s.startedAt).toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })
-    : "undated";
+/** The clock time a visit started — "3:20 pm". */
+export function reviewTime(startedAt: string | null | undefined): string {
+  if (!startedAt) return "";
+  const d = new Date(startedAt);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+/** The day a visit started — "Aug 29, 2026". */
+export function reviewDay(startedAt: string | null | undefined): string {
+  if (!startedAt) return "Undated";
+  const d = new Date(startedAt);
+  return Number.isNaN(d.getTime())
+    ? "Undated"
+    : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+/**
+ * How a session reads on its own — as the chosen visit, say.
+ *
+ * WHEN FIRST, AND WHERE ONLY WHEN IT DISTINGUISHES ANYTHING. The picker is
+ * scoped to the estimate's property, so every row in it is the same yard: an
+ * address on each one is the same string repeated, and since a session's name
+ * is now the client's surname that is the same repetition wearing a different
+ * hat. `withPlace` is for the unscoped list, where the rows really are from
+ * different yards and where it is the only thing telling them apart.
+ *
+ * The TIME is not decoration. Six sessions were recorded on one day in this
+ * project's own data, so a date alone does not identify a visit.
+ */
+export function reviewLabel(
+  s: {
+    name?: string | null;
+    propertyAddress?: string | null;
+    startedAt?: string | null;
+  },
+  opts: { withPlace?: boolean } = {},
+): string {
+  const time = reviewTime(s.startedAt);
+  const when = s.startedAt ? `${reviewDay(s.startedAt)}${time ? ` · ${time}` : ""}` : "undated";
+  if (!opts.withPlace) return when;
   // Upright's own fallback chain: a name says what the visit WAS, an address
   // says where it was, and either can stand alone.
-  const title = s.name || s.propertyAddress || "Untagged session";
-  return `${title} · ${when}`;
+  const place = s.name || s.propertyAddress;
+  return place ? `${when} · ${place}` : when;
+}
+
+/**
+ * The rows grouped under the day they were recorded, newest first.
+ *
+ * Leading every row with the date would only move the repetition rather than
+ * remove it — six visits in one day would carry the same date six times. The
+ * day is said once and the rows under it carry the time.
+ */
+export function reviewDays<T extends { startedAt: string | null }>(
+  rows: T[],
+): { key: string; label: string; rows: T[] }[] {
+  const out: { key: string; label: string; rows: T[] }[] = [];
+  for (const row of rows) {
+    const label = reviewDay(row.startedAt);
+    const last = out[out.length - 1];
+    // Rows arrive newest-first, so a day's runs are already adjacent and this
+    // never has to sort. An out-of-order row opens its own group rather than
+    // being hoisted into an earlier one, which is the honest rendering of a
+    // list that is not in the order it claims.
+    if (last && last.label === label) last.rows.push(row);
+    else out.push({ key: `${label}#${out.length}`, label, rows: [row] });
+  }
+  return out;
 }
 
 // --- the filmstrip --------------------------------------------------------

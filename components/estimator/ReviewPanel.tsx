@@ -11,7 +11,9 @@ import {
   playFailureMessage,
   fmtClock,
   photoAt,
+  reviewDays,
   reviewLabel,
+  reviewTime,
   segmentAt,
   stripItems,
   type GradeFrame,
@@ -723,21 +725,56 @@ export function ReviewCard({
               )}
             </p>
           ) : (
-            rows.map((r) => (
-              <button
-                key={r.id}
-                onClick={() => {
-                  onChoose({ sessionId: r.id, label: reviewLabel(r) });
-                  onPicking(false);
-                }}
-                className="rounded-lg bg-surface2 px-2 py-2 text-left text-xs text-ink"
-              >
-                {reviewLabel(r)}
-                <span className="ml-1 text-muted">
-                  · {r.photoCount} photo{r.photoCount === 1 ? "" : "s"}
-                  {r.transcriptStatus === "completed" ? " · transcript" : ""}
-                </span>
-              </button>
+            /*
+              Grouped by day, and the address is gone. The list is already
+              scoped to this estimate's property, so an address on every row is
+              the same string repeated — and so is the session's name, which is
+              now the client's surname. What actually tells two visits apart
+              here is WHEN, and how long they ran.
+            */
+            reviewDays(rows).map((day) => (
+              <div key={day.key}>
+                <p className="px-1 pb-0.5 pt-1 text-[0.65rem] font-bold tracking-wide text-muted">
+                  {day.label}
+                </p>
+                <div className="flex flex-col gap-1">
+                  {day.rows.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => {
+                        onChoose({
+                          sessionId: r.id,
+                          // The stored label stands alone on the card, so it
+                          // keeps its day; only the picker can lean on a heading.
+                          label: reviewLabel(r, { withPlace: !propertyId }),
+                        });
+                        onPicking(false);
+                      }}
+                      className="rounded-lg bg-surface2 px-2 py-2 text-left text-xs text-ink"
+                    >
+                      {reviewTime(r.startedAt) || "Untimed"}
+                      <span className="ml-1 text-muted">
+                        {r.durationSeconds
+                          ? ` · ${fmtClock(r.durationSeconds * 1000)}`
+                          : ""}
+                        {" · "}
+                        {r.photoCount} photo{r.photoCount === 1 ? "" : "s"}
+                        {r.transcriptStatus === "completed" ? " · transcript" : ""}
+                      </span>
+                      {/*
+                        Only where the list is NOT scoped to a property do the
+                        rows come from different yards, and only then does
+                        saying which one distinguish anything.
+                      */}
+                      {!propertyId && r.propertyAddress && (
+                        <span className="block text-[0.65rem] text-muted">
+                          {r.propertyAddress}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))
           )}
         </div>

@@ -20,7 +20,10 @@ import {
   locatedPhotoAt,
   photoAt,
   gradeBadge,
+  reviewDay,
+  reviewDays,
   reviewLabel,
+  reviewTime,
   segmentAt,
   stripItems,
   wallToAudioMs,
@@ -163,19 +166,68 @@ ok("over an hour grows an hour field", fmtClock(3_777_000) === "1:02:57");
 ok("a negative playhead reads as zero", fmtClock(-5) === "0:00");
 ok("a NaN playhead reads as zero", fmtClock(NaN) === "0:00");
 
-ok(
-  "a named session leads with its name",
-  reviewLabel({ name: "Back yard regrade", propertyAddress: "1 Any St", startedAt: null }) ===
-    "Back yard regrade · undated",
-);
-ok(
-  "an unnamed one falls back to the address",
-  reviewLabel({ name: null, propertyAddress: "1 Any St", startedAt: null }) === "1 Any St · undated",
-);
-ok(
-  "and with neither it says so",
-  reviewLabel({ name: null, propertyAddress: null, startedAt: null }) === "Untagged session · undated",
-);
+{
+  // WHEN FIRST, AND WHERE ONLY WHEN IT DISTINGUISHES ANYTHING. The picker is
+  // scoped to the estimate's property, so an address on every row is one
+  // string repeated -- and a session's name is now the client's surname, which
+  // is the same repetition wearing a different hat.
+  const visit = { name: "Yoder", propertyAddress: "1 Any St", startedAt: "2026-08-29T15:20:20Z" };
+
+  ok("scoped, a session is named by when it happened",
+     !/Any St|Yoder/.test(reviewLabel(visit)),
+     reviewLabel(visit));
+  ok("and the day is in it", /Aug/.test(reviewLabel(visit)), reviewLabel(visit));
+  ok(
+    "SO IS THE TIME -- six visits landed on one day in this project's own data,\n      so a date alone does not identify one",
+    /\d:\d\d/.test(reviewLabel(visit)),
+    reviewLabel(visit),
+  );
+
+  ok("unscoped, where it was comes back",
+     /Yoder/.test(reviewLabel(visit, { withPlace: true })));
+  ok("and it comes AFTER the when, not before",
+     reviewLabel(visit, { withPlace: true }).indexOf("Yoder")
+       > reviewLabel(visit, { withPlace: true }).indexOf("Aug"));
+  ok("an unnamed one falls back to the address",
+     /1 Any St/.test(reviewLabel({ ...visit, name: null }, { withPlace: true })));
+  ok("with neither, the when stands alone",
+     reviewLabel({ name: null, propertyAddress: null, startedAt: null }, { withPlace: true })
+       === "undated");
+  ok("and an undated session says so rather than inventing one",
+     reviewLabel({ name: null, propertyAddress: null, startedAt: null }) === "undated");
+}
+
+{
+  // Grouped by day, so a date is said once rather than on every row.
+  const at = (iso: string) => ({ startedAt: iso });
+  const days = reviewDays([
+    at("2026-08-29T15:20:00Z"), at("2026-08-29T15:18:00Z"), at("2026-08-29T14:44:00Z"),
+    at("2026-08-24T10:02:00Z"),
+    { startedAt: null },
+  ]);
+  ok("a day's visits are gathered under it", days.length === 3, `${days.length} groups`);
+  ok("and all of that day's are in it", days[0].rows.length === 3);
+  ok("the next day opens its own", days[1].rows.length === 1);
+  ok("an undated session is not silently dated", days[2].label === "Undated");
+  ok("nothing is lost in the grouping",
+     days.reduce((n, d) => n + d.rows.length, 0) === 5);
+
+  // Newest-first is the caller's promise, so a row out of order opens its own
+  // group rather than being hoisted into an earlier one -- which is the honest
+  // rendering of a list that is not in the order it claims to be.
+  const jumbled = reviewDays([
+    at("2026-08-29T15:20:00Z"), at("2026-08-24T10:00:00Z"), at("2026-08-29T09:00:00Z"),
+  ]);
+  ok("an out-of-order row is not quietly hoisted", jumbled.length === 3);
+  ok("and the groups keep distinct keys for React",
+     new Set(jumbled.map((d) => d.key)).size === 3);
+
+  ok("no rows, no groups", reviewDays([]).length === 0);
+  ok("a day reads as a date", /Aug/.test(reviewDay("2026-08-29T15:20:00Z")));
+  ok("and a time as a clock", /\d:\d\d/.test(reviewTime("2026-08-29T15:20:00Z")));
+  ok("a broken timestamp is undated rather than 'Invalid Date'",
+     reviewDay("not a date") === "Undated" && reviewTime("not a date") === "");
+}
 
 // --- the filmstrip: photo pins and grade frames together ------------------
 
