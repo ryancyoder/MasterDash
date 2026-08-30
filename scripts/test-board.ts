@@ -17,7 +17,9 @@ import {
   isBoardStage,
   isUnstarted,
   keepPage,
+  reorderTiles,
   tilePicture,
+  withOrder,
   stageCounts,
   tileTitle,
   tileValue,
@@ -35,7 +37,7 @@ function ok(name: string, cond: boolean, detail = "") {
 const deal = (over: Partial<BoardDeal> & { id: number }): BoardDeal => ({
   name: null, stage: "Sent", value: null, proposalNumber: null, nextAction: null,
   updatedAt: "2026-08-01T00:00:00Z", propertyId: null, propertyAddress: null,
-  lat: null, lng: null, coverUrl: null, ...over,
+  lat: null, lng: null, coverUrl: null, boardOrder: null, ...over,
 });
 const est = (over: Partial<BoardEstimate> & { clientId: string }): BoardEstimate => ({
   dealId: null, propertyId: null, jobName: null, updatedAt: null, ...over,
@@ -253,6 +255,87 @@ const est = (over: Partial<BoardEstimate> & { clientId: string }): BoardEstimate
   ok("with nothing to keep, the index is clamped rather than left dangling",
     keepPage(pages, null, 999) === pages.length - 1 && keepPage(pages, null, -5) === 0);
   ok("and an empty board is page zero", keepPage([], onSent3, 4) === 0);
+}
+
+{
+  console.log("\n--- an order somebody arranged by hand ---");
+
+  const d = (id: number, over = {}) =>
+    deal({ id, stage: "Sent", name: `D${id}`, updatedAt: `2026-08-${String(id).padStart(2, "0")}T00:00:00Z`, ...over });
+
+  // A board nobody has arranged has to look exactly as it did: newest first.
+  const untouched = boardTiles([d(1), d(3), d(2)], []);
+  ok("with nothing arranged the board is newest-first, as it always was",
+    untouched.map((t) => t.deal.id).join(",") === "3,2,1",
+    untouched.map((t) => t.deal.id).join(","));
+
+  const arranged = boardTiles(
+    [d(1, { boardOrder: 2 }), d(2, { boardOrder: 0 }), d(3, { boardOrder: 1 })], []);
+  ok("an arranged stage is in the order somebody put it",
+    arranged.map((t) => t.deal.id).join(",") === "2,3,1",
+    arranged.map((t) => t.deal.id).join(","));
+
+  // A new deal arrives between one drag and the next. Position zero is where a
+  // null sorts if this is left to the numbers, which would put the newest deal
+  // at the front of an order somebody arranged.
+  const mixed = boardTiles(
+    [d(1, { boardOrder: 1 }), d(2, { boardOrder: 0 }), d(9)], []);
+  ok("A DEAL NOBODY HAS ARRANGED GOES AFTER THE ONES THEY HAVE",
+    mixed.map((t) => t.deal.id).join(",") === "2,1,9",
+    mixed.map((t) => t.deal.id).join(","));
+
+  // The order is within a stage, so two stages cannot interleave.
+  const across = boardTiles(
+    [d(1, { boardOrder: 0 }), d(2, { stage: "Sold", boardOrder: 0 })], []);
+  ok("the order is within a stage, never across them",
+    across.map((t) => t.stage).join(",") === "Sent,Sold");
+
+  // These come off a network payload. An `undefined` compares as arranged and
+  // then subtracts to NaN, which does not throw — it just leaves the board in
+  // whatever order the sort happened to visit.
+  const ragged = boardTiles(
+    [{ ...d(1), boardOrder: undefined as unknown as number }, d(2), d(3, { boardOrder: 0 })],
+    [],
+  );
+  ok("A MISSING ORDER IS UNARRANGED, not position NaN",
+    ragged.map((t) => t.deal.id).join(",") === "3,2,1",
+    ragged.map((t) => t.deal.id).join(","));
+
+  console.log("\n--- moving one tile ---");
+  const five = boardTiles([1, 2, 3, 4, 5].map((n) => d(n, { boardOrder: n - 1 })), []);
+  ok("a tile moves to where it was dropped",
+    reorderTiles(five, 5, 0)?.ids.join(",") === "5,1,2,3,4",
+    reorderTiles(five, 5, 0)?.ids.join(","));
+  ok("and the other way",
+    reorderTiles(five, 1, 4)?.ids.join(",") === "2,3,4,5,1",
+    reorderTiles(five, 1, 4)?.ids.join(","));
+  ok("a move to where it already is changes nothing",
+    reorderTiles(five, 3, 2)?.ids.join(",") === "1,2,3,4,5");
+  // The whole stage is returned, not just the mover: a drag says "this is my
+  // order now", so what was already on screen is recorded with the change.
+  ok("THE WHOLE STAGE COMES BACK, so the positions on screen are what get saved",
+    reorderTiles(five, 5, 0)?.ids.length === 5);
+  ok("an index past the end lands at the end, not off it",
+    reorderTiles(five, 1, 99)?.ids.join(",") === "2,3,4,5,1");
+  ok("and a negative one at the front",
+    reorderTiles(five, 5, -3)?.ids.join(",") === "5,1,2,3,4");
+  ok("a deal that is not on the board moves nothing",
+    reorderTiles(five, 404, 0) === null);
+
+  // A tile can only move within its stage: dropping it into another would be a
+  // stage change, which is a decision about the deal, not about its tile.
+  const twoStages = boardTiles(
+    [d(1, { boardOrder: 0 }), d(2, { boardOrder: 1 }), d(7, { stage: "Sold", boardOrder: 0 })], []);
+  const moved = reorderTiles(twoStages, 2, 0);
+  ok("only its own stage is renumbered",
+    moved?.stage === "Sent" && moved.ids.join(",") === "2,1", JSON.stringify(moved));
+
+  // On screen before the write lands, or the tile springs back under the
+  // finger and the drag reads as having failed.
+  ok("the order can be applied before it is saved",
+    withOrder(five, ["5", "1", "2", "3", "4"].map(Number)).map((t) => t.deal.id).join(",") === "5,1,2,3,4");
+  ok("and a tile the order does not name keeps its place",
+    withOrder(boardTiles([d(1, { boardOrder: 0 }), d(9)], []), [1]).map((t) => t.deal.id).join(",") === "1,9");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

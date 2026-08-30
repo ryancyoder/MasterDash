@@ -8,6 +8,8 @@ import {
   firstPageOf,
   gridFor,
   keepPage,
+  reorderTiles,
+  withOrder,
   stageCounts,
   tilePicture,
   tileTitle,
@@ -158,6 +160,24 @@ export default function JobBoard({
     postage stamps while Sold's 8 sit in an empty screen.
   */
   const [page, setPage] = useState(0);
+  /*
+    EDIT MODE: the tiles come loose and a drag rearranges them.
+
+    A mode rather than a gesture on a live tile, for the reason the estimator's
+    own grid gives: a tap on a job tile opens it, and a drag that could also
+    open one is a drag nobody trusts. Inside the mode nothing opens, so a
+    finger can be as clumsy as it likes.
+
+    The order it writes is shared: it is a column on the deal, so VoiceData's
+    Sales Board can sort by the same arrangement rather than each app keeping
+    its own idea of it.
+  */
+  const [editing, setEditing] = useState(false);
+  /** The tile being dragged, and where in the page it currently sits. */
+  const [drag, setDrag] = useState<{ id: number; from: number; over: number } | null>(null);
+  /** A local order applied before the write lands, so nothing springs back. */
+  const [pending, setPending] = useState<number[] | null>(null);
+  const [orderError, setOrderError] = useState<string | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ width: 0, height: 0 });
   /**
@@ -195,7 +215,13 @@ export default function JobBoard({
   }, []);
 
   const counts = useMemo(() => stageCounts(deals ?? []), [deals]);
-  const tiles = useMemo(() => boardTiles(deals ?? [], estimates), [deals, estimates]);
+  const tiles = useMemo(() => {
+    const built = boardTiles(deals ?? [], estimates);
+    // An order that has been dropped but not yet confirmed by the server. The
+    // tile has to stay where it was put; springing back and then jumping
+    // forward when the write lands reads as a drag that failed.
+    return pending ? withOrder(built, pending) : built;
+  }, [deals, estimates, pending]);
 
   /** The box the tiles have to fit in, measured rather than assumed. */
   useEffect(() => {
@@ -223,6 +249,16 @@ export default function JobBoard({
   const safePage = keepPage(pages, held, page);
   if (safePage !== page) setPage(safePage);
   const current = pages[safePage] ?? null;
+  /*
+    Where this page starts inside its own stage.
+
+    A drop is an index within the PAGE, and the order is a position within the
+    STAGE — so a tile dropped in the first slot of Sent's third page belongs at
+    position 36, not at the front of Sent. Getting this wrong would silently
+    move a tile to the top of the stage every time somebody rearranged a later
+    page.
+  */
+  const pageStart = current ? (current.index - 1) * grid.perPage : 0;
   if (current && (held?.stage !== current.stage || held?.index !== current.index)) {
     setHeld({ stage: current.stage, index: current.index });
   }
@@ -246,9 +282,44 @@ export default function JobBoard({
     not a drag: anything short of a real sweep across the glass should still
     open the job under the thumb.
   */
+  /**
+   * Save an arrangement.
+   *
+   * On screen first: the order is applied locally and then written, so the
+   * tile stays where the finger put it. A failure says so and puts the board
+   * back — a private order that no other device will ever see is worse than
+   * one that never moved, and this order is read by another app.
+   */
+  const saveOrder = async (ids: number[]) => {
+    setPending(ids);
+    setOrderError(null);
+    try {
+      const res = await fetch("/api/deals", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      // Re-read rather than trusting the local copy: the write is what the
+      // other app will sort by, so what comes back is what everyone sees.
+      const fresh = await fetch("/api/deals").then((r) => r.json());
+      if (fresh?.ok) {
+        setDeals(fresh.deals ?? []);
+        setEstimates(fresh.estimates ?? []);
+      }
+      setPending(null);
+    } catch {
+      setPending(null);
+      setOrderError("That order could not be saved. Check the connection and try again.");
+    }
+  };
+
   const swipe = useRef<{ x: number; y: number } | null>(null);
   const SWIPE_PX = 60;
   const onDown = (e: React.PointerEvent) => {
+    // While arranging, a sideways sweep is a tile being moved. Turning the
+    // page under it would drop it on a stage it did not come from.
+    if (editing) return;
     swipe.current = { x: e.clientX, y: e.clientY };
   };
   const onUp = (e: React.PointerEvent) => {
@@ -299,12 +370,36 @@ export default function JobBoard({
           </span>
         )}
         <button
+          onClick={() => {
+            setEditing((v) => !v);
+            setDrag(null);
+            setOrderError(null);
+          }}
+          className={`ml-auto rounded-full px-3 py-1 text-xs font-bold ${
+            editing ? "bg-accent text-black" : "bg-surface2 text-muted"
+          }`}
+        >
+          {editing ? "Done" : "Arrange"}
+        </button>
+        <button
           onClick={onSkip}
-          className="ml-auto rounded-full bg-surface2 px-3 py-1 text-xs font-bold text-ink"
+          className="rounded-full bg-surface2 px-3 py-1 text-xs font-bold text-ink"
         >
           Skip to estimator
         </button>
       </div>
+
+      {editing && (
+        <p className="shrink-0 px-3 pb-1 text-[0.65rem] leading-tight text-muted">
+          Drag a job to move it. The order is the deal&apos;s own, so it is the
+          order the Sales Board sorts by too.
+        </p>
+      )}
+      {orderError && (
+        <p className="mx-3 mb-1 shrink-0 rounded-xl border border-edge bg-surface2 px-3 py-2 text-xs text-[#fca5a5]">
+          {orderError}
+        </p>
+      )}
 
       {notice && (
         <p className="mx-3 mb-2 shrink-0 rounded-xl border border-edge bg-surface2 px-3 py-2 text-xs text-[#f59e0b]">
@@ -344,7 +439,7 @@ export default function JobBoard({
               alignContent: "start",
             }}
           >
-            {current.tiles.map((t) => {
+            {current.tiles.map((t, i) => {
               // A photograph of the yard, then its roof from orbit, then a
               // glyph. tilePicture() owns the order; see jobBoard.ts.
               const picture = tilePicture(t.deal, brokenCovers.has(t.deal.id));
@@ -357,8 +452,53 @@ export default function JobBoard({
                 <button
                   key={t.deal.id}
                   data-deal={t.deal.id}
-                  onClick={() => onOpen(t)}
+                  data-index={i}
+                  /* Nothing opens while arranging: a tap that could also be
+                     the start of a drag is a tap nobody trusts. */
+                  onClick={() => !editing && onOpen(t)}
                   disabled={opening !== null}
+                  onPointerDown={
+                    editing
+                      ? (e) => {
+                          e.currentTarget.setPointerCapture(e.pointerId);
+                          setDrag({ id: t.deal.id, from: i, over: i });
+                        }
+                      : undefined
+                  }
+                  onPointerMove={
+                    editing && drag?.id === t.deal.id
+                      ? (e) => {
+                          // Which cell is under the finger. Read off the
+                          // rendered tiles rather than computed from the grid
+                          // maths, so a wrapped row or a resize cannot put the
+                          // drop somewhere the eye disagrees with.
+                          const over = document
+                            .elementsFromPoint(e.clientX, e.clientY)
+                            .map((el) => (el as HTMLElement).closest?.("[data-index]"))
+                            .find(Boolean) as HTMLElement | undefined;
+                          const at = over ? Number(over.dataset.index) : NaN;
+                          if (Number.isInteger(at) && at !== drag.over) {
+                            setDrag({ ...drag, over: at });
+                          }
+                        }
+                      : undefined
+                  }
+                  onPointerUp={
+                    editing
+                      ? () => {
+                          const d = drag;
+                          setDrag(null);
+                          // A tap in this mode is not a rearrangement. Saving
+                          // on one would write the order the board already has
+                          // — a network round trip, and a write to a column
+                          // another app reads, for nothing.
+                          if (!d || d.over === d.from) return;
+                          const next = reorderTiles(tiles, d.id, pageStart + d.over);
+                          if (next) void saveOrder(next.ids);
+                        }
+                      : undefined
+                  }
+                  onPointerCancel={editing ? () => setDrag(null) : undefined}
                   title={t.deal.propertyAddress ?? undefined}
                   aria-label={
                     `${tileTitle(t.deal)} — ${t.stage}` +
@@ -379,7 +519,9 @@ export default function JobBoard({
                   */
                   className={`relative w-full aspect-square rounded-3xl flex flex-col overflow-hidden touch-none select-none ${
                     located ? "justify-end" : "items-center justify-center"
-                  } ${opening !== null && !busy ? "opacity-40" : ""}`}
+                  } ${opening !== null && !busy ? "opacity-40" : ""} ${
+                    editing ? "qe-wiggle" : ""
+                  } ${drag?.id === t.deal.id ? "opacity-60 ring-2 ring-accent" : ""}`}
                   style={{
                     background: "var(--md-surface-2)",
                     // The ring the grid gives a chosen tile, in the accent

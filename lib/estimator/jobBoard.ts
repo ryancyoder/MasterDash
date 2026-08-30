@@ -26,6 +26,11 @@ export interface BoardDeal {
   updatedAt: string | null;
   propertyId: number | null;
   propertyAddress: string | null;
+  /**
+   * Where somebody put this tile by hand, within its stage. Null = never
+   * arranged; see `boardTiles()` for how the two kinds sort together.
+   */
+  boardOrder: number | null;
   lat: number | null;
   lng: number | null;
   /**
@@ -137,11 +142,74 @@ export function boardTiles(
         match: paired?.match ?? null,
       };
     })
-    .sort((a, b) => {
-      const at = a.deal.updatedAt ? Date.parse(a.deal.updatedAt) : 0;
-      const bt = b.deal.updatedAt ? Date.parse(b.deal.updatedAt) : 0;
-      return bt - at;
-    });
+    .sort(compareTiles);
+}
+
+/**
+ * Hand-arranged first, in the order somebody put them; then the rest, newest
+ * deal first.
+ *
+ * ARRANGING A STAGE DOES NOT SCRAMBLE THE ONES NOBODY TOUCHED. A drag writes
+ * the whole stage's order — see `reorderTiles()` — so in practice a stage is
+ * either arranged or it is not; the mixed case is what happens between a new
+ * deal arriving and the next drag, and it belongs at the end rather than at
+ * position zero, where a null would sort if this were left to the numbers.
+ *
+ * The date is the fallback rather than the rule because it is what the board
+ * did before anyone could arrange it, and a board nobody has arranged must
+ * look exactly as it did.
+ */
+function compareTiles(a: BoardTile, b: BoardTile): number {
+  // Anything that is not a real number is "never arranged", not just null.
+  // These come off a network payload, and an `undefined` slipping through
+  // compares as arranged and then subtracts to NaN — which does not throw, it
+  // simply leaves the board in whatever order the sort happened to visit.
+  const ao = Number.isFinite(a.deal.boardOrder) ? (a.deal.boardOrder as number) : null;
+  const bo = Number.isFinite(b.deal.boardOrder) ? (b.deal.boardOrder as number) : null;
+  if (ao !== null && bo !== null) return ao - bo;
+  if (ao !== null) return -1;
+  if (bo !== null) return 1;
+  const at = a.deal.updatedAt ? Date.parse(a.deal.updatedAt) : 0;
+  const bt = b.deal.updatedAt ? Date.parse(b.deal.updatedAt) : 0;
+  return bt - at;
+}
+
+/**
+ * Move one tile to a new position within its own stage.
+ *
+ * Returns the whole stage's ids in their new order, because that is what gets
+ * written: a drag says "this is my order now", so the positions somebody was
+ * already looking at are recorded along with the one they changed. Renumbering
+ * 58 rows is nothing, and the alternative — inserting a fractional position
+ * between two neighbours — leaves an order that is correct but unreadable, in
+ * a column two apps have to agree about.
+ *
+ * A tile can only move within its stage. Dropping it into another would be a
+ * stage change, which is a decision about the deal rather than about where its
+ * tile sits, and it is not what a drag on a page of one stage can mean.
+ */
+export function reorderTiles(
+  tiles: BoardTile[],
+  dealId: number,
+  toIndex: number,
+): { stage: BoardStage; ids: number[] } | null {
+  const moving = tiles.find((t) => t.deal.id === dealId);
+  if (!moving) return null;
+  const mine = tiles.filter((t) => t.stage === moving.stage).map((t) => t.deal.id);
+  const from = mine.indexOf(dealId);
+  if (from < 0) return null;
+  const to = Math.max(0, Math.min(mine.length - 1, Math.floor(toIndex)));
+  if (to === from) return { stage: moving.stage, ids: mine };
+  mine.splice(to, 0, ...mine.splice(from, 1));
+  return { stage: moving.stage, ids: mine };
+}
+
+/** The tiles as an order would leave them, before the write lands. */
+export function withOrder(tiles: BoardTile[], ids: number[]): BoardTile[] {
+  const at = new Map(ids.map((id, i) => [id, i]));
+  return tiles
+    .map((t) => (at.has(t.deal.id) ? { ...t, deal: { ...t.deal, boardOrder: at.get(t.deal.id)! } } : t))
+    .sort(compareTiles);
 }
 
 /** How many of each stage are on the board, for the filter chips. */

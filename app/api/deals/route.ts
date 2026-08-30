@@ -25,6 +25,7 @@ interface DealRow {
   next_action: string | null;
   updated_at: string | null;
   created_at: string | null;
+  board_order: number | null;
   property_id: number | null;
   properties: PropertyRow | PropertyRow[] | null;
 }
@@ -78,7 +79,7 @@ export async function GET() {
     rest(
       cfg,
       "Sales%20Board?select=id,deal_name,stage,value,proposal_number,next_action," +
-        "updated_at,created_at,property_id," +
+        "updated_at,created_at,board_order,property_id," +
         "properties(address,latitude,longitude,cover_photo_id)" +
         `&stage=in.(${encodeURIComponent(stages)})&order=updated_at.desc&limit=300`,
     ),
@@ -145,6 +146,7 @@ export async function GET() {
       nextAction: r.next_action,
       // A deal never touched since it was made still has a date.
       updatedAt: r.updated_at ?? r.created_at,
+      boardOrder: typeof r.board_order === "number" ? r.board_order : null,
       propertyId: r.property_id,
       propertyAddress: p?.address ?? null,
       lat: num(p?.latitude),
@@ -168,4 +170,54 @@ export async function GET() {
   }
 
   return NextResponse.json({ ok: true, deals, estimates, estimatesOk: estRes.ok });
+}
+
+/**
+ * Record a hand-arranged order for one stage.
+ *
+ * The whole stage's ids arrive in their new order and are written as dense
+ * positions. See `reorderTiles()` for why the lot rather than the one that
+ * moved: a drag says "this is my order now", and a column two apps read has to
+ * be legible to both.
+ *
+ * One request per deal, because PostgREST has no bulk update by position and
+ * the alternative is an RPC nobody else needs. 58 rows is the worst stage on
+ * the board.
+ */
+export async function PATCH(request: Request) {
+  const cfg = serverConfig();
+  if (!cfg) {
+    return NextResponse.json({ ok: false, error: "No Supabase credentials." }, { status: 503 });
+  }
+  let body: { ids?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return NextResponse.json({ ok: false, error: "Body was not JSON." }, { status: 400 });
+  }
+  const ids = Array.isArray(body.ids) ? body.ids.map(Number) : null;
+  // Checked rather than trusted: this endpoint is public, and a bad id here
+  // would write a position onto somebody else's deal.
+  if (!ids || ids.length === 0 || ids.length > 300 || ids.some((n) => !Number.isInteger(n) || n <= 0)) {
+    return NextResponse.json({ ok: false, error: "A list of deal ids is required." }, { status: 400 });
+  }
+
+  const failed: number[] = [];
+  for (let i = 0; i < ids.length; i++) {
+    const res = await rest(cfg, `Sales%20Board?id=eq.${ids[i]}`, {
+      method: "PATCH",
+      headers: { prefer: "return=minimal" },
+      body: JSON.stringify({ board_order: i }),
+    });
+    if (!res.ok) failed.push(ids[i]);
+  }
+  if (failed.length) {
+    // Named rather than swallowed: half an order written is an order that will
+    // read back wrong, and the screen has to be able to say so.
+    return NextResponse.json(
+      { ok: false, error: `${failed.length} of ${ids.length} could not be saved.`, failed },
+      { status: 502 },
+    );
+  }
+  return NextResponse.json({ ok: true });
 }

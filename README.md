@@ -148,6 +148,49 @@ empty. It belongs there the day a lead gets tagged to a yard.
 **Invoiced and Paid in Full are finished work**, and not what somebody opening
 an estimator is looking for.
 
+### Arranging the tiles by hand
+
+**Arrange** in the stage row makes the tiles loose; a drag moves one; **Done**
+puts the mode away. It is a mode rather than a gesture on a live tile for the
+reason the estimator's own grid gives: a tap on a job tile opens it, and a drag
+that could also open one is a drag nobody trusts. Inside the mode nothing
+opens, so a finger can be as clumsy as it likes.
+
+**The order is the deal's, not this device's.** It writes
+`"Sales Board".board_order`, so **VoiceData's Sales Board sorts by the same
+arrangement** — the ☰ button on each column. Two apps showing one order rather
+than each keeping its own idea of it was the point of putting it on the row.
+
+**A drag writes the whole stage.** A drag says *this is my order now*, so the
+positions already on screen are recorded along with the one that changed.
+Renumbering 58 rows is nothing; the alternative — a fractional position slipped
+between two neighbours — leaves an order that is correct and unreadable, in a
+column two apps have to agree about.
+
+**A deal nobody has arranged sorts after the ones they have**, in the board's
+own default order — newest first. Position zero is where a `null` would sort if
+this were left to the numbers, which would put every new deal at the front of
+an arrangement somebody made. And **anything that is not a finite number counts
+as unarranged**, not just `null`: these come off a network payload, and an
+`undefined` compares as arranged and then subtracts to `NaN`, which does not
+throw — it leaves the board in whatever order the sort happened to visit. A
+fixture missing the field found that one.
+
+**A drop is an index in the PAGE; the order is a position in the STAGE.** A
+tile dropped in the first slot of Sent's third page belongs at position 36, not
+at the front of Sent — so the page's own offset is added before the write.
+
+**A tap in the mode does not save.** It would write the order the board already
+has: a round trip, and a write to a column another app reads, for nothing.
+
+**The swipe stands down while arranging**, or a sideways drag would turn the
+page under the tile being moved and drop it on a stage it did not come from.
+
+**On screen first, then written**, with the board re-read afterwards — the
+write is what the other app sorts by, so what comes back is what everyone sees.
+A failure says so and puts the board back: a private order no other device will
+ever see is worse than one that never moved.
+
 ### One page per stage, and nothing scrolls
 
 The board is paged: **Propose → Sent → Sold → Project Management**, one stage
@@ -232,14 +275,14 @@ in.
 **The pairing is not done in the route handler.** `/api/deals` returns deals
 and estimates as two lists and `jobBoard.ts` decides — that rule is a judgement
 about ambiguity rather than a query, and it is worth checking without a
-network. `npm run test:board` does exactly that, 61 checks.
+network. `npm run test:board` does exactly that, 76 checks.
 
 **And `npm run test:board-ui` reads the rendered screen**, because the pure
 tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 81 checks. A throw is reported as a failure rather than crashing
+is showing: 88 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
 

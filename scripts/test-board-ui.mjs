@@ -43,24 +43,24 @@ const DEALS = [
   { id: 1, name: "Kowalski regrade", stage: "Sent", value: 12400, proposalNumber: "P-1",
     nextAction: null, updatedAt: "2026-08-20T00:00:00Z", propertyId: 10,
     propertyAddress: "12 Elm St", lat: 41.32, lng: -87.2,
-    coverUrl: "https://cover.test/yard.png" },
+    coverUrl: "https://cover.test/yard.png", boardOrder: null },
   { id: 2, name: "Naples front bed", stage: "Sold", value: 900, proposalNumber: "P-2",
     nextAction: null, updatedAt: "2026-08-19T00:00:00Z", propertyId: 11,
-    propertyAddress: "2651 Naples Dr", lat: null, lng: null, coverUrl: null },
+    propertyAddress: "2651 Naples Dr", lat: null, lng: null, coverUrl: null, boardOrder: null },
   { id: 3, name: "Shop cleanup", stage: "Propose", value: null, proposalNumber: null,
     nextAction: null, updatedAt: "2026-08-18T00:00:00Z", propertyId: null,
-    propertyAddress: null, lat: null, lng: null, coverUrl: null },
+    propertyAddress: null, lat: null, lng: null, coverUrl: null, boardOrder: null },
   // Finished work is not on the board at all; the filter is server-side too,
   // so this checks the client does not let one through if one arrives.
   { id: 4, name: "Old job", stage: "Paid in Full", value: 100, proposalNumber: null,
     nextAction: null, updatedAt: "2026-08-25T00:00:00Z", propertyId: 12,
-    propertyAddress: "9 Old Rd", lat: 41.3, lng: -87.1, coverUrl: null },
+    propertyAddress: "9 Old Rd", lat: 41.3, lng: -87.1, coverUrl: null, boardOrder: null },
   // A cover photo whose object has moved. The tile must fall back to the
   // satellite rather than going black under its caption.
   { id: 5, name: "Broken cover", stage: "Sent", value: null, proposalNumber: null,
     nextAction: null, updatedAt: "2026-08-17T00:00:00Z", propertyId: 13,
     propertyAddress: "5 Gone Ln", lat: 41.31, lng: -87.15,
-    coverUrl: "https://cover.test/missing.png" },
+    coverUrl: "https://cover.test/missing.png", boardOrder: null },
 ];
 // Sent carries 58 on the real board, so it has to run to several pages here
 // too or the paging is never exercised.
@@ -69,6 +69,7 @@ for (let i = 0; i < 20; i++) {
     id: 100 + i, name: `Filler ${i}`, stage: "Sent", value: null, proposalNumber: null,
     nextAction: null, updatedAt: `2026-07-${String(10 + i).padStart(2, "0")}T00:00:00Z`,
     propertyId: null, propertyAddress: null, lat: null, lng: null, coverUrl: null,
+    boardOrder: null,
   });
 }
 // One estimate, at the property of deal 1, which has exactly one deal — the
@@ -152,9 +153,21 @@ try {
   const thrown = [];
   page.on("pageerror", (e) => thrown.push(String(e).slice(0, 200)));
 
-  await page.route("**/api/deals", (r) =>
-    r.fulfill({ contentType: "application/json",
-      body: JSON.stringify({ ok: true, deals: DEALS, estimates: ESTIMATES, estimatesOk: true }) }));
+  // The arranged order, as the server would then hand it back.
+  const orders = [];
+  await page.route("**/api/deals", (r) => {
+    if (r.request().method() === "PATCH") {
+      const ids = JSON.parse(r.request().postData() ?? "{}").ids ?? [];
+      orders.push(ids);
+      for (const d of DEALS) {
+        const at = ids.indexOf(d.id);
+        if (at >= 0) d.boardOrder = at;
+      }
+      return r.fulfill({ contentType: "application/json", body: '{"ok":true}' });
+    }
+    return r.fulfill({ contentType: "application/json",
+      body: JSON.stringify({ ok: true, deals: DEALS, estimates: ESTIMATES, estimatesOk: true }) });
+  });
   // Everything else this screen would reach for. The grid falls back to its
   // committed tree when the catalog cannot be read, which is the point.
   await page.route("**/api/estimates**", (r) =>
@@ -409,6 +422,50 @@ try {
   await page.waitForTimeout(250);
   ok("and neither does a mostly-vertical drag",
     (await tileTexts(page))[0] === sentPage1[0]);
+
+  // 5c. ARRANGING THE TILES BY HAND.
+  //
+  // The order is written to the deal, not to this device, so the Sales Board
+  // in the other app can sort by the same arrangement.
+  const firstBefore = (await tileTexts(page))[0];
+  await page.click('button:text-is("Arrange")');
+  await page.waitForTimeout(250);
+  ok("Arrange puts the tiles into a mode of their own",
+    (await page.locator("main button[data-deal].qe-wiggle").count()) > 0);
+
+  // A tap must not open a job while arranging.
+  const tileBoxes = await page.$$eval("main button[data-deal]", (els) =>
+    els.slice(0, 4).map((e) => e.getBoundingClientRect().toJSON()));
+  await page.mouse.click(tileBoxes[0].x + 40, tileBoxes[0].y + 40);
+  await page.waitForTimeout(250);
+  ok("A TAP DOES NOT OPEN A JOB WHILE ARRANGING",
+    (await page.$$("main button[data-deal]")).length > 0);
+
+  // Drag the third tile to the front.
+  const thirdText = (await tileTexts(page))[2];
+  await page.mouse.move(tileBoxes[2].x + 40, tileBoxes[2].y + 40);
+  await page.mouse.down();
+  await page.mouse.move(tileBoxes[1].x + 40, tileBoxes[1].y + 40, { steps: 6 });
+  await page.mouse.move(tileBoxes[0].x + 40, tileBoxes[0].y + 40, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(700);
+
+  ok("a drag writes the whole stage's order, not just the tile that moved",
+    orders.length === 1 && orders[0].length > 3, JSON.stringify(orders[0]?.length));
+  const afterDrag = await tileTexts(page);
+  ok("THE TILE IS WHERE IT WAS DROPPED",
+    afterDrag[0] === thirdText && afterDrag[0] !== firstBefore,
+    `${firstBefore?.slice(0, 18)} then ${afterDrag[0]?.slice(0, 18)}`);
+
+  // The order is a position within the stage, and a later page must not send a
+  // tile to the front of it.
+  ok("and it is a position in the stage, kept dense from zero",
+    orders[0].every((id, i) => typeof id === "number" && i === orders[0].indexOf(id)));
+
+  await page.click('button:text-is("Done")');
+  await page.waitForTimeout(250);
+  ok("Done puts the mode away", (await page.locator("main button[data-deal].qe-wiggle").count()) === 0);
+  ok("and the arrangement holds", (await tileTexts(page))[0] === thirdText);
 
   // An empty stage keeps its page, so the order of the swipe can be learned.
   await page.click('button:has-text("Project Management")');
