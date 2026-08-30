@@ -148,6 +148,17 @@ empty. It belongs there the day a lead gets tagged to a yard.
 **Invoiced and Paid in Full are finished work**, and not what somebody opening
 an estimator is looking for.
 
+**Neither is a lost deal, and the stage does not say so.** Losing one at Sent
+leaves it *at Sent* — so on the four board stages **39 of 91 were dead, 37 of
+them in Sent alone**, and the board was showing all of them. It reads the Sales
+Board's own `status` column, which is generated as `flagged → Open` before
+`lost_at → Closed`, so **a loose end somebody flagged stays visible** and this
+does not become a second rule that can drift from the one VoiceData uses. The
+route asks for open deals only; `boardTiles()` states the same rule where the
+board's own definition of what belongs on it lives, exactly as the stage check
+beside it does. The stage counts follow — a chip reading 58 over a page holding
+21 tiles is a chip nobody can use.
+
 ### Arranging the tiles by hand
 
 **Arrange** in the stage row makes the tiles loose; a drag moves one; **Done**
@@ -306,14 +317,14 @@ in.
 **The pairing is not done in the route handler.** `/api/deals` returns deals
 and estimates as two lists and `jobBoard.ts` decides — that rule is a judgement
 about ambiguity rather than a query, and it is worth checking without a
-network. `npm run test:board` does exactly that, 90 checks.
+network. `npm run test:board` does exactly that, 96 checks.
 
 **And `npm run test:board-ui` reads the rendered screen**, because the pure
 tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 94 checks. A throw is reported as a failure rather than crashing
+is showing: 96 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
 
