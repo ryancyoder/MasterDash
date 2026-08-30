@@ -26,6 +26,8 @@ interface DealRow {
   updated_at: string | null;
   created_at: string | null;
   board_order: number | null;
+  lost_at: string | null;
+  flagged: boolean | null;
   property_id: number | null;
   properties: PropertyRow | PropertyRow[] | null;
 }
@@ -79,9 +81,15 @@ export async function GET() {
     rest(
       cfg,
       "Sales%20Board?select=id,deal_name,stage,value,proposal_number,next_action," +
-        "updated_at,created_at,board_order,property_id," +
+        "updated_at,created_at,board_order,lost_at,flagged,property_id," +
         "properties(address,latitude,longitude,cover_photo_id)" +
-        `&stage=in.(${encodeURIComponent(stages)})&order=updated_at.desc&limit=300`,
+                // OPEN ONLY. A lost deal keeps its stage, so 39 of the 91 on the
+        // board's four stages are dead — and `status` is the database's own
+        // definition of that, generated as `flagged → Open` before
+        // `lost_at → Closed`, so a loose end somebody flagged stays visible.
+        // Reusing it beats writing a second rule that can drift from it.
+        `&stage=in.(${encodeURIComponent(stages)})&status=eq.Open` +
+        "&order=updated_at.desc&limit=300",
     ),
     // Only what pairing needs. An estimate's lines are megabytes and the board
     // never shows one.
@@ -147,6 +155,7 @@ export async function GET() {
       // A deal never touched since it was made still has a date.
       updatedAt: r.updated_at ?? r.created_at,
       boardOrder: typeof r.board_order === "number" ? r.board_order : null,
+      lost: r.lost_at !== null && r.flagged !== true,
       propertyId: r.property_id,
       propertyAddress: p?.address ?? null,
       lat: num(p?.latitude),

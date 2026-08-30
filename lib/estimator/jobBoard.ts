@@ -27,6 +27,19 @@ export interface BoardDeal {
   propertyId: number | null;
   propertyAddress: string | null;
   /**
+   * Lost, and not flagged back open.
+   *
+   * A lost deal keeps its stage — losing one at Sent leaves it at Sent — so
+   * the stage alone does not say whether there is still work in it, and
+   * without this the board was showing 39 dead deals out of 91.
+   *
+   * `flagged` is what reopens one: the Sales Board's own `status` column reads
+   * `flagged → Open` before it reads `lost_at → Closed`, so a loose end
+   * somebody wants to tie up stays on the board. This follows that rule rather
+   * than inventing a second one.
+   */
+  lost: boolean;
+  /**
    * Where somebody put this tile by hand, within its stage. Null = never
    * arranged; see `boardTiles()` for how the two kinds sort together.
    */
@@ -124,11 +137,14 @@ export function boardTiles(
   const want = stages.length ? stages : BOARD_STAGES;
   const perProperty = new Map<number, number>();
   for (const d of deals) {
-    if (!isBoardStage(d.stage) || d.propertyId === null) continue;
+    if (d.lost || !isBoardStage(d.stage) || d.propertyId === null) continue;
     perProperty.set(d.propertyId, (perProperty.get(d.propertyId) ?? 0) + 1);
   }
   return deals
-    .filter((d) => isBoardStage(d.stage) && want.includes(d.stage))
+    // A LOST DEAL IS NOT LIVE WORK. The route already asks for open ones, and
+    // this is the same rule stated where the board's own definition of what
+    // belongs on it lives — the stage check beside it works the same way.
+    .filter((d) => !d.lost && isBoardStage(d.stage) && want.includes(d.stage))
     .map((deal) => {
       const paired = estimateForDeal(
         deal,
@@ -260,7 +276,9 @@ export function withOrder(tiles: BoardTile[], ids: number[]): BoardTile[] {
 /** How many of each stage are on the board, for the filter chips. */
 export function stageCounts(deals: BoardDeal[]): Record<BoardStage, number> {
   const out = Object.fromEntries(BOARD_STAGES.map((s) => [s, 0])) as Record<BoardStage, number>;
-  for (const d of deals) if (isBoardStage(d.stage)) out[d.stage]++;
+  // Counts what the board shows. A chip reading 58 over a stage holding 21
+  // tiles is a chip nobody can use.
+  for (const d of deals) if (!d.lost && isBoardStage(d.stage)) out[d.stage]++;
   return out;
 }
 

@@ -39,7 +39,7 @@ function ok(name: string, cond: boolean, detail = "") {
 const deal = (over: Partial<BoardDeal> & { id: number }): BoardDeal => ({
   name: null, stage: "Sent", value: null, proposalNumber: null, nextAction: null,
   updatedAt: "2026-08-01T00:00:00Z", propertyId: null, propertyAddress: null,
-  lat: null, lng: null, coverUrl: null, boardOrder: null, ...over,
+  lat: null, lng: null, coverUrl: null, boardOrder: null, lost: false, ...over,
 });
 const est = (over: Partial<BoardEstimate> & { clientId: string }): BoardEstimate => ({
   dealId: null, propertyId: null, jobName: null, updatedAt: null, ...over,
@@ -378,6 +378,55 @@ const est = (over: Partial<BoardEstimate> & { clientId: string }): BoardEstimate
     JSON.stringify(slotOffset(2, 2, 3, 100, 10)) === JSON.stringify({ x: 0, y: 0 }));
   ok("a single column never moves sideways",
     slotOffset(0, 2, 1, 100, 10).x === 0 && slotOffset(0, 2, 1, 100, 10).y === 220);
+}
+
+{
+  console.log("\n--- a lost deal is not live work ---");
+
+  // A lost deal keeps its stage — losing one at Sent leaves it at Sent — so
+  // without this the board was showing 39 dead deals out of 91, 37 of them in
+  // Sent alone.
+  const live = boardTiles(
+    [deal({ id: 1, stage: "Sent" }),
+     deal({ id: 2, stage: "Sent", lost: true }),
+     deal({ id: 3, stage: "Propose", lost: true })],
+    [],
+  );
+  ok("a lost deal is off the board", live.map((t) => t.deal.id).join(",") === "1");
+  ok("whatever stage it was lost at",
+    !live.some((t) => t.deal.id === 3));
+
+  // `flagged` reopens one: the Sales Board's own `status` reads flagged→Open
+  // before lost_at→Closed, and this follows that rather than inventing a
+  // second rule. The route resolves the two columns into `lost`.
+  ok("A LOOSE END SOMEBODY FLAGGED IS STILL LIVE",
+    boardTiles([deal({ id: 4, stage: "Sent", lost: false })], []).length === 1);
+
+  // A chip reading 58 over a stage holding 21 tiles is a chip nobody can use.
+  const counts = stageCounts([
+    deal({ id: 1, stage: "Sent" }),
+    deal({ id: 2, stage: "Sent", lost: true }),
+    deal({ id: 3, stage: "Sold" }),
+  ]);
+  ok("and the stage counts say what the board shows",
+    counts.Sent === 1 && counts.Sold === 1, JSON.stringify(counts));
+
+  // The pairing rule counts deals at a property to decide whether an estimate
+  // can be identified. A lost one must not be one of them, or a yard with one
+  // live job and one lost would refuse to pair the live one.
+  const paired = boardTiles(
+    [deal({ id: 1, stage: "Sent", propertyId: 10 }),
+     deal({ id: 2, stage: "Sent", propertyId: 10, lost: true })],
+    [est({ clientId: "c1", propertyId: 10 })],
+  );
+  ok("a lost deal does not stop its yard's live one from finding its estimate",
+    paired[0]?.estimate?.clientId === "c1" && paired[0]?.match === "property",
+    JSON.stringify(paired[0]?.match));
+
+  // And the pages: no empty page appears because a stage was all lost.
+  const pages = boardPages(boardTiles([deal({ id: 1, stage: "Sent", lost: true })], []), 15);
+  ok("a stage whose deals are all lost reads as empty, not as missing",
+    pages.length === 4 && pages.every((p) => p.tiles.length === 0));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

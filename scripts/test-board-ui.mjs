@@ -43,25 +43,34 @@ const DEALS = [
   { id: 1, name: "Kowalski regrade", stage: "Sent", value: 12400, proposalNumber: "P-1",
     nextAction: null, updatedAt: "2026-08-20T00:00:00Z", propertyId: 10,
     propertyAddress: "12 Elm St", lat: 41.32, lng: -87.2,
-    coverUrl: "https://cover.test/yard.png", boardOrder: null },
+    coverUrl: "https://cover.test/yard.png", boardOrder: null, lost: false },
   { id: 2, name: "Naples front bed", stage: "Sold", value: 900, proposalNumber: "P-2",
     nextAction: null, updatedAt: "2026-08-19T00:00:00Z", propertyId: 11,
-    propertyAddress: "2651 Naples Dr", lat: null, lng: null, coverUrl: null, boardOrder: null },
+    propertyAddress: "2651 Naples Dr", lat: null, lng: null, coverUrl: null, boardOrder: null, lost: false },
   { id: 3, name: "Shop cleanup", stage: "Propose", value: null, proposalNumber: null,
     nextAction: null, updatedAt: "2026-08-18T00:00:00Z", propertyId: null,
-    propertyAddress: null, lat: null, lng: null, coverUrl: null, boardOrder: null },
+    propertyAddress: null, lat: null, lng: null, coverUrl: null, boardOrder: null, lost: false },
   // Finished work is not on the board at all; the filter is server-side too,
   // so this checks the client does not let one through if one arrives.
   { id: 4, name: "Old job", stage: "Paid in Full", value: 100, proposalNumber: null,
     nextAction: null, updatedAt: "2026-08-25T00:00:00Z", propertyId: 12,
-    propertyAddress: "9 Old Rd", lat: 41.3, lng: -87.1, coverUrl: null, boardOrder: null },
+    propertyAddress: "9 Old Rd", lat: 41.3, lng: -87.1, coverUrl: null, boardOrder: null, lost: false },
   // A cover photo whose object has moved. The tile must fall back to the
   // satellite rather than going black under its caption.
   { id: 5, name: "Broken cover", stage: "Sent", value: null, proposalNumber: null,
     nextAction: null, updatedAt: "2026-08-17T00:00:00Z", propertyId: 13,
     propertyAddress: "5 Gone Ln", lat: 41.31, lng: -87.15,
-    coverUrl: "https://cover.test/missing.png", boardOrder: null },
+    coverUrl: "https://cover.test/missing.png", boardOrder: null, lost: false },
 ];
+// A deal lost at Sent. It keeps its stage, which is why the stage alone does
+// not say whether there is live work in it: 37 of Sent's 58 on the real board
+// are in exactly this state.
+DEALS.push({
+  id: 200, name: "Lost job", stage: "Sent", value: 5000, proposalNumber: null,
+  nextAction: null, updatedAt: "2026-08-28T00:00:00Z", propertyId: null,
+  propertyAddress: null, lat: null, lng: null, coverUrl: null, boardOrder: null,
+  lost: true,
+});
 // Sent carries 58 on the real board, so it has to run to several pages here
 // too or the paging is never exercised.
 for (let i = 0; i < 20; i++) {
@@ -69,7 +78,7 @@ for (let i = 0; i < 20; i++) {
     id: 100 + i, name: `Filler ${i}`, stage: "Sent", value: null, proposalNumber: null,
     nextAction: null, updatedAt: `2026-07-${String(10 + i).padStart(2, "0")}T00:00:00Z`,
     propertyId: null, propertyAddress: null, lat: null, lng: null, coverUrl: null,
-    boardOrder: null,
+    boardOrder: null, lost: false,
   });
 }
 // One estimate, at the property of deal 1, which has exactly one deal — the
@@ -279,6 +288,18 @@ try {
 
   // The page IS the stage, so a badge repeating it on every tile says nothing
   // and spends a corner of the picture doing it.
+  // A lost deal keeps its stage, so the stage alone does not say whether there
+  // is live work in it. The route asks for open deals only; the board's own
+  // rule holds regardless, which is what this checks.
+  ok("A LOST DEAL IS NOT ON THE BOARD",
+    !first.some((t) => /Lost job/.test(t)), first.join(" | ").slice(0, 80));
+  // 23 deals sit at Sent in the fixture and one of them is lost. No \\b after
+  // the digits: the next character is "S" of "Sold", and two word characters
+  // have no boundary between them.
+  ok("and the stage count says what the board shows, not what the table holds",
+    /Sent 22(?!\d)/.test(await page.textContent("main")),
+    (await page.textContent("main")).slice(0, 60));
+
   ok("A TILE DOES NOT REPEAT THE STAGE THE PAGE IS ALREADY ON",
     !first.some((t) => /\bSent\b/.test(t)), first[0]);
   ok("but it is still in the tile's label, for a reader out of context",
