@@ -204,6 +204,51 @@ export function reorderTiles(
   return { stage: moving.stage, ids: mine };
 }
 
+/**
+ * Where a tile sits while one of its neighbours is being dragged over it.
+ *
+ * The iOS home-screen rule: everything between the tile's own slot and the one
+ * the finger is over slides along by exactly one place, and everything outside
+ * that span stays put. Lifting the dragged tile out and closing the gap behind
+ * it is what makes a grid look like it is making room rather than redrawing.
+ *
+ * Returns the SLOT a tile should appear in, not a pixel offset — the pixels
+ * depend on the column count and the tile size, which are a rendering
+ * question. This part is just the shuffle, and it is the half that is easy to
+ * get backwards.
+ */
+export function slotWhileDragging(index: number, from: number, over: number): number {
+  if (index === from) return over;
+  // Dragging forwards: everything it passes moves back one to close the gap.
+  if (over > from && index > from && index <= over) return index - 1;
+  // Dragging backwards: everything it passes moves on one to open the gap.
+  if (over < from && index >= over && index < from) return index + 1;
+  return index;
+}
+
+/**
+ * The pixel offset from one slot to another, in a grid that wraps.
+ *
+ * A tile at the start of a row moving back one place goes to the END of the
+ * row above, which is what the grid will actually do when the order is saved
+ * — so the animation has to say the same thing rather than sliding it left
+ * into the margin.
+ */
+export function slotOffset(
+  from: number,
+  to: number,
+  cols: number,
+  size: number,
+  gap: number,
+): { x: number; y: number } {
+  const step = size + gap;
+  const c = Math.max(1, cols);
+  return {
+    x: ((to % c) - (from % c)) * step,
+    y: (Math.floor(to / c) - Math.floor(from / c)) * step,
+  };
+}
+
 /** The tiles as an order would leave them, before the write lands. */
 export function withOrder(tiles: BoardTile[], ids: number[]): BoardTile[] {
   const at = new Map(ids.map((id, i) => [id, i]));

@@ -430,8 +430,10 @@ try {
   const firstBefore = (await tileTexts(page))[0];
   await page.click('button:text-is("Arrange")');
   await page.waitForTimeout(250);
-  ok("Arrange puts the tiles into a mode of their own",
-    (await page.locator("main button[data-deal].qe-wiggle").count()) > 0);
+  ok("Arrange says what the mode is for rather than wiggling at you",
+    /Drag a job to move it/.test(await page.textContent("main")));
+  ok("and the button now offers the way out",
+    (await page.locator('button:text-is("Done")').count()) === 1);
 
   // A tap must not open a job while arranging.
   const tileBoxes = await page.$$eval("main button[data-deal]", (els) =>
@@ -441,14 +443,47 @@ try {
   ok("A TAP DOES NOT OPEN A JOB WHILE ARRANGING",
     (await page.$$("main button[data-deal]")).length > 0);
 
-  // Drag the third tile to the front.
+  // Drag the third tile to the front, and watch it happen. Dimming a tile
+  // where it sits says nothing about where it is going; the tile has to travel
+  // with the finger and the grid has to open a place for it.
   const thirdText = (await tileTexts(page))[2];
   await page.mouse.move(tileBoxes[2].x + 40, tileBoxes[2].y + 40);
   await page.mouse.down();
   await page.mouse.move(tileBoxes[1].x + 40, tileBoxes[1].y + 40, { steps: 6 });
+  await page.waitForTimeout(120);
+
+  const mid = await page.evaluate(() => {
+    const t = (n) => document.querySelector(`main button[data-deal] + *, main [data-index="${n}"]`);
+    const read = (n) => {
+      const el = document.querySelector(`main [data-index="${n}"]`);
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return { transform: cs.transform, z: cs.zIndex, pe: cs.pointerEvents };
+    };
+    void t;
+    return { dragged: read(2), neighbour: read(1), still: read(3) };
+  });
+  ok("THE DRAGGED TILE TRAVELS WITH THE FINGER",
+    mid.dragged?.transform !== "none" && /matrix/.test(mid.dragged?.transform ?? ""),
+    JSON.stringify(mid.dragged));
+  ok("and is lifted above its neighbours, out of their way",
+    mid.dragged?.z === "20" && mid.dragged?.pe === "none", JSON.stringify(mid.dragged));
+  ok("THE GRID OPENS A PLACE FOR IT — the tile it passed has moved",
+    mid.neighbour?.transform !== "none" && mid.neighbour?.transform !== undefined,
+    JSON.stringify(mid.neighbour));
+  ok("while a tile outside the span stays exactly where it is",
+    mid.still?.transform === "none", JSON.stringify(mid.still));
+
   await page.mouse.move(tileBoxes[0].x + 40, tileBoxes[0].y + 40, { steps: 6 });
   await page.mouse.up();
   await page.waitForTimeout(700);
+
+  const after = await page.evaluate(() => {
+    const el = document.querySelector('main [data-index="0"]');
+    return el ? getComputedStyle(el).transform : null;
+  });
+  ok("and everything settles back into the grid once it is dropped",
+    after === "none", String(after));
 
   ok("a drag writes the whole stage's order, not just the tile that moved",
     orders.length === 1 && orders[0].length > 3, JSON.stringify(orders[0]?.length));
@@ -464,7 +499,7 @@ try {
 
   await page.click('button:text-is("Done")');
   await page.waitForTimeout(250);
-  ok("Done puts the mode away", (await page.locator("main button[data-deal].qe-wiggle").count()) === 0);
+  ok("Done puts the mode away", (await page.locator('button:text-is("Arrange")').count()) === 1);
   ok("and the arrangement holds", (await tileTexts(page))[0] === thirdText);
 
   // An empty stage keeps its page, so the order of the swipe can be learned.

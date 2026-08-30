@@ -18,6 +18,8 @@ import {
   isUnstarted,
   keepPage,
   reorderTiles,
+  slotOffset,
+  slotWhileDragging,
   tilePicture,
   withOrder,
   stageCounts,
@@ -336,6 +338,46 @@ const est = (over: Partial<BoardEstimate> & { clientId: string }): BoardEstimate
     withOrder(five, ["5", "1", "2", "3", "4"].map(Number)).map((t) => t.deal.id).join(",") === "5,1,2,3,4");
   ok("and a tile the order does not name keeps its place",
     withOrder(boardTiles([d(1, { boardOrder: 0 }), d(9)], []), [1]).map((t) => t.deal.id).join(",") === "1,9");
+}
+
+{
+  console.log("\n--- the grid makes room while a tile is dragged ---");
+
+  // Dragging tile 1 onto slot 3: everything it passes moves back one to close
+  // the gap behind it, and the dragged tile takes the slot under the finger.
+  const forwards = [0, 1, 2, 3, 4].map((i) => slotWhileDragging(i, 1, 3));
+  ok("dragging forwards, the tiles it passes close up behind it",
+    forwards.join(",") === "0,3,1,2,4", forwards.join(","));
+
+  const backwards = [0, 1, 2, 3, 4].map((i) => slotWhileDragging(i, 3, 1));
+  ok("dragging backwards, they open up in front of it",
+    backwards.join(",") === "0,2,3,1,4", backwards.join(","));
+
+  ok("a tile dropped where it started moves nothing",
+    [0, 1, 2, 3].map((i) => slotWhileDragging(i, 2, 2)).join(",") === "0,1,2,3");
+  ok("and tiles outside the span stay exactly where they are",
+    slotWhileDragging(9, 1, 3) === 9 && slotWhileDragging(0, 1, 3) === 0);
+
+  // Every slot is still used exactly once, or two tiles would sit on top of
+  // each other while the finger is down.
+  for (const [f, t] of [[0, 4], [4, 0], [2, 3], [3, 2], [1, 1]]) {
+    const seats = [0, 1, 2, 3, 4].map((i) => slotWhileDragging(i, f, t)).sort().join(",");
+    ok(`no two tiles share a slot dragging ${f} to ${t}`, seats === "0,1,2,3,4", seats);
+  }
+
+  // A grid wraps: the slot before the first of a row is the LAST of the row
+  // above, which is where the grid will really put it once the order is saved.
+  const wrap = slotOffset(3, 2, 3, 100, 10);
+  ok("moving back across a row edge goes up and right, not left into the margin",
+    wrap.x === 220 && wrap.y === -110, JSON.stringify(wrap));
+  ok("a step along a row is one tile plus one gap",
+    JSON.stringify(slotOffset(0, 1, 3, 100, 10)) === JSON.stringify({ x: 110, y: 0 }));
+  ok("a step down a column is likewise",
+    JSON.stringify(slotOffset(0, 3, 3, 100, 10)) === JSON.stringify({ x: 0, y: 110 }));
+  ok("and staying put is no offset",
+    JSON.stringify(slotOffset(2, 2, 3, 100, 10)) === JSON.stringify({ x: 0, y: 0 }));
+  ok("a single column never moves sideways",
+    slotOffset(0, 2, 1, 100, 10).x === 0 && slotOffset(0, 2, 1, 100, 10).y === 220);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

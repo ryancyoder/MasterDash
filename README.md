@@ -156,6 +156,37 @@ reason the estimator's own grid gives: a tap on a job tile opens it, and a drag
 that could also open one is a drag nobody trusts. Inside the mode nothing
 opens, so a finger can be as clumsy as it likes.
 
+**The drag is animated, and the tiles do not wiggle.** Wiggling says *these
+are loose* and then tells you nothing at all about the thing you are actually
+doing — the first version dimmed a tile where it sat, which is a state change
+rather than a drag, and left you dropping it blind. So:
+
+- **The tile travels with the finger**, lifted a little (`scale(1.06)`), above
+  its neighbours, casting a shadow — the scale alone reads as a tile that has
+  grown, and the shadow is what says it has been picked *up*. It has **no
+  transition**: a lag between the glass and the picture is the one thing a drag
+  cannot have.
+- **The grid opens a place for it.** `slotWhileDragging()` is the iOS
+  home-screen rule — everything between the tile's own slot and the one the
+  finger is over slides along by exactly one place, and everything outside that
+  span stays put. Those tiles *do* get a transition, which is what makes the
+  shuffle readable instead of a flicker.
+- **`slotOffset()` knows the grid wraps.** A tile at the start of a row moving
+  back one place goes to the **end of the row above**, which is where the grid
+  will really put it once the order is saved — so the animation says the same
+  thing rather than sliding it left into the margin.
+- **A still tile carries no transform at all**, not an identity one: nothing to
+  composite, and *has this moved* stays a question with a plain answer.
+- **The lifted tile is `pointer-events: none` while it travels**, or it would
+  sit under the finger answering "me" to *which slot am I over* for the whole
+  gesture. Pointer capture keeps delivering its moves regardless.
+
+The shuffle is checked without a browser — the two directions, the tiles
+outside the span, and that **no two tiles ever share a slot** — and the
+animation is checked in one, off the rendered transforms: the dragged tile
+moving, lifted and out of the way; a neighbour displaced; a tile outside the
+span untouched; and everything settling back into the grid on the drop.
+
 **The order is the deal's, not this device's.** It writes
 `"Sales Board".board_order`, so **VoiceData's Sales Board sorts by the same
 arrangement** — the ☰ button on each column. Two apps showing one order rather
@@ -275,14 +306,14 @@ in.
 **The pairing is not done in the route handler.** `/api/deals` returns deals
 and estimates as two lists and `jobBoard.ts` decides — that rule is a judgement
 about ambiguity rather than a query, and it is worth checking without a
-network. `npm run test:board` does exactly that, 76 checks.
+network. `npm run test:board` does exactly that, 90 checks.
 
 **And `npm run test:board-ui` reads the rendered screen**, because the pure
 tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 88 checks. A throw is reported as a failure rather than crashing
+is showing: 94 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
 

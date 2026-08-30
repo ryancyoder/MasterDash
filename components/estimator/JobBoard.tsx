@@ -9,6 +9,8 @@ import {
   gridFor,
   keepPage,
   reorderTiles,
+  slotOffset,
+  slotWhileDragging,
   withOrder,
   stageCounts,
   tilePicture,
@@ -173,8 +175,18 @@ export default function JobBoard({
     its own idea of it.
   */
   const [editing, setEditing] = useState(false);
-  /** The tile being dragged, and where in the page it currently sits. */
-  const [drag, setDrag] = useState<{ id: number; from: number; over: number } | null>(null);
+  /**
+   * The tile being dragged: which, where it started, which slot it is over,
+   * and how far the finger has carried it.
+   *
+   * The offset is what makes this a drag rather than a state change. A tile
+   * that only dims where it sits tells you nothing about where it is going —
+   * so the tile itself travels with the finger and the rest of the grid opens
+   * a place for it, which is the whole of the feedback.
+   */
+  const [drag, setDrag] = useState<
+    { id: number; from: number; over: number; dx: number; dy: number } | null
+  >(null);
   /** A local order applied before the write lands, so nothing springs back. */
   const [pending, setPending] = useState<number[] | null>(null);
   const [orderError, setOrderError] = useState<string | null>(null);
@@ -314,6 +326,8 @@ export default function JobBoard({
     }
   };
 
+  /** Where the finger went down, so the tile can travel with it. */
+  const dragOrigin = useRef<{ x: number; y: number } | null>(null);
   const swipe = useRef<{ x: number; y: number } | null>(null);
   const SWIPE_PX = 60;
   const onDown = (e: React.PointerEvent) => {
@@ -448,6 +462,19 @@ export default function JobBoard({
                 (openDealId !== null && t.deal.id === openDealId) ||
                 (t.estimate !== null && t.estimate.clientId === openClientId);
               const busy = opening === t.deal.id;
+              const lifted = drag?.id === t.deal.id;
+              // Where this tile sits while a neighbour is being dragged over
+              // it. Null when nothing is moving, so a still grid pays nothing.
+              // Null rather than a zero offset, so a tile that is not moving
+              // carries no transform at all — nothing to composite, and
+              // "has this moved" stays a question with a plain answer.
+              const shift = (() => {
+                if (!drag || lifted) return null;
+                const o = slotOffset(
+                  i, slotWhileDragging(i, drag.from, drag.over), grid.cols, grid.size, 12,
+                );
+                return o.x === 0 && o.y === 0 ? null : o;
+              })();
               return (
                 <button
                   key={t.deal.id}
@@ -461,25 +488,37 @@ export default function JobBoard({
                     editing
                       ? (e) => {
                           e.currentTarget.setPointerCapture(e.pointerId);
-                          setDrag({ id: t.deal.id, from: i, over: i });
+                          dragOrigin.current = { x: e.clientX, y: e.clientY };
+                          setDrag({ id: t.deal.id, from: i, over: i, dx: 0, dy: 0 });
                         }
                       : undefined
                   }
                   onPointerMove={
                     editing && drag?.id === t.deal.id
                       ? (e) => {
-                          // Which cell is under the finger. Read off the
-                          // rendered tiles rather than computed from the grid
-                          // maths, so a wrapped row or a resize cannot put the
-                          // drop somewhere the eye disagrees with.
-                          const over = document
+                          const from = dragOrigin.current;
+                          if (!from) return;
+                          /*
+                            Which cell is under the finger.
+
+                            Read off the RENDERED tiles rather than computed
+                            from the grid maths, so a wrapped row or a resize
+                            cannot put the drop somewhere the eye disagrees
+                            with. The dragged tile is `pointer-events-none`
+                            while it travels, so it does not sit under the
+                            finger answering "me" for the whole gesture.
+                          */
+                          const under = document
                             .elementsFromPoint(e.clientX, e.clientY)
                             .map((el) => (el as HTMLElement).closest?.("[data-index]"))
                             .find(Boolean) as HTMLElement | undefined;
-                          const at = over ? Number(over.dataset.index) : NaN;
-                          if (Number.isInteger(at) && at !== drag.over) {
-                            setDrag({ ...drag, over: at });
-                          }
+                          const at = under ? Number(under.dataset.index) : NaN;
+                          setDrag({
+                            ...drag,
+                            over: Number.isInteger(at) ? at : drag.over,
+                            dx: e.clientX - from.x,
+                            dy: e.clientY - from.y,
+                          });
                         }
                       : undefined
                   }
@@ -520,16 +559,42 @@ export default function JobBoard({
                   className={`relative w-full aspect-square rounded-3xl flex flex-col overflow-hidden touch-none select-none ${
                     located ? "justify-end" : "items-center justify-center"
                   } ${opening !== null && !busy ? "opacity-40" : ""} ${
-                    editing ? "qe-wiggle" : ""
-                  } ${drag?.id === t.deal.id ? "opacity-60 ring-2 ring-accent" : ""}`}
+                    lifted ? "pointer-events-none z-20" : ""
+                  }`}
                   style={{
                     background: "var(--md-surface-2)",
+                    /*
+                      THE DRAG, ANIMATED.
+
+                      The tile under the finger tracks it exactly and with no
+                      transition — a lag between the glass and the picture is
+                      the one thing a drag cannot have. It lifts a little and
+                      rises above its neighbours so it reads as picked up
+                      rather than pushed along.
+
+                      Every other tile eases to the slot it would sit in if the
+                      drop happened now, so the grid is visibly making room.
+                      They DO get a transition, which is what makes the shuffle
+                      readable instead of a flicker.
+                    */
+                    transform: lifted
+                      ? `translate(${drag.dx}px, ${drag.dy}px) scale(1.06)`
+                      : shift
+                        ? `translate(${shift.x}px, ${shift.y}px)`
+                        : undefined,
+                    transition: lifted ? "none" : "transform 160ms ease-out",
+                    zIndex: lifted ? 20 : undefined,
                     // The ring the grid gives a chosen tile, in the accent
                     // rather than in white: this is not "on the job", it is
                     // THE job — the estimate currently loaded.
-                    boxShadow: isOpen
-                      ? "inset 0 0 0 2px var(--md-accent)"
-                      : "inset 0 0 0 1px rgba(255,255,255,0.08)",
+                    boxShadow: lifted
+                      // Off the surface, not merely bigger: the scale alone
+                      // reads as a tile that has grown, and a shadow is what
+                      // says it has been picked UP.
+                      ? "0 18px 30px -8px rgba(0,0,0,0.85), inset 0 0 0 1px rgba(255,255,255,0.22)"
+                      : isOpen
+                        ? "inset 0 0 0 2px var(--md-accent)"
+                        : "inset 0 0 0 1px rgba(255,255,255,0.08)",
                   }}
                 >
                   {picture !== "none" ? (
