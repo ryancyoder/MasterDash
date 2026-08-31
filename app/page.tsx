@@ -34,6 +34,7 @@ import {
   type MapAnchor,
 } from "@/lib/estimator/mapLayers";
 import { FALLBACK_CENTRE } from "@/lib/estimator/geo";
+import { otherSize } from "@/lib/estimator/tileSize";
 import { isUnstarted, tileTitle, type BoardTile } from "@/lib/estimator/jobBoard";
 import { applyOrder, isArrangeable, levelKey } from "@/lib/estimator/tileOrder";
 import {
@@ -910,6 +911,19 @@ export default function EstimatorPage() {
                 </span>
               )}
 
+              {/* Where the tiles are, not only in Settings: walking to
+                  another screen to reclaim space is not something anybody does
+                  mid-job. The job board carries the same control, writing the
+                  same setting — the two grids are deliberately one size. */}
+              <button
+                onClick={() => updateSettings({ tileSize: otherSize(settings.tileSize) })}
+                aria-pressed={settings.tileSize === "big"}
+                title={settings.tileSize === "big" ? "Smaller tiles" : "Bigger tiles"}
+                className="px-3 py-1.5 rounded-full bg-surface2 text-xs font-bold text-muted"
+              >
+                {settings.tileSize === "big" ? "Smaller" : "Bigger"}
+              </button>
+
               {/* The way back to the board once a job has been chosen. It is
                   always here rather than only on a blank estimate, because
                   changing your mind about which job is the same question as
@@ -961,6 +975,8 @@ export default function EstimatorPage() {
             openDealId={estimate.dealId}
             opening={openingDeal}
             notice={boardNotice}
+            tileSize={settings.tileSize}
+            onTileSize={(tileSize) => updateSettings({ tileSize })}
           />
         ) : onPlanPage ? (
           <PlanPage

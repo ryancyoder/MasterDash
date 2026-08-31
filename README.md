@@ -159,6 +159,40 @@ board's own definition of what belongs on it lives, exactly as the stage check
 beside it does. The stage counts follow — a chip reading 58 over a page holding
 21 tiles is a chip nobody can use.
 
+### Bigger tiles
+
+**Bigger / Smaller** sits beside Arrange on the board, beside Jobs on the grid,
+and in Settings — three surfaces because walking to another screen to reclaim
+space is not something anybody does mid-job, and Settings is still where a
+preference gets looked for.
+
+**One setting for both grids.** A job tile and an assembly tile are the same
+size on consecutive screens on purpose — two tile shapes in one app reads as
+two apps — so a control that grew one and not the other would undo the very
+thing they were matched to. `tileSize.ts` holds both numbers together: the
+`clamp()` the estimator's grid lays itself out with, and the pixel target the
+job board fits a page from. They are the same size stated twice because the two
+grids ask the question differently, and keeping them in one file is what stops
+them drifting.
+
+**On the board, bigger means MORE PAGES, never a scrollbar.** The page count is
+derived from what fits, so this needed no other change to keep that promise —
+18 tiles to a page becomes 8, and Sent's two pages become three.
+
+**An unknown size falls back.** Settings come back out of localStorage, where
+an older build or a hand edit could have written anything, and they are spread
+over the defaults rather than validated field by field. An unrecognised value
+would index to `undefined` — which as a grid-template gives a grid with **no
+columns**, every tile stacked in one, and as a target gives a page holding
+`NaN` tiles. `tileColumn()` and `tileTarget()` cover every call site rather
+than one load path.
+
+The size is checked both ways: without a browser, that bigger really is bigger
+in both forms, that the fallback holds, and that a busy stage gains pages
+rather than a scrollbar; and in one, off the **rendered** tile — that it is
+drawn wider, that fewer fit, that the page still does not scroll, and that the
+choice survives a reload.
+
 ### Arranging the tiles by hand
 
 **Arrange** in the stage row makes the tiles loose; a drag moves one; **Done**
@@ -317,14 +351,14 @@ in.
 **The pairing is not done in the route handler.** `/api/deals` returns deals
 and estimates as two lists and `jobBoard.ts` decides — that rule is a judgement
 about ambiguity rather than a query, and it is worth checking without a
-network. `npm run test:board` does exactly that, 96 checks.
+network. `npm run test:board` does exactly that, 104 checks.
 
 **And `npm run test:board-ui` reads the rendered screen**, because the pure
 tests prove the rules to the letter and cannot see whether any of it reaches
 the page — the same gap that left one of Upright's crosshairs perfectly
 computed and clipped out of its own overlay. It boots the production server,
 fulfils `/api/deals` locally, aborts the Esri tiles and asks the page what it
-is showing: 96 checks. A throw is reported as a failure rather than crashing
+is showing: 101 checks. A throw is reported as a failure rather than crashing
 the run with no summary, since a test that crashes prints neither PASS nor
 FAIL and a clean count says nothing about it.
 

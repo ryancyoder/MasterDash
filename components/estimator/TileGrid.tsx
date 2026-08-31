@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import EstimateTile from "./EstimateTile";
 import { photoTarget } from "@/lib/estimator/photos";
 import { selectionKey } from "@/lib/estimator/types";
+import { tileColumn } from "@/lib/estimator/tileSize";
 import type {
   CatalogItem,
   EstimatorSettings,
@@ -279,8 +280,7 @@ export default function TileGrid({
       onPointerMove={editing ? handleCellMove : undefined}
       className="grid gap-3"
       style={{
-        gridTemplateColumns:
-          "repeat(auto-fill, minmax(clamp(8rem, 15.2vw, 13rem), 1fr))",
+        gridTemplateColumns: `repeat(auto-fill, minmax(${tileColumn(settings.tileSize)}, 1fr))`,
         // Empty space below the tiles stays long-pressable, so arrange mode is
         // reachable even when the grid does not fill the screen. Rows must not
         // absorb that space: a grid stretches auto rows by default, which

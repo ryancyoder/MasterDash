@@ -8,6 +8,13 @@
 // turns out to duplicate one.
 
 import {
+  TILE_COLUMN,
+  TILE_TARGET,
+  otherSize,
+  tileColumn,
+  tileTarget,
+} from "../lib/estimator/tileSize.ts";
+import {
   BOARD_STAGES,
   boardTiles,
   estimateForDeal,
@@ -427,6 +434,43 @@ const est = (over: Partial<BoardEstimate> & { clientId: string }): BoardEstimate
   const pages = boardPages(boardTiles([deal({ id: 1, stage: "Sent", lost: true })], []), 15);
   ok("a stage whose deals are all lost reads as empty, not as missing",
     pages.length === 4 && pages.every((p) => p.tiles.length === 0));
+}
+
+{
+  console.log("\n--- bigger tiles ---");
+
+  ok("bigger is bigger, in both the ways a grid asks the question",
+    TILE_TARGET.big > TILE_TARGET.normal &&
+      TILE_COLUMN.big !== TILE_COLUMN.normal);
+  ok("and the toggle goes both ways",
+    otherSize("normal") === "big" && otherSize("big") === "normal");
+
+  // Settings come back out of localStorage, where an older build or a hand
+  // edit could have written anything, and they are spread over the defaults
+  // rather than validated field by field. An unknown size indexes to
+  // undefined, which as a grid-template is a grid with NO COLUMNS.
+  ok("AN UNKNOWN SIZE FALLS BACK rather than giving a grid no columns",
+    tileColumn("enormous" as "big") === TILE_COLUMN.normal &&
+      tileTarget(undefined) === TILE_TARGET.normal);
+  ok("and a known one is itself",
+    tileColumn("big") === TILE_COLUMN.big && tileTarget("big") === TILE_TARGET.big);
+
+  // On the board, bigger tiles mean fewer per page — and the page count is
+  // derived from what fits, so it stays a promise about scrolling rather than
+  // needing anything else changed.
+  const normal = gridFor(1000, 620, tileTarget("normal"), 12);
+  const big = gridFor(1000, 620, tileTarget("big"), 12);
+  ok("bigger tiles fit fewer to a page", big.perPage < normal.perPage,
+    `${normal.perPage} then ${big.perPage}`);
+  ok("and are actually drawn bigger", big.size > normal.size,
+    `${normal.size} then ${big.size}`);
+  ok("so a busy stage runs to MORE pages, never a scrollbar",
+    boardPages(boardTiles(Array.from({ length: 40 }, (_, i) =>
+      deal({ id: i + 1, stage: "Sent" })), []), big.perPage).length >
+    boardPages(boardTiles(Array.from({ length: 40 }, (_, i) =>
+      deal({ id: i + 1, stage: "Sent" })), []), normal.perPage).length);
+  ok("and a page is still full rather than half empty",
+    big.perPage >= 1 && big.cols >= 1 && big.rows >= 1, JSON.stringify(big));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

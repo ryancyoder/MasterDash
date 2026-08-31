@@ -34,6 +34,7 @@ import {
 } from "@/lib/estimator/sync";
 import { useCatalogPrices } from "@/lib/estimator/catalogPrices";
 import { useEstimate } from "@/lib/estimator/useEstimate";
+import { otherSize } from "@/lib/estimator/tileSize";
 import type { EstimatorSettings, LineItem } from "@/lib/estimator/types";
 
 /**
@@ -509,6 +510,29 @@ function Settings({
             ))}
           </div>
         </fieldset>
+
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-xs text-muted">
+            Bigger tiles
+            <span className="block text-[0.65rem]">
+              The grid and the job board together — they are one size on
+              purpose. Bigger tiles mean more pages on the board, never a
+              scrollbar.
+            </span>
+          </span>
+          <button
+            onClick={() =>
+              updateSettings({ tileSize: otherSize(settings.tileSize) })
+            }
+            className={`px-4 py-2 rounded-xl text-sm font-bold ${
+              settings.tileSize === "big"
+                ? "bg-accent text-black"
+                : "bg-surface2 text-muted"
+            }`}
+          >
+            {settings.tileSize === "big" ? "Bigger" : "Normal"}
+          </button>
+        </label>
 
         <label className="flex items-center justify-between gap-3">
           <span className="text-xs text-muted">

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { otherSize, tileTarget, type TileSize } from "@/lib/estimator/tileSize";
 import {
   BOARD_STAGES,
   boardPages,
@@ -125,6 +126,8 @@ export default function JobBoard({
   openDealId,
   opening,
   notice,
+  tileSize,
+  onTileSize,
 }: {
   onOpen: (tile: BoardTile) => void;
   /** Leave the board without choosing — whatever was on screen is still there. */
@@ -145,6 +148,9 @@ export default function JobBoard({
   opening: number | null;
   /** What went wrong opening one, said here rather than swallowed. */
   notice: string | null;
+  /** How big to draw them — the estimator grid's own setting, shared. */
+  tileSize: TileSize;
+  onTileSize: (size: TileSize) => void;
 }) {
   const [deals, setDeals] = useState<BoardDeal[] | null>(null);
   const [estimates, setEstimates] = useState<BoardEstimate[]>([]);
@@ -249,7 +255,10 @@ export default function JobBoard({
 
   // The grid's own tile size and gap, so a job tile is the size of an assembly
   // tile on the next screen. 12px is `gap-3`.
-  const grid = useMemo(() => gridFor(box.width, box.height, 180, 12), [box]);
+  const grid = useMemo(
+    () => gridFor(box.width, box.height, tileTarget(tileSize), 12),
+    [box, tileSize],
+  );
   const pages = useMemo(() => boardPages(tiles, grid.perPage), [tiles, grid.perPage]);
 
   /*
@@ -371,6 +380,7 @@ export default function JobBoard({
             </button>
           );
         })}
+        <span className="ml-auto" />
         {current && current.ofStage > 1 && (
           <span className="flex items-center gap-1 pl-1" aria-hidden="true">
             {Array.from({ length: current.ofStage }, (_, i) => (
@@ -384,12 +394,24 @@ export default function JobBoard({
           </span>
         )}
         <button
+          onClick={() => onTileSize(otherSize(tileSize))}
+          /* Beside Arrange, where the tiles are, rather than only in Settings:
+             walking to another screen to reclaim space is not something
+             anybody does mid-job. It is in Settings too, which is where a
+             preference is looked for. */
+          aria-pressed={tileSize === "big"}
+          title={tileSize === "big" ? "Smaller tiles" : "Bigger tiles"}
+          className="rounded-full bg-surface2 px-3 py-1 text-xs font-bold text-muted"
+        >
+          {tileSize === "big" ? "Smaller" : "Bigger"}
+        </button>
+        <button
           onClick={() => {
             setEditing((v) => !v);
             setDrag(null);
             setOrderError(null);
           }}
-          className={`ml-auto rounded-full px-3 py-1 text-xs font-bold ${
+          className={`rounded-full px-3 py-1 text-xs font-bold ${
             editing ? "bg-accent text-black" : "bg-surface2 text-muted"
           }`}
         >

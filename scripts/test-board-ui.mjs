@@ -444,6 +444,51 @@ try {
   ok("and neither does a mostly-vertical drag",
     (await tileTexts(page))[0] === sentPage1[0]);
 
+  // 5b-ii. BIGGER TILES.
+  //
+  // One setting for both grids: a job tile and an assembly tile are the same
+  // size on consecutive screens on purpose, so a control that grew one and not
+  // the other would undo the thing they were matched to.
+  const smallBox = await page.$eval("main button[data-deal]", (el) =>
+    el.getBoundingClientRect().width);
+  const smallCount = (await page.$$("main button[data-deal]")).length;
+  await page.click('button:text-is("Bigger")');
+  await page.waitForTimeout(400);
+  const bigBox = await page.$eval("main button[data-deal]", (el) =>
+    el.getBoundingClientRect().width);
+  ok("the toggle actually draws them bigger", bigBox > smallBox * 1.2,
+    `${smallBox.toFixed(0)} then ${bigBox.toFixed(0)}`);
+  ok("and fewer fit a page, which is what bigger means on a page that cannot scroll",
+    (await page.$$("main button[data-deal]")).length < smallCount,
+    `${smallCount} then ${(await page.$$("main button[data-deal]")).length}`);
+
+  const stillFits = await page.evaluate(() => {
+    const grid = document.querySelector("main button[data-deal]")?.closest("div.grid");
+    const pane = grid?.parentElement;
+    if (!pane) return null;
+    return {
+      scrolls: pane.scrollHeight > pane.clientHeight + 1,
+      overflows: grid.getBoundingClientRect().bottom > pane.getBoundingClientRect().bottom + 1,
+    };
+  });
+  ok("AND THE PAGE STILL DOES NOT SCROLL", stillFits?.scrolls === false && stillFits?.overflows === false,
+    JSON.stringify(stillFits));
+
+  // It is a device preference, so it survives leaving the screen. A reload
+  // also puts the board back on its first page, so the stage is re-chosen
+  // afterwards for the checks that follow.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("main button[data-deal]");
+  await page.click('button:has-text("Sent")');
+  await page.waitForTimeout(500);
+  ok("and it is remembered",
+    (await page.$eval("main button[data-deal]", (el) => el.getBoundingClientRect().width)) > smallBox * 1.2);
+
+  await page.click('button:text-is("Smaller")');
+  await page.waitForTimeout(400);
+  ok("the same button puts them back",
+    (await page.$eval("main button[data-deal]", (el) => el.getBoundingClientRect().width)) <= smallBox + 1);
+
   // 5c. ARRANGING THE TILES BY HAND.
   //
   // The order is written to the deal, not to this device, so the Sales Board

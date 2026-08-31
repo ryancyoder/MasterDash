@@ -9,6 +9,7 @@
 //    tile is never a dead end and drilling down is never required.
 
 import type { PlanState } from "./plan";
+import type { TileSize } from "./tileSize";
 import type { VisitState } from "./visit";
 
 export type ItemSource = "material" | "equipment" | "service" | "synthetic";
@@ -253,6 +254,14 @@ export interface EstimatorSettings {
    */
   showPrices: boolean;
   /**
+   * How big the tiles are drawn, on the grid AND on the job board.
+   *
+   * One setting for both, because the two are deliberately the same size on
+   * consecutive screens — see tileSize.ts. A device preference like
+   * `showPrices`, not something that belongs to an estimate.
+   */
+  tileSize: TileSize;
+  /**
    * Custom tile order per level, keyed by level id ("home", or the parent
    * node's id). Holds only levels that have actually been rearranged.
    */
@@ -264,6 +273,7 @@ export const DEFAULT_ESTIMATOR_SETTINGS: EstimatorSettings = {
   folderReturn: "auto",
   folderReturnDelayMs: 3000,
   autoDeliveryItemId: "svc:delivery_supplier",
+  tileSize: "normal",
   markupPercent: 0,
   showPrices: true,
   tileOrder: {},
