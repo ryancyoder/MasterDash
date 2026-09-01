@@ -118,6 +118,50 @@ export function photoGroups(events: PhotoEvent[]): PhotoEvent[] {
  * `urlFor` is passed in because building a Storage URL needs credentials the
  * browser does not have, and this module has to stay testable without them.
  */
+/** The row shape both photo queries return. */
+export interface PhotoRowLike {
+  id: number | string;
+  storage_path: string;
+  poster_path: string | null;
+  media_type: string;
+  caption: string | null;
+  taken_at: string | null;
+  created_at: string;
+  is_outlier: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+}
+
+/**
+ * One row, as a frame — or null when there is nothing to show for it.
+ *
+ * Pulled out of the grouping because the reference photographs need exactly
+ * this and have no event to be grouped by. One mapping rather than two: the
+ * video rule below is the sort of thing that gets fixed in one copy.
+ */
+export function photoFromRow(
+  p: PhotoRowLike,
+  urlFor: (path: string) => string,
+): EventPhoto | null {
+  // A VIDEO'S POSTER, NEVER THE CLIP. `storage_path` on a video row is the
+  // mp4, and an <img> pointed at one is a broken thumbnail. No poster means
+  // no thumbnail, so it is left out rather than shown as a blank frame.
+  const path = p.media_type === "video" ? p.poster_path : p.storage_path;
+  if (!path) return null;
+  return {
+    id: String(p.id),
+    url: urlFor(path),
+    caption: p.caption,
+    lat: typeof p.latitude === "number" ? p.latitude : null,
+    lng: typeof p.longitude === "number" ? p.longitude : null,
+    takenAt: p.taken_at ?? p.created_at,
+    isVideo: p.media_type === "video",
+    // Flagged where it was taken, not deleted. Somebody took the picture; the
+    // strip marks it rather than deciding for them.
+    isOutlier: p.is_outlier === true,
+  };
+}
+
 export function groupPhotoRows(
   events: {
     id: number | string;
@@ -125,41 +169,16 @@ export function groupPhotoRows(
     event_type: string | null;
     start_time: string | null;
   }[],
-  photos: {
-    id: number | string;
-    event_id: number | string;
-    storage_path: string;
-    poster_path: string | null;
-    media_type: string;
-    caption: string | null;
-    taken_at: string | null;
-    created_at: string;
-    is_outlier: boolean;
-    latitude?: number | null;
-    longitude?: number | null;
-  }[],
+  // `event_id` may be null on a row: the reference photographs share this
+  // table and have none. They are simply not in any group.
+  photos: (PhotoRowLike & { event_id: number | string | null })[],
   urlFor: (path: string) => string,
 ): PhotoEvent[] {
   const byEvent = new Map<string, EventPhoto[]>();
   for (const p of photos) {
-    // A VIDEO'S POSTER, NEVER THE CLIP. `storage_path` on a video row is the
-    // mp4, and an <img> pointed at one is a broken thumbnail. No poster means
-    // no thumbnail, so it is left out rather than shown as a blank frame.
-    const path = p.media_type === "video" ? p.poster_path : p.storage_path;
-    if (!path) continue;
+    const photo = photoFromRow(p, urlFor);
+    if (!photo) continue;
     const key = String(p.event_id);
-    const photo: EventPhoto = {
-      id: String(p.id),
-      url: urlFor(path),
-      caption: p.caption,
-      lat: typeof p.latitude === "number" ? p.latitude : null,
-      lng: typeof p.longitude === "number" ? p.longitude : null,
-      takenAt: p.taken_at ?? p.created_at,
-      isVideo: p.media_type === "video",
-      // Flagged where it was taken, not deleted. Somebody took the picture;
-      // the strip marks it rather than deciding for them.
-      isOutlier: p.is_outlier === true,
-    };
     const list = byEvent.get(key);
     if (list) list.push(photo);
     else byEvent.set(key, [photo]);
@@ -174,6 +193,39 @@ export function groupPhotoRows(
       photos: byEvent.get(String(e.id)) ?? [],
     })),
   );
+}
+
+/**
+ * Everything the property-photos endpoint answers with, from its two queries.
+ *
+ * THE ROUTE HAS NO LOGIC OF ITS OWN LEFT, and that is deliberate rather than
+ * tidy. The browser suite stubs that endpoint, so its body never runs there —
+ * which is exactly how the grouping shipped broken once, answering "no
+ * photographs" for a yard with fifteen. Anything with a decision in it belongs
+ * on this side of the line, where it is checked.
+ *
+ * The reference photographs are the reason it is a function rather than two
+ * calls: they have no event, so an early return for "this yard has no visits"
+ * — which the route had — would have dropped them for exactly the properties
+ * that have only reference photographs and nothing else.
+ */
+export function propertyPhotoPayload(
+  eventRows: {
+    id: number | string;
+    name: string | null;
+    event_type: string | null;
+    start_time: string | null;
+  }[],
+  photoRows: (PhotoRowLike & { event_id: number | string | null })[],
+  referenceRows: PhotoRowLike[],
+  urlFor: (path: string) => string,
+): { events: PhotoEvent[]; reference: EventPhoto[] } {
+  return {
+    events: groupPhotoRows(eventRows, photoRows, urlFor),
+    reference: referenceRows
+      .map((r) => photoFromRow(r, urlFor))
+      .filter((p): p is EventPhoto => p !== null),
+  };
 }
 
 /** How many photographs there are across every visit. */
@@ -216,17 +268,50 @@ export async function placeEventPhoto(
   }
 }
 
+/**
+ * Which set of photographs the strip is showing.
+ *
+ * `visit` is the Upright session being replayed — a different table and a
+ * different question. The two below are both this yard's: `property` is what
+ * was photographed on its visits, and `reference` is what belongs to the place
+ * rather than to any one day.
+ */
+export type PhotoSource = "visit" | "property" | "reference";
+
 export async function fetchPropertyPhotos(
   propertyId: number,
-): Promise<{ events: PhotoEvent[]; error: string | null }> {
+): Promise<{
+  events: PhotoEvent[];
+  reference: EventPhoto[];
+  error: string | null;
+}> {
   try {
     const res = await fetch(`/api/property-photos?property=${propertyId}`);
-    const body = (await res.json()) as { ok?: boolean; events?: PhotoEvent[]; error?: string };
+    const body = (await res.json()) as {
+      ok?: boolean;
+      events?: PhotoEvent[];
+      reference?: EventPhoto[];
+      error?: string;
+    };
     if (!res.ok || !body.ok) {
-      return { events: [], error: body.error ?? `The photographs could not be read (${res.status}).` };
+      return {
+        events: [],
+        reference: [],
+        error: body.error ?? `The photographs could not be read (${res.status}).`,
+      };
     }
-    return { events: photoGroups(body.events ?? []), error: null };
+    return {
+      events: photoGroups(body.events ?? []),
+      // Not grouped: there is nothing to group them BY, which is the whole
+      // difference between these and the visits' photographs.
+      reference: Array.isArray(body.reference) ? body.reference : [],
+      error: null,
+    };
   } catch {
-    return { events: [], error: "No signal — the yard's photographs need coverage." };
+    return {
+      events: [],
+      reference: [],
+      error: "No signal — the yard's photographs need coverage.",
+    };
   }
 }

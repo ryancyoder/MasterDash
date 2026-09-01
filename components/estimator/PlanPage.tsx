@@ -92,6 +92,7 @@ import {
   placeEventPhoto,
   type EventPhoto,
   type PhotoEvent,
+  type PhotoSource,
 } from "@/lib/estimator/propertyPhotos";
 import { photoTakeoffLabel } from "@/lib/estimator/pendingTakeoff";
 import {
@@ -395,17 +396,22 @@ export default function PlanPage({
     Still fetched lazily, on the first switch to them: most of the time nobody
     looks, and it is a request per estimate that would never be read.
   */
-  const [stripSource, setStripSource] = useState<"visit" | "property">("visit");
+  const [stripSource, setStripSource] = useState<PhotoSource>("visit");
   const [eventPhotos, setEventPhotos] = useState<PhotoEvent[] | null>(null);
+  /** The yard's own photographs — about the place, not about a visit. */
+  const [referencePhotos, setReferencePhotos] = useState<EventPhoto[] | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const estimatePropertyId = estimate.propertyId;
 
   useEffect(() => {
-    if (stripSource !== "property" || estimatePropertyId === null) return;
+    // One request carries both of the yard's sets, so switching between them
+    // costs nothing and either can be the one that fetched them.
+    if (stripSource === "visit" || estimatePropertyId === null) return;
     let live = true;
     void fetchPropertyPhotos(estimatePropertyId).then((r) => {
       if (!live) return;
       setEventPhotos(r.events);
+      setReferencePhotos(r.reference);
       setPhotoError(r.error);
     });
     return () => {
@@ -419,6 +425,7 @@ export default function PlanPage({
   if (lastPhotoProperty !== estimatePropertyId) {
     setLastPhotoProperty(estimatePropertyId);
     setEventPhotos(null);
+    setReferencePhotos(null);
     setPhotoError(null);
   }
 
@@ -582,6 +589,19 @@ export default function PlanPage({
       pulls any fit with them. The strip still lists them, marked, and dropping
       one on the map is what settles it.
     */
+    if (stripSource === "reference") {
+      for (const ph of referencePhotos ?? []) {
+        if (ph.lat === null || ph.lng === null || ph.isOutlier) continue;
+        dots.push({
+          kind: "event",
+          id: `event:${ph.id}`,
+          at: { lat: ph.lat, lng: ph.lng },
+          seq: 0,
+          headingDeg: null,
+        });
+      }
+    }
+
     if (stripSource === "property") {
       for (const e of eventPhotos ?? []) {
         for (const ph of e.photos) {
@@ -597,7 +617,7 @@ export default function PlanPage({
       }
     }
     return dots.length ? dots : null;
-  }, [visit, stripSource, eventPhotos]);
+  }, [visit, stripSource, eventPhotos, referencePhotos]);
 
   /** Every photograph of the yard, flat, for finding one by id. */
   const eventById = useMemo(() => {
@@ -605,8 +625,13 @@ export default function PlanPage({
     for (const e of eventPhotos ?? []) {
       for (const ph of e.photos) m.set(ph.id, { photo: ph, label: eventLabel(e) });
     }
+    // The reference photographs answer here too, or picking one would preview
+    // nothing and a call-out on one would have no picture to draw.
+    for (const ph of referencePhotos ?? []) {
+      m.set(ph.id, { photo: ph, label: "Reference" });
+    }
     return m;
-  }, [eventPhotos]);
+  }, [eventPhotos, referencePhotos]);
 
   /**
    * Held-open photographs, resolved: the picture, and where its own dot is.
@@ -717,15 +742,15 @@ export default function PlanPage({
   const addAsLayerRef = useRef<(url: string, label: string) => void>(() => {});
 
   const beginPhotoDrag = useCallback(
-    (photo: EventPhoto, event: PhotoEvent, e: React.PointerEvent) => {
+    (photo: EventPhoto, label: string, e: React.PointerEvent) => {
       dragStart.current = { x: e.clientX, y: e.clientY, id: photo.id };
       setDragPhoto({
         kind: "pin",
         photo,
         // The caption first: dropped on Add plan this becomes a layer's name,
         // and "Front bed" identifies a picture where "Appointment · Jun 2"
-        // only identifies the visit it came from.
-        label: photo.caption?.trim() || eventLabel(event),
+        // only identifies where it came from.
+        label: photo.caption?.trim() || label,
         url: photo.url,
         x: e.clientX,
         y: e.clientY,
@@ -2406,6 +2431,7 @@ export default function PlanPage({
         source={stripSource}
         onSource={setStripSource}
         events={eventPhotos}
+        reference={referencePhotos}
         photoError={photoError}
         onDragPhoto={beginPhotoDrag}
       />

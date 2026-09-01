@@ -770,8 +770,21 @@ export default function PlanCanvas({
         y: c.tr.y + c.bl.y - c.tl.y,
       });
     }
+    /*
+      THE PLANTS, THE PINS AND THE HELD-OPEN PHOTOGRAPHS ARE CONTENT TOO.
+
+      This framed the shapes, the survey and the layers, which was the whole of
+      the plan when it was written. It is not any more: a yard taken off as
+      twelve trees and no beds fitted to nothing at all and opened on the
+      default view, and a photograph dropped on the map could sit outside every
+      fit for ever. The outliers are already filtered out of `photos` upstream,
+      so nothing here can pull the frame across the county.
+    */
+    for (const plant of plants) pts.push(toWorld(plant.at));
+    for (const dot of photos ?? []) pts.push(toWorld(dot.at));
+    for (const c of callouts) pts.push(toWorld(c.at));
     return worldBounds(pts);
-  }, [shapes, nodes, survey, overlays]);
+  }, [shapes, nodes, survey, overlays, plants, photos, callouts]);
 
   /**
    * Point the view at everything there is — or at the view somebody locked.

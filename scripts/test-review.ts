@@ -10,7 +10,9 @@
 import {
   eventLabel,
   groupPhotoRows,
+  photoFromRow,
   photoCount,
+  propertyPhotoPayload,
   photoGroups,
   type PhotoEvent,
 } from "../lib/estimator/propertyPhotos.ts";
@@ -561,6 +563,145 @@ ok(
   ok("a visit nobody photographed is not a group",
     groupPhotoRows([...gordon, { id: 999, name: null, event_type: null, start_time: null }],
       fifteen, (p) => p).length === 1);
+}
+
+// --- The yard's own photographs --------------------------------------------
+//
+// 29 of the 817 rows in `deal_photos` carry a `property_id` and no `event_id`:
+// the house, the frontage, a problem corner — pictures about the PLACE rather
+// than about a day. They were invisible in the strip, because the visits'
+// photographs are found by going through the events and these have no event to
+// go through.
+
+{
+  const ref = (over: Record<string, unknown> = {}) => ({
+    id: 7,
+    storage_path: "yard/front.jpg",
+    poster_path: null,
+    media_type: "image",
+    caption: "Front of house",
+    taken_at: null,
+    created_at: "2026-08-08T12:00:00Z",
+    is_outlier: false,
+    latitude: null,
+    longitude: null,
+    ...over,
+  });
+
+  const one = photoFromRow(ref(), (path) => `https://s/${path}`);
+  ok("a reference photograph becomes a frame", one !== null);
+  ok("with its picture", one?.url === "https://s/yard/front.jpg");
+  ok("and its caption", one?.caption === "Front of house");
+  // 11 of the 29 have no date of their own, so the row's own timestamp is what
+  // orders them — the same fallback the visits' photographs use.
+  ok("dated by when it was added, where it says nothing else",
+    one?.takenAt === "2026-08-08T12:00:00Z");
+  ok("and with no position, which 27 of the 29 have",
+    one?.lat === null && one?.lng === null);
+
+  // Two of the 29 DO carry one, and a picture of the yard with a position is
+  // a pin on the yard like any other.
+  const placed = photoFromRow(ref({ latitude: 41.31, longitude: -87.15 }), (p) => p);
+  ok("one that carries a position keeps it",
+    placed?.lat === 41.31 && placed?.lng === -87.15);
+
+  // THE VIDEO RULE IS THE SAME RULE. It used to live inside the grouping,
+  // where the reference photographs could never reach it — an <img> pointed at
+  // an mp4 is a broken thumbnail wherever it is drawn.
+  ok("a video shows its poster",
+    photoFromRow(ref({ media_type: "video", poster_path: "poster.jpg" }), (p) => p)?.url ===
+      "poster.jpg");
+  ok("and one with no poster is no frame at all",
+    photoFromRow(ref({ media_type: "video", poster_path: null }), (p) => p) === null);
+
+  // And the grouping still uses it, so the two can never drift apart.
+  const grouped = groupPhotoRows(
+    [{ id: 1, name: "Visit", event_type: null, start_time: "2026-06-02T14:00:00Z" }],
+    [{ ...ref({ id: 9 }), event_id: 1 }],
+    (p) => `https://s/${p}`,
+  );
+  ok("the visits' photographs come through the same mapping",
+    grouped[0]?.photos[0]?.url === "https://s/yard/front.jpg");
+}
+
+// --- What the endpoint actually answers with -------------------------------
+//
+// THE ROUTE'S BODY IS NOT COVERED BY THE BROWSER SUITE, which stubs
+// /api/property-photos outright — so a route that quietly stopped sending the
+// reference photographs passed 187 checks. That is the same hole the grouping
+// shipped through. Everything with a decision in it is in this function now,
+// and these are the checks that mutation could not survive.
+
+{
+  console.log("\n--- the endpoint's payload ---");
+
+  const evRow = (id: number, when: string) => ({
+    id, name: null, event_type: null, start_time: when,
+  });
+  const pRow = (id: number, over: Record<string, unknown> = {}) => ({
+    id,
+    event_id: 1 as number | string | null,
+    storage_path: `visit/${id}.jpg`,
+    poster_path: null,
+    media_type: "image",
+    caption: null,
+    taken_at: `2026-05-0${id}T12:00:00Z`,
+    created_at: "2026-05-01T12:00:00Z",
+    is_outlier: false,
+    latitude: null,
+    longitude: null,
+    ...over,
+  });
+  const refRow = (id: number, over: Record<string, unknown> = {}) => ({
+    ...pRow(id, over), storage_path: `yard/${id}.jpg`,
+  });
+
+  const both = propertyPhotoPayload(
+    [evRow(1, "2026-05-01T12:00:00Z")],
+    [pRow(2), pRow(3)],
+    [refRow(8), refRow(9)],
+    (path) => `https://s/${path}`,
+  );
+  ok("the visits' photographs are grouped",
+    both.events.length === 1 && both.events[0]?.photos.length === 2,
+    `${both.events.length} groups`);
+  ok("AND THE REFERENCE PHOTOGRAPHS COME BACK WITH THEM",
+    both.reference.length === 2,
+    `${both.reference.length} reference`);
+  ok("built through the same mapping, so a url is a url",
+    both.reference[0]?.url === "https://s/yard/8.jpg",
+    both.reference[0]?.url ?? "(none)");
+
+  // A yard with pictures of the place and no visits on file. 25 properties
+  // carry reference photographs; the route used to return `{events: []}` the
+  // moment there were no events, which would have dropped them for exactly
+  // the ones that have nothing else.
+  const noVisits = propertyPhotoPayload([], [], [refRow(8)], (p) => p);
+  ok("A YARD WITH NO VISITS STILL GETS ITS REFERENCE PHOTOGRAPHS",
+    noVisits.events.length === 0 && noVisits.reference.length === 1,
+    `${noVisits.events.length} groups, ${noVisits.reference.length} reference`);
+
+  // And the other way round, since the two queries are independent.
+  const noRef = propertyPhotoPayload(
+    [evRow(1, "2026-05-01T12:00:00Z")], [pRow(2)], [], (p) => p,
+  );
+  ok("a yard with no reference photographs still gets its visits",
+    noRef.events.length === 1 && noRef.reference.length === 0);
+
+  // The video rule reaches the reference rail too -- these are not grouped,
+  // so nothing else was ever going to drop the clip.
+  ok("a reference video shows its poster",
+    propertyPhotoPayload([], [], [refRow(8, { media_type: "video", poster_path: "p.jpg" })],
+      (p) => p).reference[0]?.url === "p.jpg");
+  ok("and one with no poster is left out of the rail",
+    propertyPhotoPayload([], [], [refRow(8, { media_type: "video", poster_path: null })],
+      (p) => p).reference.length === 0);
+
+  // They are NOT grouped and must not be: there is nothing to group them by,
+  // and an event_id of null would otherwise key one group called "null".
+  ok("a reference photograph is in no group",
+    propertyPhotoPayload([evRow(1, "2026-05-01T12:00:00Z")], [], [refRow(8)], (p) => p)
+      .events.length === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

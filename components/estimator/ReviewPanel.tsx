@@ -25,6 +25,7 @@ import {
   eventLabel,
   type EventPhoto,
   type PhotoEvent,
+  type PhotoSource,
 } from "@/lib/estimator/propertyPhotos";
 
 // The review half of the merged screen: the visit, replayed beside the plan.
@@ -579,6 +580,67 @@ export function ReviewColumn({
   );
 }
 
+/**
+ * One of the yard's photographs, in the rail.
+ *
+ * Shared by the visits' photographs and the reference ones, which differ only
+ * in what they are grouped by — the frame itself, its badges and its two
+ * gestures are the same thing twice, and were the same fifty lines twice.
+ */
+function PropertyFrame({
+  photo,
+  label,
+  picked,
+  onPick,
+  onDragPhoto,
+}: {
+  photo: EventPhoto;
+  label: string;
+  picked: boolean;
+  onPick: () => void;
+  onDragPhoto: (photo: EventPhoto, label: string, e: React.PointerEvent) => void;
+}) {
+  return (
+    <button
+      onClick={onPick}
+      /* A frame is dragged onto the map to give it a position. The pointer
+         comes up over the canvas, which is a different component, so the page
+         that holds both owns the gesture from here. */
+      onPointerDown={(ev) => onDragPhoto(photo, label, ev)}
+      title={photo.caption ?? label}
+      className={`relative h-16 w-[5.5rem] shrink-0 overflow-hidden rounded-lg border-2 ${
+        picked ? "border-accent" : "border-transparent"
+      }`}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={photo.url}
+        alt={photo.caption ?? ""}
+        loading="lazy"
+        /* The browser's own image drag would otherwise start on mouse-down and
+           fire `pointercancel`, which kills the drag onto the map on its first
+           move. The grid's tiles guard the same way. */
+        draggable={false}
+        className="h-full w-full object-cover"
+      />
+      {photo.isVideo && (
+        <span className="absolute left-1 top-1 rounded bg-black/70 px-1 text-[0.55rem] font-bold text-white">
+          {/* Its thumbnail is the poster frame; the row is a clip. */}
+          VIDEO
+        </span>
+      )}
+      {photo.isOutlier && (
+        <span
+          title="Flagged as taken away from the site"
+          className="absolute bottom-0 left-0 bg-[#f59e0b] px-1 text-[0.55rem] font-bold text-black"
+        >
+          off site
+        </span>
+      )}
+    </button>
+  );
+}
+
 // --- the filmstrip --------------------------------------------------------
 
 /**
@@ -600,6 +662,7 @@ export function ReviewFilmstrip({
   source,
   onSource,
   events,
+  reference,
   photoError,
   onDragPhoto,
 }: {
@@ -623,8 +686,13 @@ export function ReviewFilmstrip({
   /** The yard, for its own photographs. Null on an estimate with no job. */
   propertyId: number | null;
   /** Which source is showing, and how to change it. Owned upstairs. */
-  source: "visit" | "property";
-  onSource: (source: "visit" | "property") => void;
+  source: PhotoSource;
+  onSource: (source: PhotoSource) => void;
+  /**
+   * The yard's own photographs — the ones that belong to the place rather than
+   * to any one visit. 29 of them across 25 properties.
+   */
+  reference: EventPhoto[] | null;
   /** The yard's photographs, or null while they are still being read. */
   events: PhotoEvent[] | null;
   /** Why they could not be read, said rather than shown as an empty yard. */
@@ -635,7 +703,7 @@ export function ReviewFilmstrip({
    * The pointer goes down here and comes up over the canvas, which is a
    * different component, so the drag belongs to the page that holds both.
    */
-  onDragPhoto: (photo: EventPhoto, event: PhotoEvent, e: React.PointerEvent) => void;
+  onDragPhoto: (photo: EventPhoto, label: string, e: React.PointerEvent) => void;
 }) {
   // Destructured names the body already used before the state moved upstairs.
 
@@ -673,6 +741,7 @@ export function ReviewFilmstrip({
       {([
         ["visit", "Visit"],
         ["property", "Property"],
+        ["reference", "Reference"],
       ] as const).map(([value, label]) => (
         <button
           key={value}
@@ -687,6 +756,60 @@ export function ReviewFilmstrip({
       ))}
     </div>
   ) : null;
+
+  /*
+    THE YARD'S OWN PHOTOGRAPHS, which belong to the place rather than to a day.
+
+    29 of the 817 rows in `deal_photos` carry a `property_id` and no
+    `event_id` — the house, the frontage, a problem corner — and they were
+    invisible here, because the visits' photographs are found by going through
+    the events and these have no event to go through.
+
+    NOT GROUPED, and that is the difference rather than an omission: a visit's
+    photographs are boxed by the visit because knowing which day a picture is
+    from is most of what it tells you, and these have no day worth boxing by.
+    They are one rail, oldest first.
+  */
+  if (source === "reference") {
+    return (
+      <div className="flex shrink-0 gap-2 overflow-x-auto border-t border-edge bg-bg px-3 py-2 md-scroll">
+        {switcher}
+        {reference === null ? (
+          <p className="self-center px-2 text-xs text-muted">Looking…</p>
+        ) : photoError ? (
+          <p className="self-center px-2 text-xs leading-relaxed text-[#fca5a5]">
+            {photoError}
+          </p>
+        ) : reference.length === 0 ? (
+          <p className="self-center px-2 text-xs leading-relaxed text-muted">
+            No reference photographs of this yard — the ones kept about the
+            place rather than about a visit.
+          </p>
+        ) : (
+          <div className="flex shrink-0 flex-col gap-1 rounded-xl border border-edge px-2 py-1">
+            <span className="truncate text-[0.6rem] font-bold tracking-wide text-muted">
+              Reference
+              <span className="ml-1 opacity-60">{reference.length}</span>
+            </span>
+            <div className="flex gap-2">
+              {reference.map((ph) => (
+                <PropertyFrame
+                  key={ph.id}
+                  photo={ph}
+                  label="Reference"
+                  picked={selectedId === `event:${ph.id}`}
+                  onPick={() =>
+                    onSelect(selectedId === `event:${ph.id}` ? null : `event:${ph.id}`)
+                  }
+                  onDragPhoto={onDragPhoto}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (source === "property") {
     const groups = events ?? [];
@@ -717,52 +840,18 @@ export function ReviewFilmstrip({
                 <span className="ml-1 opacity-60">{e.photos.length}</span>
               </span>
               <div className="flex gap-2">
-                {e.photos.map((ph) => {
-                  const key = `event:${ph.id}`;
-                  const isPicked = selectedId === key;
-                  return (
-                    <button
-                      key={ph.id}
-                      onClick={() => onSelect(isPicked ? null : key)}
-                      /* A frame is dragged onto the map to give it a
-                         position. The pointer comes up over the canvas, which
-                         is a different component, so the page that holds both
-                         owns the gesture from here. */
-                      onPointerDown={(ev) => onDragPhoto(ph, e, ev)}
-                      title={ph.caption ?? eventLabel(e)}
-                      className={`relative h-16 w-[5.5rem] shrink-0 overflow-hidden rounded-lg border-2 ${
-                        isPicked ? "border-accent" : "border-transparent"
-                      }`}
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={ph.url}
-                        alt={ph.caption ?? ""}
-                        loading="lazy"
-                        /* The browser's own image drag would otherwise start
-                           on mouse-down and fire `pointercancel`, which kills
-                           the drag onto the map on its first move. The grid's
-                           tiles guard the same way. */
-                        draggable={false}
-                        className="h-full w-full object-cover"
-                      />
-                      {ph.isVideo && (
-                        <span className="absolute left-1 top-1 rounded bg-black/70 px-1 text-[0.55rem] font-bold text-white">
-                          {/* Its thumbnail is the poster frame; the row is a clip. */}
-                          VIDEO
-                        </span>
-                      )}
-                      {ph.isOutlier && (
-                        <span
-                          title="Flagged as taken away from the site"
-                          className="absolute bottom-0 left-0 bg-[#f59e0b] px-1 text-[0.55rem] font-bold text-black"
-                        >
-                          off site
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
+                {e.photos.map((ph) => (
+                  <PropertyFrame
+                    key={ph.id}
+                    photo={ph}
+                    label={eventLabel(e)}
+                    picked={selectedId === `event:${ph.id}`}
+                    onPick={() =>
+                      onSelect(selectedId === `event:${ph.id}` ? null : `event:${ph.id}`)
+                    }
+                    onDragPhoto={onDragPhoto}
+                  />
+                ))}
               </div>
             </div>
           ))

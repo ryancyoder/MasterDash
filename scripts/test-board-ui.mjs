@@ -250,7 +250,14 @@ try {
       placed.push(JSON.parse(r.request().postData() ?? "{}"));
       return r.fulfill({ contentType: "application/json", body: '{"ok":true}' });
     }
-    return r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true, events: [
+    return r.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true,
+      // The yard's own pictures: a property_id and no event, which is why they
+      // arrive beside the visits rather than inside one.
+      reference: [
+        { id: "r1", url: "https://cover.test/yard.png", caption: "Front of house", takenAt: "2026-08-08T12:00:00Z", lat: null, lng: null, isVideo: false, isOutlier: false },
+        { id: "r2", url: "https://cover.test/yard.png", caption: null, takenAt: "2026-08-09T12:00:00Z", lat: 41.3109, lng: -87.1509, isVideo: false, isOutlier: false },
+      ],
+      events: [
       { id: "e1", name: null, type: "Appointment", startedAt: "2026-06-02T14:00:00Z", photos: [
         { id: "p1", url: "https://cover.test/yard.png", caption: "Front bed", takenAt: "2026-06-02T14:05:00Z", lat: null, lng: null, isVideo: false, isOutlier: false },
         { id: "p2", url: "https://cover.test/yard.png", caption: null, takenAt: "2026-06-02T14:09:00Z", lat: 41.311, lng: -87.151, isVideo: true, isOutlier: false },
@@ -1262,6 +1269,68 @@ try {
   await page.waitForTimeout(300);
   ok("and a drag released off the canvas still writes nothing",
     placed.length === writesBefore, `${placed.length} writes`);
+
+  // 7c-iv-b. AND THE YARD'S OWN REFERENCE PHOTOGRAPHS.
+  //
+  // 29 of the 817 rows in `deal_photos` carry a property_id and no event_id:
+  // the house, the frontage, a problem corner — pictures about the PLACE
+  // rather than about a day. They were invisible in the strip, because the
+  // visits' photographs are found by going through the events and these have
+  // no event to go through.
+  ok("the strip offers the yard's own photographs as a third source",
+    (await page.locator('button:text-is("Reference")').count()) === 1);
+  await page.click('button:text-is("Reference")');
+  await page.waitForTimeout(400);
+  const referenceRail = await page.evaluate(() => {
+    const rail = document.querySelector("div.md-scroll.overflow-x-auto");
+    const groups = [...(rail?.querySelectorAll("div.rounded-xl.border") ?? [])];
+    return {
+      groups: groups.length,
+      label: groups[0]?.querySelector("span")?.textContent ?? "",
+      frames: groups[0]?.querySelectorAll("button").length ?? 0,
+    };
+  });
+  ok("THEY ARE THERE, AND NOT BOXED BY A VISIT THEY DO NOT HAVE",
+    referenceRail.groups === 1 && referenceRail.frames === 2,
+    JSON.stringify(referenceRail));
+  ok("under a heading that says what they are",
+    /Reference/.test(referenceRail.label), referenceRail.label);
+
+  // One of the two carries a position, so it is a pin on the yard like any
+  // other — which is the point of them being here rather than in a gallery.
+  // Framed first: whether a pin is on screen depends on where the map happens
+  // to be looking, which by this point is wherever the last section left it.
+  await page.click('button[title="Fit the take-off"], button[title="Back to the locked view"]');
+  await page.waitForTimeout(700);
+  const refPins = await page.evaluate(() => {
+    const c = document.querySelector("canvas[data-plan-canvas]");
+    const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] > d[i + 1] && d[i + 1] > d[i + 2] && d[i] - d[i + 2] > 60) n++;
+    }
+    return n;
+  });
+  ok("and one that carries a position is drawn on the map",
+    refPins > 20, `${refPins} pixels`);
+
+  // Picking one previews it, the same as any other frame.
+  await page.locator('div.rounded-xl.border button').first().click();
+  await page.waitForTimeout(300);
+  ok("picking one previews it",
+    /Front of house/.test(await page.textContent("aside")),
+    (await page.textContent("aside")).slice(0, 120));
+
+  await page.click('button:text-is("Property")');
+  await page.waitForTimeout(300);
+  ok("and the switch goes back to the visits' own",
+    (await page.locator('div.rounded-xl.border').count()) === 2);
+  // Put the pick back where the sections below expect it. A reference
+  // photograph with no position cannot be held open on the map — there is no
+  // dot for its line to run to — so leaving one picked would fail the
+  // call-out checks for a reason that has nothing to do with them.
+  await page.locator('div.rounded-xl.border button').nth(1).click();
+  await page.waitForTimeout(300);
 
   // 7c-vii-a. A PHOTOGRAPH DROPPED ON "ADD PLAN" IS A LAYER.
   //

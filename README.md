@@ -1320,16 +1320,15 @@ photographic record instead, taken on the appointments and site visits that
 live on the Sales Board, **grouped by the visit it came from**.
 
 The difference in weight is the reason: Upright has 9 sessions and a handful of
-photographs; `deal_photos` has **789 rows, 754 of them hanging off an event**,
+photographs; `deal_photos` has **817 rows, 777 of them hanging off an event**,
 with real yards carrying 20 to 53 pictures each.
 
 **THE JOIN GOES THROUGH THE EVENT, NOT THE PHOTO**, and that is measured rather
-than preferred. Of those 789 rows, 754 carry an `event_id` and 24 carry a
-`property_id` — and **not one carries both**. Reading `deal_photos.property_id`
-for this, which is the obvious thing to write, finds two dozen photographs and
-misses every one that matters. `events` is where the property lives (94 of 120
-events carry one), so the route reads the events first and fetches their photos
-by event id.
+than preferred. Of the 817 rows there now, 777 carry an `event_id` and 52 carry
+a `property_id`. Reading `deal_photos.property_id` for this, which is the
+obvious thing to write, finds fifty photographs and misses every one that
+matters. `events` is where the property lives (94 of 120 events carry one), so
+the route reads the events first and fetches their photos by event id.
 
 **The type is missing more often than it is there.** 70 of the 120 events have
 no `event_type`, and they carry 461 of the photographs — the majority. So
@@ -1385,6 +1384,56 @@ returned `[]` on any failure, so a request that never landed and a yard nobody
 has photographed looked identical — *No photographs of this yard yet* — which
 is how you conclude a feature does not work. It returns the error now and the
 strip says it, the same rule the proposal helper's error reporting follows.
+
+#### The third source: the pictures of the place itself
+
+**Visit** and **Property** were the two, and both are about a *day*: a session
+replayed against its own audio, and the photographs taken on the appointments
+that yard has had. **Reference** is the third, and it is what the yard's own
+record looks like when nobody was there for a reason — the house, the frontage,
+the corner that always floods.
+
+They are the rows in `deal_photos` that carry a `property_id` and **no**
+`event_id`: **29 of 817, spread across 25 properties**. They were invisible on
+this screen, and not by oversight — the visits' photographs are found by going
+*through the events*, and these have no event to go through. So they take a
+second query, run alongside the first rather than after it, since the strip
+cannot draw until it has both.
+
+**`event_id=is.null` is load-bearing, not a tidy filter.** It used to be true
+that not one row carried both columns, which is what made the first version of
+this look safe. **23 rows carry both now** — all written on 2026-08-31, across
+three properties — and every one of them is already in the Property rail
+through its event. Drop the filter and those appear in both rails at once,
+which reads as duplicate photographs rather than as a bug.
+
+**Not grouped, and that is the difference rather than an omission.** A visit's
+photographs are boxed by the visit because *which day* is most of what a
+picture like that tells you. These have no day worth boxing by — 11 of the 29
+have no `taken_at` at all, so the row's own timestamp is what orders them — so
+they are one rail, oldest first, under one heading.
+
+**Everything else about a frame is the same frame.** They drag onto the map,
+they drop as a call-out, they light a dot when they carry a position — 2 of the
+29 do, and 1 has a caption. That fell out of `photoFromRow()`, which was lifted
+out of the grouping so both sources map a row the same way: the *video shows
+its poster, never the clip* rule now covers a reference video by construction
+instead of by being written twice.
+
+**And the route has no logic of its own left.** That is the point rather than a
+tidy-up. The browser suite stubs `/api/property-photos`, so nothing in that
+file's body ever executes there — which is exactly how the grouping shipped
+answering *no photographs* for a yard with fifteen. Making the route drop the
+reference photographs entirely was tried against the suite as it stood: **187
+passed, 0 failed**. So `propertyPhotoPayload()` now takes the three sets of
+rows and returns what the endpoint answers with, `test-review.ts` checks it,
+and the same mutation turns four checks red.
+
+The early return went with it. The route used to answer `{events: []}` the
+moment a property had no visits, and hanging the reference photographs
+underneath that would have dropped them for **exactly the properties that have
+only reference photographs and nothing else** — which is most of the 25. That
+case is a check of its own.
 
 #### Dragging a photograph onto the map
 
