@@ -22,6 +22,8 @@ import {
   calloutsFrom,
   emptyPlan,
   plantsFrom,
+  labelOffsetFrom,
+  nextLabelMode,
   topologyFrom,
   type PlacedPlant,
   type PlanShape,
@@ -1100,6 +1102,80 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
       ?.shapes[0]?.color === "#92400e",
     takeoffProjection(bed, { mulch_bed_installation_standard: "#92400e" })
       ?.shapes[0]?.color ?? "(nothing published)");
+}
+
+// --- What is written on a shape, and where -----------------------------------
+
+{
+  console.log("\n--- labels ---");
+
+  ok("a plan starts writing everything", emptyPlan().labelMode === "all");
+  // One button, three states, and the middle one is what the old two-way
+  // toggle's "off" already was — so nothing anybody was used to has moved.
+  ok("the cycle is everything, then names, then nothing, then round",
+    nextLabelMode("all") === "name" &&
+      nextLabelMode("name") === "none" &&
+      nextLabelMode("none") === "all");
+
+  /*
+    The offset is rebuilt out of storage, not cast.
+
+    A NaN here is a label drawn at `NaN,NaN`, which canvas SILENTLY declines to
+    draw — so the label would simply be gone, with no error and nothing to say
+    the stored value was the reason.
+  */
+  ok("an offset survives", JSON.stringify(labelOffsetFrom({ dx: 1e-7, dy: -2e-7 })) ===
+    JSON.stringify({ dx: 1e-7, dy: -2e-7 }));
+  for (const bad of [
+    null, undefined, 5, "x", {}, { dx: 1 }, { dy: 1 },
+    { dx: Number.NaN, dy: 1 }, { dx: 1, dy: Number.POSITIVE_INFINITY },
+    { dx: "1", dy: "2" },
+  ]) {
+    ok(`and ${JSON.stringify(bad) ?? "undefined"} is refused`,
+      labelOffsetFrom(bad) === null);
+  }
+  // Zero is not an offset, it is the default placement — kept out so a label
+  // put back reads exactly like one that never moved.
+  ok("and a zero offset is no offset at all",
+    labelOffsetFrom({ dx: 0, dy: 0 }) === null);
+
+  /*
+    AND IT HAS TO BE READ BACK BY `topologyFrom`, which is the trap that file
+    warns about in as many words: it REBUILDS a shape rather than casting one,
+    so a field nobody named is silently dropped on the next load. That is how
+    photographs attached to a bed once vanished on reopening the estimate.
+  */
+  const stored = {
+    nodes: {
+      n1: { at: { lat: 41.31, lng: -87.15 } },
+      n2: { at: { lat: 41.3101, lng: -87.15 } },
+      n3: { at: { lat: 41.3101, lng: -87.1499 } },
+    },
+    shapes: [
+      {
+        id: "s1",
+        type: "area",
+        vertices: ["n1", "n2", "n3"],
+        color: "#14b8a6",
+        assemblyId: null,
+        labelOffset: { dx: 3e-7, dy: -1e-7 },
+      },
+    ],
+  };
+  const back = topologyFrom(stored).shapes[0];
+  ok("A MOVED LABEL SURVIVES BEING STORED AND READ BACK",
+    JSON.stringify(back?.labelOffset) === JSON.stringify({ dx: 3e-7, dy: -1e-7 }),
+    JSON.stringify(back?.labelOffset ?? null));
+  ok("and a shape stored without one reads as having none",
+    topologyFrom({
+      ...stored,
+      shapes: [{ ...stored.shapes[0], labelOffset: undefined }],
+    }).shapes[0]?.labelOffset === undefined);
+  ok("as does one stored with a broken one, rather than an unclickable NaN",
+    topologyFrom({
+      ...stored,
+      shapes: [{ ...stored.shapes[0], labelOffset: { dx: "over there", dy: 1 } }],
+    }).shapes[0]?.labelOffset === undefined);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

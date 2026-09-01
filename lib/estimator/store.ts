@@ -10,6 +10,7 @@ import {
   plantsFrom,
   pruneNodes,
   topologyFrom,
+  type LabelMode,
   type NodeSurveyLink,
   type PendingPoint,
   type PlanShape,
@@ -252,6 +253,10 @@ function planFrom(value: unknown): PlanState {
     // Shown unless the estimate says otherwise, so every plan saved before
     // this existed opens with its planting drawn.
     plantsHidden: v.plantsHidden === true,
+    // "all" unless the estimate says one of the other two, so a plan saved
+    // before this existed opens writing everything it used to.
+    labelMode:
+      v.labelMode === "name" || v.labelMode === "none" ? v.labelMode : "all",
   };
 }
 
@@ -640,6 +645,44 @@ export function setReviewSession(review: { sessionId: string; label: string } | 
  * document, and it steps back with Undo like everything else that does. It
  * changes nothing about what is on the take-off — see `plantsHidden`.
  */
+/**
+ * How much is written on a shape: everything, the name alone, or nothing.
+ *
+ * Beside `setPlantsHidden` and through `mutatePlan` for the same reason: it is
+ * a preference about this estimate's plan, it lives in the plan document, and
+ * it steps back with Undo like everything else in there.
+ */
+export function setLabelMode(mode: LabelMode) {
+  mutatePlan((plan) => ({ ...plan, labelMode: mode }));
+}
+
+/**
+ * Put a shape's label somewhere else, or back where it belongs.
+ *
+ * Coalesced under one label so a drag is ONE undo rather than forty — the same
+ * rule the call-out size slider follows, and for the same reason: nobody means
+ * "undo that by a pixel".
+ */
+export function moveShapeLabel(id: string, offset: { dx: number; dy: number } | null) {
+  mutatePlan(
+    (plan) => ({
+      ...plan,
+      shapes: plan.shapes.map((s) => {
+        if (s.id !== id) return s;
+        if (offset) return { ...s, labelOffset: offset };
+        // DELETED rather than set to zero, so a shape whose label was put back
+        // reads exactly like one that never moved — the field is optional and
+        // `topologyFrom` drops a zero offset anyway, so the two would
+        // otherwise differ only until the next reload.
+        const rest = { ...s };
+        delete rest.labelOffset;
+        return rest;
+      }),
+    }),
+    `label:${id}`,
+  );
+}
+
 export function setPlantsHidden(hidden: boolean) {
   mutatePlan((plan) => ({ ...plan, plantsHidden: hidden }));
 }

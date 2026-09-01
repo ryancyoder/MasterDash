@@ -800,6 +800,59 @@ being wrong rather than the thing measured:
 Mutation-tested: making a plant grabbable in Select again turns 1 check red,
 and ignoring the custom spread turns 2 here and 2 in `test:plan`.
 
+#### What is written on a shape, and where
+
+The button that dropped the numbers has a third state. **123 → Aa → ···**:
+everything, the assembly's name alone, nothing at all. They are one question
+asked at increasing strength — how much is written on the plan — and the middle
+state is exactly what the old two-way toggle's "off" already was, so nothing
+anybody was used to has moved. Nothing is the state a plan is shown to a client
+in; the name alone is the state it is read in; everything is the state it is
+checked in.
+
+The glyph says which state it is **in** and the title says what the tap will
+do. A control that only says what it will do next leaves you reading the map to
+work out where you are.
+
+**It moved into the plan document**, beside `plantsHidden`, where the two-way
+version lived in component state: a three-way cycle you have to set again on
+every reload is worse than the two-way one it replaced. So it persists, and it
+steps back with Undo like everything else in there.
+
+**And the label can be dragged off the middle of the shape.** A bed's label
+lands on its centroid, which is where a driveway, a call-out or the neighbouring
+bed's label often already is. Press it and move it.
+
+**The offset is on the ground, not on the screen.** Pixels would not survive a
+zoom — the label would slide across the yard every time the map changed scale —
+and an absolute lat/lng would leave the label behind when the shape is dragged
+somewhere else. An offset from the anchor is the only one of the three that
+means *beside THIS bed* and keeps meaning it.
+
+**The hit box is remembered from the draw**, not recomputed: the text metrics
+are the canvas's own, and a second guess at them drifts the moment the font
+changes. It is recorded only for the selected shape, which is the corner rule
+again — a label nobody is working on cannot be nudged by a press meant for the
+map. **Both lines move together**, because they are one annotation about one
+bed. **Centre** on the shape card is the way back, shown only once a label has
+been moved: dropping one roughly where it started still writes an offset, and
+eyeballing the centroid of a bed is not a thumb's job.
+
+**Three things cost real time in the test, all of them the ruler rather than
+the code.**
+
+- *Scanning for the label by colour found the bed's outline instead*, which is
+  the same hue. The press then landed on the shape's body and dragged the whole
+  bed — a gesture that looks exactly like a label that will not move. The bed
+  is drawn at known canvas fractions, so its label is at their centroid and
+  nothing has to go looking.
+- *A reload resets the tool.* `tool` is component state and opens on Area, so
+  every tap after a reload draws a corner instead of picking something up. Five
+  probe taps reported "nothing selected" and had quietly drawn a third bed
+  while doing it. The persistence check goes last now, and says why.
+- *The name sits 18px under the number.* Counting the coloured line at the drop
+  point found nothing twice and said the label had not moved.
+
 #### A shape you are not working on is drawn simply
 
 Every shape used to put a dot on every corner. On a plan of six beds that is a

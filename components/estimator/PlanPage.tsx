@@ -73,6 +73,7 @@ import {
 } from "@/lib/estimator/mapLayers";
 import {
   assembliesForShape,
+  nextLabelMode,
   bucketsForMeasurement,
   measurementOf,
   sharedNodeIds,
@@ -138,7 +139,9 @@ import {
   updateSettings,
   setBasemap,
   setOverlayHidden,
+  setLabelMode,
   setPlantsHidden,
+  moveShapeLabel,
   setPlanAnchor,
   setPlanView,
   setShapeSmooth,
@@ -245,7 +248,6 @@ export default function PlanPage({
   const { undoDepth, redoDepth } = useEstimate();
   const [tool, setTool] = useState<PlanTool>("area");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [showMeasurements, setShowMeasurements] = useState(true);
   /**
    * Square corners up while drawing. On by default because beds and patios
    * are mostly rectangles; off because some yards are not, and a snap you
@@ -1616,12 +1618,33 @@ export default function PlanPage({
         >
           ⊾
         </button>
+        {/*
+          WHAT IS WRITTEN ON A SHAPE, on one button rather than two.
+
+          Three states because they are one question asked at increasing
+          strength — everything, the name alone, nothing — and the middle one
+          is exactly what the old two-way toggle's "off" already was, so
+          nothing anybody was used to has moved. Nothing is the state a plan
+          is shown to a client in; the name alone is the state it is read in;
+          everything is the state it is checked in.
+
+          The glyph says which state it is IN, and the title says what the tap
+          will do. A control that only says what it will do next leaves you
+          reading the map to find out where you are.
+        */}
         <button
-          onClick={() => setShowMeasurements((v) => !v)}
+          onClick={() => setLabelMode(nextLabelMode(plan.labelMode))}
+          aria-label="What is written on a shape"
           className="shrink-0 rounded-xl bg-surface2 px-3 py-2 text-xs font-bold text-muted"
-          title={showMeasurements ? "Hide the numbers" : "Show the numbers"}
+          title={
+            plan.labelMode === "all"
+              ? "Numbers and names — tap to hide the numbers"
+              : plan.labelMode === "name"
+                ? "Names only — tap to hide those too"
+                : "Nothing written — tap to show numbers and names"
+          }
         >
-          {showMeasurements ? "123" : "···"}
+          {plan.labelMode === "all" ? "123" : plan.labelMode === "name" ? "Aa" : "···"}
         </button>
         {/*
           THE PLANTING, ON OR OFF.
@@ -2122,7 +2145,8 @@ export default function PlanPage({
           onInsertVertex={insertVertex}
           onToggleVertexSmooth={toggleVertexSmooth}
           shapeColor={shapeColor}
-          showMeasurements={showMeasurements}
+          labelMode={plan.labelMode}
+          onMoveLabel={moveShapeLabel}
           aligning={aligning}
           onAlignCommit={(georef: Georef) =>
             aligning && patchOverlay(aligning.id, { georef })
@@ -2528,6 +2552,7 @@ export default function PlanPage({
                   shape.vertices.filter((v) => shared.has(v)).length
                 }
                 onDetach={() => detachShape(shape.id)}
+                onCentreLabel={() => moveShapeLabel(shape.id, null)}
                 settings={settings}
                 selected={shape.id === selectedId}
                 onSelect={() => {
@@ -3530,6 +3555,7 @@ function ShapeCard({
   survey,
   sharedCount,
   onDetach,
+  onCentreLabel,
   settings,
   selected,
   onSelect,
@@ -3544,6 +3570,7 @@ function ShapeCard({
   /** How many of this shape's corners another shape also holds. */
   sharedCount: number;
   onDetach: () => void;
+  onCentreLabel: () => void;
   settings: EstimatorSettings;
   selected: boolean;
   onSelect: () => void;
@@ -3741,6 +3768,32 @@ function ShapeCard({
             ))}
           </ul>
         </div>
+      )}
+
+      {/*
+        The way back from a dragged label.
+
+        Only where one HAS been dragged: a button that would do nothing says
+        there is something to undo when there is not, which is the same rule
+        the plant card's "apply this name" button follows. It is the only way
+        back, too — dropping a label roughly where it started still writes an
+        offset, and eyeballing the centroid of a bed is not something a thumb
+        can do.
+      */}
+      {shape.labelOffset && (
+        <p className="mt-1.5 flex items-center gap-1.5 text-[0.7rem] text-muted">
+          <span>Label moved</span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onCentreLabel();
+            }}
+            className="rounded-md bg-surface2 px-2 py-0.5 text-[0.65rem] font-bold text-ink"
+            title="Put the label back in the middle of the shape"
+          >
+            Centre
+          </button>
+        </p>
       )}
 
       {sharedCount > 0 && (

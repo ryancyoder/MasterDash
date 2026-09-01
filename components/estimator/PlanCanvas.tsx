@@ -50,6 +50,7 @@ import {
   type PlacedPlant,
   type PendingPoint,
   type PlanNodes,
+  type LabelMode,
   type PlanShape,
 } from "@/lib/estimator/plan";
 import {
@@ -188,13 +189,19 @@ function withAlpha(hex: string, alpha: number): string {
 }
 
 /** A label with a dark halo, so it reads over both grass and pavement. */
+/**
+ * Returns the box it drew in, because a label is now something you can pick
+ * up and the hit target has to be exactly what is on screen — a box computed
+ * separately from the drawing is a box that will disagree with it the first
+ * time either changes.
+ */
 function drawLabel(
   ctx: CanvasRenderingContext2D,
   text: string,
   x: number,
   y: number,
   color: string,
-) {
+): { x: number; y: number; w: number; h: number } {
   ctx.font = "bold 14px ui-sans-serif, system-ui, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -203,6 +210,7 @@ function drawLabel(
   ctx.strokeText(text, x, y);
   ctx.fillStyle = color;
   ctx.fillText(text, x, y);
+  return { x, y, w: ctx.measureText(text).width, h: 16 };
 }
 
 export interface SurveyDot {
@@ -484,7 +492,8 @@ export default function PlanCanvas({
   onInsertVertex,
   onToggleVertexSmooth,
   shapeColor,
-  showMeasurements,
+  labelMode,
+  onMoveLabel,
 }: {
   /** Where to open when there is nothing drawn yet. */
   anchor: MapAnchor | null;
@@ -615,7 +624,10 @@ export default function PlanCanvas({
    * places; see `assemblyColor.ts`.
    */
   shapeColor: (shape: PlanShape) => string;
-  showMeasurements: boolean;
+  /** How much is written on a shape: everything, the name alone, or nothing. */
+  labelMode: LabelMode;
+  /** Committed on release, like every other drag here. Null puts it back. */
+  onMoveLabel: (shapeId: string, offset: { dx: number; dy: number } | null) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -646,6 +658,7 @@ export default function PlanCanvas({
     | { kind: "pin"; pin: "survey" | "photo"; id: string }
     | { kind: "plant"; id: string }
     | { kind: "callout"; id: string }
+    | { kind: "label"; shapeId: string; base: { dx: number; dy: number }; startWorld: WorldPoint }
     | { kind: "pan"; startX: number; startY: number; centre: WorldPoint }
     | null
   >(null);
@@ -656,6 +669,20 @@ export default function PlanCanvas({
   /** A call-out being moved. Likewise. */
   const [dragCallout, setDragCallout] = useState<{ id: string; at: LatLng } | null>(
     null,
+  );
+  /** A label being moved, as a ground offset from its shape's anchor. */
+  const [dragLabel, setDragLabel] = useState<
+    { shapeId: string; dx: number; dy: number } | null
+  >(null);
+  /**
+   * Where each selected shape's label was last DRAWN, so a press can find it.
+   *
+   * A ref rather than state: it is written during the draw and read in a
+   * pointer handler, and nothing renders from it — putting it in state would
+   * be a re-render per frame for a box only the finger ever reads.
+   */
+  const labelHitRef = useRef<Map<string, { x: number; y: number; w: number; h: number }>>(
+    new Map(),
   );
   /**
    * Corners being dragged, by id, held locally and committed on release.
@@ -1281,28 +1308,64 @@ export default function PlanCanvas({
         anchorPt = pts[Math.floor(pts.length / 2)];
       }
 
+      /*
+        WHERE THE LABEL SITS, which is the anchor plus wherever it was dragged.
+
+        The offset is on the ground (see `labelOffset`), so it is added in
+        world space and converted with everything else — a label nudged clear
+        of a driveway stays clear of it at every zoom, which is the whole
+        point of not storing pixels.
+      */
+      const held = dragLabel && dragLabel.shapeId === shape.id ? dragLabel : null;
+      const off = held ?? shape.labelOffset ?? null;
+      const labelPt = off
+        ? toCanvas(
+            { x: fromCanvas(anchorPt, t).x + off.dx, y: fromCanvas(anchorPt, t).y + off.dy },
+            t,
+          )
+        : anchorPt;
+
       const measurement = measurementOf(shape, nodes);
       const label = labelFor(shape);
-      if (showMeasurements && measurement > 0) {
-        drawLabel(
+      const showNumber = labelMode === "all" && measurement > 0;
+      const showName = labelMode !== "none" && Boolean(label);
+      let box: { x: number; y: number; w: number; h: number } | null = null;
+      if (showNumber) {
+        box = drawLabel(
           ctx,
           `${Math.round(measurement).toLocaleString()} ${
             shape.type === "area" ? "sq ft" : "ln ft"
           }`,
-          anchorPt.x,
-          anchorPt.y,
+          labelPt.x,
+          labelPt.y,
           "#ffffff",
         );
       }
-      if (label) {
-        drawLabel(
+      if (showName) {
+        const nameBox = drawLabel(
           ctx,
-          label,
-          anchorPt.x,
-          anchorPt.y + (showMeasurements && measurement > 0 ? 18 : 0),
+          label!,
+          labelPt.x,
+          labelPt.y + (showNumber ? 18 : 0),
           color,
         );
+        // Both lines are ONE label and move together: they are one annotation
+        // about one bed, and dragging half of it away from the other half is
+        // not something anybody means.
+        box = box
+          ? { x: box.x, y: box.y + 9, w: Math.max(box.w, nameBox.w), h: box.h + 18 }
+          : nameBox;
       }
+      /*
+        The box is remembered so a press can find it, and remembered from the
+        DRAW rather than recomputed — the text metrics are the canvas's own,
+        and a second guess at them would drift the moment the font changed.
+        Only the selected shape's label can be picked up, the same rule its
+        corners follow, so a label nobody is working on cannot be nudged by a
+        press meant for the map.
+      */
+      if (box && selected) labelHitRef.current.set(shape.id, box);
+      else labelHitRef.current.delete(shape.id);
 
       const isShared = (i: number) => shared.has(shape.vertices[i] ?? "");
       const linkAt = (i: number) => nodes[shape.vertices[i] ?? ""]?.survey ?? null;
@@ -1901,7 +1964,8 @@ export default function PlanCanvas({
     scalePoints,
     selectedShapeId,
     shapeColor,
-    showMeasurements,
+    labelMode,
+    dragLabel,
     labelFor,
     tool,
     transformFor,
@@ -2330,6 +2394,34 @@ export default function PlanCanvas({
       const selected = shapes.find((s) => s.id === selectedShapeId);
 
       /*
+        0. The selected shape's LABEL, which is drawn over its own bed and over
+           the corners at the middle of a small one — so it has to be tested
+           before them or a label sitting on a corner could never be picked up.
+
+        Read from where it was last drawn (`labelHitRef`), which is populated
+        only for the selected shape, so this cannot fire on a label nobody is
+        working on. The box is generous by 4px in each direction: 16px of text
+        is a small target for a thumb, and the alternative to missing it is
+        panning the map instead, which looks like nothing happened.
+      */
+      if (selected) {
+        const box = labelHitRef.current.get(selected.id);
+        if (
+          box &&
+          Math.abs(cp.x - box.x) <= box.w / 2 + 4 &&
+          Math.abs(cp.y - box.y) <= box.h / 2 + 4
+        ) {
+          dragRef.current = {
+            kind: "label",
+            shapeId: selected.id,
+            base: selected.labelOffset ?? { dx: 0, dy: 0 },
+            startWorld: fromCanvas(cp, t),
+          };
+          return;
+        }
+      }
+
+      /*
         1. Grab a corner OF THE SELECTED SHAPE. What is grabbed is the CORNER,
            so a shared one carries every shape holding it — selecting either
            of two beds that share an edge is enough to move the edge.
@@ -2528,6 +2620,17 @@ export default function PlanCanvas({
       setDragCallout({ id: drag.id, at: toLatLng(world) });
       return;
     }
+    if (drag.kind === "label") {
+      // The offset it started with, plus how far the finger has come — rather
+      // than "put the label under the finger", which would jump it by however
+      // far from its middle the press landed.
+      setDragLabel({
+        shapeId: drag.shapeId,
+        dx: drag.base.dx + (world.x - drag.startWorld.x),
+        dy: drag.base.dy + (world.y - drag.startWorld.y),
+      });
+      return;
+    }
     if (drag.kind === "plant") {
       // Nor here, and it is worth saying why rather than only that it matches
       // the pin above: a corner snaps because two shapes sharing an edge must
@@ -2613,6 +2716,17 @@ export default function PlanCanvas({
       return;
     }
 
+    // A moved label, once, on release. Same rule as the plant below: a tap
+    // that merely landed on it writes nothing.
+    if (drag && drag.kind === "label") {
+      const moved = dragLabel;
+      setDragLabel(null);
+      if (moved && press?.moved) {
+        onMoveLabel(drag.shapeId, { dx: moved.dx, dy: moved.dy });
+      }
+      return;
+    }
+
     // A moved plant, once, on release — and only if it actually moved, so a
     // tap that merely picked one does not write the position it already had.
     if (drag && drag.kind === "plant") {
@@ -2660,6 +2774,7 @@ export default function PlanCanvas({
     pressRef.current = null;
     setDragNodes(null);
     setDragPin(null);
+    setDragLabel(null);
   }
 
   return (

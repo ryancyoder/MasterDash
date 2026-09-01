@@ -116,6 +116,56 @@ export interface PlanShape {
    * photographs rather than as a broken one.
    */
   photos?: ShapePhotoLink[];
+  /**
+   * Where the shape's label sits, as an offset from where it would otherwise.
+   *
+   * IN WORLD UNITS, WHICH IS TO SAY ON THE GROUND. Screen pixels would not
+   * survive a zoom — the label would slide across the yard every time the map
+   * changed scale — and an absolute lat/lng would leave the label behind when
+   * the shape is dragged somewhere else. An offset from the anchor is the only
+   * one of the three that means "beside THIS bed" and keeps meaning it.
+   *
+   * Absent is the default placement: the centroid of a bed, the middle of a
+   * run. Most labels never move, so most shapes never carry this.
+   */
+  labelOffset?: { dx: number; dy: number };
+}
+
+/**
+ * What the map writes on a shape.
+ *
+ * Three states on one button rather than two switches, because they are one
+ * question asked at increasing strength — how much is written on the plan —
+ * and the middle one is the state the old two-way toggle already had.
+ *
+ * `all`  — the measurement and the assembly's name
+ * `name` — the name alone; the numbers are what clutter a plan being read
+ *          rather than checked
+ * `none` — the shapes bare, which is what a plan is for showing a client
+ */
+export type LabelMode = "all" | "name" | "none";
+
+export const LABEL_MODES: LabelMode[] = ["all", "name", "none"];
+
+export function nextLabelMode(mode: LabelMode): LabelMode {
+  return LABEL_MODES[(LABEL_MODES.indexOf(mode) + 1) % LABEL_MODES.length];
+}
+
+/**
+ * A stored offset, rebuilt rather than cast.
+ *
+ * A NaN here is a label drawn at `NaN,NaN` — which canvas silently declines to
+ * draw at all, so the label would simply be gone with nothing to say why. Both
+ * numbers or neither.
+ */
+export function labelOffsetFrom(value: unknown): { dx: number; dy: number } | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const dx = typeof v.dx === "number" ? v.dx : Number.NaN;
+  const dy = typeof v.dy === "number" ? v.dy : Number.NaN;
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
+  if (dx === 0 && dy === 0) return null;
+  return { dx, dy };
 }
 
 /**
@@ -282,6 +332,14 @@ export interface PlanState {
   /** Overlay ids switched off for this estimate. Absence means shown. */
   hiddenOverlayIds: string[];
   /**
+   * How much is written on a shape. See `LabelMode`.
+   *
+   * In the plan document beside `plantsHidden` rather than in component state,
+   * where the two-way version of it lived: a three-way cycle you have to set
+   * again on every reload is worse than the two-way one it replaced.
+   */
+  labelMode: LabelMode;
+  /**
    * The planting, switched off for this estimate.
    *
    * A VIEW PREFERENCE, NOT A DELETION, and the counts are what say so: the
@@ -312,6 +370,7 @@ export function emptyPlan(): PlanState {
     callouts: [],
     hiddenOverlayIds: [],
     plantsHidden: false,
+    labelMode: "all",
   };
 }
 
@@ -616,6 +675,9 @@ export function topologyFrom(value: unknown): {
       // named is silently dropped on the next load. Photographs attached to a
       // bed would have vanished on reopening the estimate, with no error.
       ...(photos.length ? { photos } : {}),
+      ...(labelOffsetFrom(r.labelOffset)
+        ? { labelOffset: labelOffsetFrom(r.labelOffset)! }
+        : {}),
     });
   }
 

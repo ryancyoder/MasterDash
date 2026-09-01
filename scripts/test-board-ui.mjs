@@ -2520,6 +2520,185 @@ try {
     (await nearColor(own)) > ownBefore * 0.6 && (await nearColor(MULCH)) < 40,
     `${await nearColor(own)} own, ${await nearColor(MULCH)} brown`);
 
+  /** Pixels near a hex within 30px of a page point — a local ruler. */
+  const inkNear = (pt, hex, half = 30) =>
+    page.evaluate(([x, y, h, r]) => {
+      const r0 = parseInt(h.slice(1, 3), 16);
+      const g0 = parseInt(h.slice(3, 5), 16);
+      const b0 = parseInt(h.slice(5, 7), 16);
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const rect = c.getBoundingClientRect();
+      const k = c.width / rect.width;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const px = (i / 4) % c.width;
+        const py = Math.floor(i / 4 / c.width);
+        if (Math.abs(px - (x - rect.left) * k) > r * k) continue;
+        if (Math.abs(py - (y - rect.top) * k) > 14 * k) continue;
+        // Tight, because the bed's own FILL is the same hue at a fraction of
+        // the strength; the text is drawn at full.
+        if (
+          Math.abs(d[i] - r0) <= 16 &&
+          Math.abs(d[i + 1] - g0) <= 16 &&
+          Math.abs(d[i + 2] - b0) <= 16
+        ) n++;
+      }
+      return n;
+    }, [pt.x, pt.y, hex, half]);
+
+  // 7c-xii. WHAT IS WRITTEN ON A SHAPE, AND WHERE.
+  //
+  // One button, three states. The middle one is exactly what the old two-way
+  // toggle's "off" already was, so the only new state is "nothing written" —
+  // which is the state a plan is shown to a client in.
+
+  /** White text ink, which is what the measurement line is drawn in. */
+  const whiteInk = () =>
+    page.evaluate(() => {
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] > 230 && d[i + 1] > 230 && d[i + 2] > 230) n++;
+      }
+      return n;
+    });
+
+  const labelBtn = page.locator('button[aria-label="What is written on a shape"]');
+  ok("the toolbar has one control for what is written",
+    (await labelBtn.count()) === 1);
+
+  const labelMode = () =>
+    page.evaluate(() =>
+      JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.labelMode ?? "(none)");
+
+  // Put the shape down: a selected shape draws white handles, and those would
+  // swamp a count of white text.
+  await page.mouse.click(cAt(0.06, 0.06).x, cAt(0.06, 0.06).y);
+  await page.waitForTimeout(400);
+
+  ok("and it starts writing everything", (await labelMode()) === "all",
+    await labelMode());
+  const inkAll = await whiteInk();
+
+  if ((await labelBtn.count()) === 1) await labelBtn.click();
+  await page.waitForTimeout(400);
+  const inkName = await whiteInk();
+  ok("one tap drops the numbers", (await labelMode()) === "name", await labelMode());
+  /*
+    READ THE CANVAS, AND READ THE DROP RATHER THAN THE RATIO.
+
+    A stored mode is exactly what would still be right against a build that
+    saved the choice and drew the numbers anyway. And white is not only the
+    measurement — handles, survey glyphs and plant line work all contribute —
+    so the floor is nowhere near zero and a fraction of the total says less
+    than the difference does. Measured: 857 with the numbers, 384 without.
+  */
+  ok("AND THE NUMBERS COME OFF THE MAP",
+    inkAll - inkName > 200,
+    `${inkAll} white with numbers, ${inkName} without`);
+
+  /*
+    The name is drawn in the shape's OWN colour, which is the palette one again
+    — the designation was cleared at the end of the section above, and reading
+    for brown here found 3 pixels and would have "passed" on nothing.
+  */
+  const bedHue = (await mulchBed())?.color ?? "#f59e0b";
+  const nameInkBefore = await nearColor(bedHue);
+  if ((await labelBtn.count()) === 1) await labelBtn.click();
+  await page.waitForTimeout(400);
+  ok("a second tap drops the names too", (await labelMode()) === "none",
+    await labelMode());
+  ok("AND THE THIRD STATE WRITES NOTHING AT ALL",
+    nameInkBefore > 60 && (await nearColor(bedHue)) < nameInkBefore - 40,
+    `${nameInkBefore} then ${await nearColor(bedHue)} in the shape colour`);
+
+  if ((await labelBtn.count()) === 1) await labelBtn.click();
+  await page.waitForTimeout(400);
+  ok("and a third comes back round to everything",
+    (await labelMode()) === "all" && (await whiteInk()) > inkName,
+    await labelMode());
+
+  /*
+    AND THE LABEL CAN BE MOVED.
+
+    Stored as an offset ON THE GROUND rather than in pixels, so a label nudged
+    clear of a driveway stays clear of it at every zoom. Only the selected
+    shape's label can be picked up, the same rule its corners follow.
+
+    The bed was drawn at known canvas fractions a few checks above, so its
+    label is at their centroid and nothing has to go looking for it. An
+    earlier version DID go looking — scanning for the shape's colour inside a
+    guessed window — and found the bed's own outline instead, which is the
+    same colour, and pressed on that.
+  */
+  const labelHome = cAt(0.705, 0.66);
+  const labelOffset = async () => (await mulchBed())?.labelOffset ?? null;
+  ok("nothing has moved a label yet", (await labelOffset()) === null);
+
+  await page.mouse.click(labelHome.x, labelHome.y);
+  await page.waitForTimeout(400);
+  ok("tapping the bed picks it up",
+    (await page.locator('button[aria-label="Delete shape"]').count()) >= 1);
+
+  // Dropped clear of the bed itself, so what is counted at the far end is the
+  // label and not the outline it was sitting inside.
+  const dropAt = { x: labelHome.x + 40, y: labelHome.y + 95 };
+  /*
+    THE NAME SITS 18px UNDER THE NUMBER, and the two are one label that moves
+    together — so the coloured line to count for is below where the finger let
+    go, not at it. Read at the drop point itself this found nothing twice and
+    said the label had not moved.
+  */
+  const nameAt = { x: dropAt.x, y: dropAt.y + 18 };
+  const inkAtDropBefore = await inkNear(nameAt, bedHue);
+  await page.mouse.move(labelHome.x, labelHome.y);
+  await page.mouse.down();
+  await page.mouse.move(dropAt.x, dropAt.y, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+
+  const off = await labelOffset();
+  ok("DRAGGING THE LABEL MOVES IT, and the offset is stored on the ground",
+    off !== null && Number.isFinite(off.dx) && Number.isFinite(off.dy) &&
+      off.dx > 0 && off.dy > 0,
+    JSON.stringify(off));
+  // READ THE CANVAS. A stored offset is what a build that recorded the drag
+  // and went on drawing the label in the middle would also have.
+  ok("AND IT IS DRAWN WHERE IT WAS DROPPED",
+    (await inkNear(nameAt, bedHue)) > inkAtDropBefore + 60,
+    `${inkAtDropBefore} there before, ${await inkNear(nameAt, bedHue)} after`);
+
+  // The way back. Dropping a label roughly where it started still writes an
+  // offset, and eyeballing the centroid of a bed is not a thumb's job.
+  const centreBtn = page.locator('button[title="Put the label back in the middle of the shape"]');
+  ok("the card offers a way to put it back", (await centreBtn.count()) >= 1);
+  if ((await centreBtn.count()) >= 1) await centreBtn.first().click();
+  await page.waitForTimeout(400);
+  ok("AND CENTRE PUTS IT BACK — no offset, not a zero one",
+    (await labelOffset()) === null, JSON.stringify(await labelOffset()));
+
+  /*
+    THE MODE LIVES IN THE PLAN DOCUMENT, so it survives the page: a three-way
+    cycle you set again on every reload is worse than the two-way one it
+    replaced. Last, because a reload resets the TOOL — that is component state
+    and opens on Area — so every tap afterwards draws a corner instead of
+    picking something up. Five probe taps reported "nothing selected" here and
+    had quietly drawn a third bed while doing it.
+  */
+  if ((await labelBtn.count()) === 1) await labelBtn.click();
+  await page.waitForTimeout(300);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("main button.aspect-square");
+  const planAfterLabels = await page.$$eval("main button.aspect-square", (els) =>
+    els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
+  await page.locator("main button.aspect-square").nth(planAfterLabels).click();
+  await page.waitForSelector('button[aria-label="Plant"]', { timeout: 15000 });
+  await page.waitForTimeout(1200);
+  ok("IT SURVIVES THE PAGE BEING RELOADED", (await labelMode()) === "name",
+    await labelMode());
+
   await page.click('button:text-is("Visit")');
   await page.waitForTimeout(200);
   ok("and the switch goes back to the visit's own",
