@@ -347,6 +347,55 @@ export function ReviewVideo({
   );
 }
 
+// --- the picture, big ------------------------------------------------------
+
+/** What the strip has picked, resolved to something showable. */
+export interface StageFrame {
+  url: string;
+  title: string;
+  note?: string | null;
+}
+
+/**
+ * The picked frame over the whole stage.
+ *
+ * A filmstrip thumbnail and a 172px preview are enough to *find* a photograph
+ * and nowhere near enough to read one. The thing somebody took the picture for
+ * — which shrub, how deep the bed runs, what the edging is made of — is on a
+ * screen a quarter the size of the iPad it was shot on.
+ *
+ * An OVERLAY rather than a fourth pane in the swap. The clip and the canvas
+ * trade places because both are live and both are wanted at once; a picture is
+ * not — you are either reading it or you are working on the map — so it simply
+ * covers the stage and the map is exactly where it was when it lifts. That
+ * also keeps the stage's ownership honest: this never moves the canvas or the
+ * clip, so no button ends up describing a swap that did not happen.
+ *
+ * `object-contain`, never `cover`: the preview in the column crops because it
+ * is an identifier, and this is the picture itself. Cropping the thing
+ * somebody opened full-size to look at is how you hide the corner of the yard
+ * they were trying to see.
+ */
+export function ReviewPhotoStage({ frame }: { frame: StageFrame }) {
+  return (
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={frame.url} alt={frame.title} className="h-full w-full object-contain" />
+      {/*
+        The caption is what makes it a viewer rather than a picture: at this
+        size the frame has left the strip that said which visit it came from.
+        Over the picture rather than beside it, so nothing is taken off the
+        photograph's own height, and legible over a bright sky by its ground
+        rather than by weight.
+      */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-4 pb-3 pt-8">
+        <p className="text-sm font-bold text-white">{frame.title}</p>
+        {frame.note && <p className="text-xs text-white/70">{frame.note}</p>}
+      </div>
+    </div>
+  );
+}
+
 // --- the transcript and photo column --------------------------------------
 
 export function ReviewColumn({

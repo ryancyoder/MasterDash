@@ -11,6 +11,7 @@ import {
   ReviewCard,
   ReviewColumn,
   ReviewFilmstrip,
+  ReviewPhotoStage,
   ReviewTransport,
   ReviewVideo,
 } from "@/components/estimator/ReviewPanel";
@@ -400,6 +401,15 @@ export default function PlanPage({
     : null;
   /** Which of the canvas and the clip is big. The other becomes a mini pane. */
   const [videoOnStage, setVideoOnStage] = useState(false);
+  /**
+   * The stage is showing the picked photograph rather than the map.
+   *
+   * Separate from `videoOnStage` and deliberately not folded into one
+   * three-way: that one SWAPS the canvas and the clip, and this one covers
+   * them both without moving either. One variable for two different operations
+   * would have the swap's own button describing a state it does not own.
+   */
+  const [photoStage, setPhotoStage] = useState(false);
   /** A correction that did not save. Shown, never swallowed. */
   const [pinError, setPinError] = useState<string | null>(null);
 
@@ -612,6 +622,14 @@ export default function PlanPage({
       const far =
         Math.abs(e.clientX - from.x) > DRAG_START_PX ||
         Math.abs(e.clientY - from.y) > DRAG_START_PX;
+      // A drag needs the map, so the photo viewer stands down the moment one
+      // is recognised — dropping a pin onto a picture of the yard rather than
+      // onto the yard would place it somewhere nobody could see, and the drop
+      // would still succeed, which is the worst version of it. On `far` and
+      // not on pointerdown: a plain TAP on a frame is how you leaf through the
+      // strip at full size, and closing the viewer on that would fight the
+      // whole point of it.
+      if (far) setPhotoStage(false);
       setDragPhoto((d) => (d ? { ...d, x: e.clientX, y: e.clientY, moved: d.moved || far } : d));
     };
     const up = (e: PointerEvent) => {
@@ -1336,6 +1354,49 @@ export default function PlanPage({
             audioRef={audioRef}
             onStage={videoOnStage}
           />
+        )}
+
+        {/*
+          THE STAGE AS A PHOTO VIEWER.
+
+          `photoStage` is a MODE, not a picture: it says the stage is showing
+          whatever the strip has picked. So tapping along the strip while it is
+          on leafs through the yard at full size, which is what looking at a
+          set of site photographs actually is — and clearing the pick shows the
+          map again, because there is then nothing to look at.
+
+          Both conditions are on the render rather than baked into the flag, so
+          the mode survives a gap: pick nothing, and the map is back; pick the
+          next frame, and it is big again. A flag that switched itself off
+          whenever the pick cleared would make the strip feel like it kept
+          closing the viewer.
+        */}
+        {photoStage && pickedFrame && <ReviewPhotoStage frame={pickedFrame} />}
+
+        {/*
+          The toggle, and it appears only once there is something to show — a
+          button that opens a black rectangle is worse than no button. Top
+          left: the zoom controls own bottom left, the running total owns
+          bottom right, and the phone's Panel button owns top right. Above the
+          viewer's own z so the way out is the same button in the same place
+          rather than a second control that only exists while it is open.
+        */}
+        {pickedFrame && (
+          <button
+            onClick={() => setPhotoStage((v) => !v)}
+            aria-pressed={photoStage}
+            title={
+              photoStage
+                ? "Back to the map"
+                : "Show the picked photograph over the map"
+            }
+            className={`absolute left-3 top-3 z-40 flex h-11 items-center gap-2 rounded-2xl px-4 text-sm font-bold backdrop-blur ${
+              photoStage ? "bg-accent text-black" : "bg-bg/90 text-ink"
+            }`}
+          >
+            <span aria-hidden="true">{photoStage ? "\u{1F5FA}\u{FE0F}" : "\u{1F5BC}\u{FE0F}"}</span>
+            {photoStage ? "Map" : "Photo"}
+          </button>
         )}
 
         </div>

@@ -1029,6 +1029,131 @@ try {
   ok("a tap on a frame picks it rather than placing it",
     placed.length === writesSoFar, `${placed.length} writes`);
 
+  // 7c-vi. THE STAGE AS A PHOTO VIEWER.
+  //
+  // A 172px thumbnail and a 44px-tall preview find a photograph; neither lets
+  // you read one. The whole reason for taking the picture — which shrub, how
+  // far the bed runs, what the edging is — is on a screen a quarter the size
+  // of the iPad it was shot on. The map's own stage is the biggest surface on
+  // the screen, and while you are reading a photograph you are not drawing.
+  const PHOTO_BTN = 'button[title="Show the picked photograph over the map"]';
+  const MAP_BTN = 'button[title="Back to the map"]';
+  const stageBox = await page.locator("canvas").boundingBox();
+
+  // READ WHAT IS ON THE STAGE, not what is in the DOM. An overlay that
+  // rendered behind the canvas would list in the tree and show nothing, which
+  // is the exact shape of the layer bug this screen already had. The caption
+  // comes off the overlay itself, and `alt` is the title as rendered — which
+  // matters here because both fixtures share one image URL, so the src cannot
+  // tell the two frames apart and only the caption can.
+  const onStage = () =>
+    page.evaluate(([x, y]) => {
+      const el = document.elementFromPoint(x, y);
+      if (!el) return null;
+      return {
+        tag: el.tagName,
+        src: el.getAttribute("src") ?? null,
+        alt: el.getAttribute("alt") ?? null,
+        caption: el.tagName === "IMG" ? (el.parentElement?.textContent ?? "") : "",
+        fit: getComputedStyle(el).objectFit,
+        w: el.getBoundingClientRect().width,
+        h: el.getBoundingClientRect().height,
+      };
+    }, [stageBox.x + stageBox.width / 2, stageBox.y + stageBox.height / 2]);
+
+  // The tap above left the VIDEO frame picked. Take the captioned one, so the
+  // leafing check below has two frames it can actually tell apart.
+  await page.locator('div.rounded-xl.border button').first().click();
+  await page.waitForTimeout(250);
+
+  ok("the map is what is on the stage to begin with",
+    (await onStage())?.tag === "CANVAS", JSON.stringify(await onStage()));
+  ok("and the way into the viewer is offered, now something is picked",
+    (await page.locator(PHOTO_BTN).count()) === 1);
+
+  await page.click(PHOTO_BTN);
+  await page.waitForTimeout(300);
+
+  const showing = await onStage();
+  ok("PRESSING IT PUTS THE PICKED PHOTOGRAPH OVER THE MAP",
+    showing?.tag === "IMG" && /cover\.test/.test(showing.src ?? ""),
+    JSON.stringify(showing));
+
+  // Contain, not cover: this is the picture itself rather than an identifier,
+  // and cropping the corner of the yard somebody opened it to see is the one
+  // thing a viewer must not do. The element fills the stage; the letterboxing
+  // is the browser's.
+  ok("at the size of the stage, and whole rather than cropped",
+    showing !== null && Math.abs(showing.w - stageBox.width) < 2 &&
+      Math.abs(showing.h - stageBox.height) < 2 && showing.fit === "contain",
+    `${showing?.w}x${showing?.h} vs ${stageBox.width}x${stageBox.height}, ${showing?.fit}`);
+  ok("captioned, since at this size the frame has left the strip that named it",
+    /Front bed/.test(showing?.caption ?? ""), JSON.stringify(showing?.caption));
+
+  // The mode is "show what is picked", not "show this picture" — so tapping
+  // along the strip leafs through the yard at full size, which is what looking
+  // at a set of site photographs actually is.
+  await page.locator('div.rounded-xl.border button').nth(1).click();
+  await page.waitForTimeout(300);
+  const leafed = await onStage();
+  ok("AND IT FOLLOWS THE STRIP — picking another frame leafs to it",
+    leafed?.tag === "IMG" && !/Front bed/.test(leafed.caption ?? "") &&
+      /Appointment/.test(leafed.caption ?? ""),
+    JSON.stringify(leafed?.caption));
+  ok("the button now says the way out rather than the way in",
+    (await page.locator(MAP_BTN).count()) === 1 &&
+      (await page.locator(PHOTO_BTN).count()) === 0);
+
+  // Both halves of "show whatever is picked" are on the render, not baked into
+  // the flag: clear the pick and the map is back, because there is nothing to
+  // look at — pick again and it is big again, because the mode never went
+  // anywhere. A flag that switched itself off on an empty pick would make the
+  // strip feel like it kept closing the viewer.
+  await page.locator('div.rounded-xl.border button').nth(1).click();
+  await page.waitForTimeout(300);
+  ok("clearing the pick gives the map back, since there is nothing to show",
+    (await onStage())?.tag === "CANVAS" &&
+      (await page.locator(MAP_BTN).count()) === 0 &&
+      (await page.locator(PHOTO_BTN).count()) === 0);
+  await page.locator('div.rounded-xl.border button').nth(1).click();
+  await page.waitForTimeout(300);
+  ok("AND PICKING AGAIN IS BIG AGAIN — the mode outlives an empty pick",
+    (await onStage())?.tag === "IMG");
+
+  // Toggling it off puts the map back exactly where it was — the viewer
+  // covers, it does not swap, so nothing has moved underneath it.
+  await page.click(MAP_BTN);
+  await page.waitForTimeout(300);
+  ok("and pressing it again gives the map back",
+    (await onStage())?.tag === "CANVAS" &&
+      (await page.locator(PHOTO_BTN).count()) === 1);
+
+  // A drag needs the map. Dropping a pin onto a picture OF the yard rather
+  // than onto the yard would place it where nobody could see, and the write
+  // would still succeed — so the viewer stands down as soon as a drag is
+  // recognised, on the movement and not on the press, since a plain tap is how
+  // you leaf through. Released off the canvas, which is a cancelled drag, so
+  // this check costs no write.
+  await page.click(PHOTO_BTN);
+  await page.waitForTimeout(300);
+  ok("the viewer is up again for the drag check",
+    (await onStage())?.tag === "IMG");
+  const writesBefore = placed.length;
+  const dragFrame = await page.locator('div.rounded-xl.border button').first().boundingBox();
+  await page.mouse.move(dragFrame.x + dragFrame.width / 2, dragFrame.y + dragFrame.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(120);
+  ok("a press alone does not close it — that is a tap, and a tap leafs",
+    (await onStage())?.tag === "IMG");
+  await page.mouse.move(dragFrame.x + dragFrame.width / 2 + 80, dragFrame.y + 10, { steps: 8 });
+  await page.waitForTimeout(200);
+  ok("DRAGGING A FRAME STANDS THE VIEWER DOWN, so the drop can be aimed",
+    (await onStage())?.tag === "CANVAS");
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  ok("and a drag released off the canvas still writes nothing",
+    placed.length === writesBefore, `${placed.length} writes`);
+
   await page.click('button:text-is("Visit")');
   await page.waitForTimeout(200);
   ok("and the switch goes back to the visit's own",

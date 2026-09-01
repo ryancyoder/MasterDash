@@ -1120,6 +1120,63 @@ in the rendered canvas — as well as asserting the coordinate that went to the
 server is near the yard rather than at zero. Removing either the drop or the
 `draggable={false}` guard turns it red.
 
+#### The stage as a photo viewer
+
+A filmstrip thumbnail and the column's 44px preview are enough to *find* a
+photograph and nowhere near enough to read one. What somebody took the picture
+for — which shrub, how far the bed runs, what the edging is made of — arrives on
+a screen a quarter the size of the iPad it was shot on. The map's own stage is
+the biggest surface on the screen, and while you are reading a photograph you
+are not drawing on it.
+
+**Top left of the map, once something is picked: Photo / Map.** It puts the
+picked frame over the whole stage and takes it away again. It appears only when
+the strip has a pick, because a button that opens a black rectangle is worse
+than no button; top left because the zoom controls own bottom left, the running
+total owns bottom right, and the phone's Panel button owns top right.
+
+**An overlay, not a fourth pane in the swap.** The clip and the canvas trade
+places because both are live and both are wanted at once; a picture is not.
+So the viewer simply covers the stage, the map is untouched underneath, and it
+is exactly where it was when the viewer lifts. That also keeps the stage's
+ownership honest — this never moves the canvas or the clip, so no button ends
+up describing a swap that did not happen. It is the same reason the elevation
+views keep `evTool` as one variable: two claimants for one surface leave a
+control reading a lie.
+
+**It is a mode meaning "show whatever is picked", not "show this picture".**
+Tapping along the strip with it open leafs through the yard at full size, which
+is what looking at a set of site photographs actually is. Both conditions are on
+the render rather than baked into the flag, so clearing the pick shows the map
+again — there is nothing to look at — and picking the next frame is big again.
+A flag that switched itself off on an empty pick would make the strip feel like
+it kept closing the viewer.
+
+**Every source the strip has, since the preview already resolved them.** A
+session pin, a grade shot and an appointment photograph all come through
+`pickedFrame`, so the viewer needed no knowledge of where a picture came from.
+
+**`object-contain`, never `cover`.** The column's preview crops because it is an
+identifier; this is the picture itself, and cropping the corner of the yard
+somebody opened it full-size to see is the one thing a viewer must not do.
+
+**A drag stands it down.** Dropping a pin onto a picture *of* the yard rather
+than onto the yard would place it somewhere nobody could see — and the write
+would still succeed, which is the worst version of it. So the viewer closes the
+moment a drag is recognised: on the movement past `DRAG_START_PX`, never on the
+press, because a plain tap on a frame is how you leaf through and closing on
+that would fight the whole point.
+
+**Checked by what is on the stage, not by what is in the tree.**
+`test:board-ui` reads `document.elementFromPoint` at the centre of the canvas —
+an overlay that rendered behind the canvas would list in the DOM and show
+nothing, which is the exact shape of the layer bug this screen already had. The
+caption comes off the overlay itself and the title off the image's `alt`,
+because both fixtures share one image URL: the src cannot tell two frames apart,
+so only the caption can prove the viewer followed the strip. Mutation-tested —
+dropping the drag guard turns 1 check red, `cover` for `contain` turns 1, and
+limiting the viewer to session pins turns 7.
+
 #### Locking the view
 
 The map fits everything drawn every time it opens. That is the right answer for
