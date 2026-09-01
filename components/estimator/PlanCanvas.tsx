@@ -1357,21 +1357,31 @@ export default function PlanCanvas({
             ctx.stroke();
           }
         });
-      } else {
-        pts.forEach((p, i) => {
-          ctx.fillStyle = color;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, isShared(i) ? 5 : 4, 0, Math.PI * 2);
-          ctx.fill();
-          if (isShared(i)) {
-            ctx.strokeStyle = "#ffffff";
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
-            ctx.stroke();
-          }
-        });
       }
+      /*
+        AND A SHAPE THAT IS NOT SELECTED DRAWS NO CORNERS AT ALL.
+
+        It used to put a dot on every one, which on a plan of six beds is a
+        hundred dots saying nothing: a corner you are not working on is not a
+        decision, it is the shape's own geometry, and the outline already
+        carries that. What is left is what the bed IS — its edge, its fill and
+        its label — and the plan reads as a plan rather than as a wireframe.
+
+        The dots were not only clutter, they were an AFFORDANCE, and that is
+        why the grab went with them (see `pointerdown`). Every corner of every
+        shape used to be draggable, so one thumb on a finished bed deformed it;
+        now only the selected shape's corners move, and a press on any other
+        picks that shape up instead. Drawing an invisible handle would have
+        been the worst of the three — see the planting layer for the same rule
+        stated the other way round.
+
+        The shared-corner ring went with them too, and its job goes with the
+        grab: it existed so that "this corner belongs to the lawn as well"
+        was legible BEFORE the finger landed. Nothing can land on it here any
+        more, and the ring is still drawn the moment either shape is picked
+        up. The survey ring below stays for both, because that one is evidence
+        about the geometry rather than a handle.
+      */
 
       // A corner sitting on a shot point gets the survey's own colour, so a
       // measured corner and a corner placed off an aerial are tellable apart
@@ -2317,23 +2327,30 @@ export default function PlanCanvas({
         }
       }
 
-      // 1. Grab a corner of any shape. What is grabbed is the CORNER, so a
-      //    shared one carries every shape holding it.
-      for (let i = shapes.length - 1; i >= 0; i--) {
-        const shape = shapes[i];
-        const pts = shapePoints(shape).map((v) => toCanvas(toWorld(v), t));
+      const selected = shapes.find((s) => s.id === selectedShapeId);
+
+      /*
+        1. Grab a corner OF THE SELECTED SHAPE. What is grabbed is the CORNER,
+           so a shared one carries every shape holding it — selecting either
+           of two beds that share an edge is enough to move the edge.
+
+        It used to be any shape's corner, which meant a finished plan had a
+        live handle every few inches: a press meant to pan the map landed on a
+        bed and deformed it, and the only sign it had happened was a number
+        that changed. The unselected shapes draw no corners now (see above),
+        and a handle nobody can see must not be a handle anybody can grab.
+        A press on one selects that shape instead, through `handleTap`, so
+        moving a corner is pick-up-then-drag rather than one blind gesture —
+        the rule the plant symbols already follow.
+      */
+      if (selected) {
+        const pts = shapePoints(selected).map((v) => toCanvas(toWorld(v), t));
         for (let j = 0; j < pts.length; j++) {
           if (dist(cp, pts[j]) <= VERTEX_GRAB_PX) {
-            onSelectShape(shape.id);
-            dragRef.current = { kind: "vertex", nodeId: shape.vertices[j] };
+            dragRef.current = { kind: "vertex", nodeId: selected.vertices[j] };
             return;
           }
         }
-      }
-
-      const selected = shapes.find((s) => s.id === selectedShapeId);
-      if (selected) {
-        const pts = shapePoints(selected).map((v) => toCanvas(toWorld(v), t));
         // 2. Split a segment on its midpoint handle. The new corner belongs to
         //    this shape alone — splitting a side is not a claim about the
         //    shape next door, even where the side happens to be shared.

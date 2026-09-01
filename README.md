@@ -800,6 +800,47 @@ being wrong rather than the thing measured:
 Mutation-tested: making a plant grabbable in Select again turns 1 check red,
 and ignoring the custom spread turns 2 here and 2 in `test:plan`.
 
+#### A shape you are not working on is drawn simply
+
+Every shape used to put a dot on every corner. On a plan of six beds that is a
+hundred dots saying nothing — a corner you are not working on is not a
+decision, it is the shape's own geometry, and the outline already carries it.
+An unselected shape now draws its edge, its fill and its label and nothing
+else, and the plan reads as a plan rather than as a wireframe.
+
+**The dots were an affordance as well as clutter, so the grab went with them.**
+Every corner of every shape was draggable, selected or not: a press meant to
+pan the map landed on a finished bed and deformed it, and the only sign was a
+number that had changed. Only the selected shape's corners move now; a press on
+any other picks that shape up instead, through the tap handler that already
+did. Moving a corner is pick-up-then-drag — two gestures, both visible — which
+is the rule the plant symbols already follow.
+
+Drawing the handle and keeping the grab would have been the worst of the three.
+That is the planting layer's rule read the other way round: *a symbol nobody
+can see that still swallows a drag is worse than one that is simply drawn.*
+
+**The shared-corner ring went with them, and its job went with the grab.** It
+existed so that *this corner belongs to the lawn as well* was legible BEFORE
+the finger landed — nothing can land on it here any more, and the ring is still
+drawn the moment either of the two shapes is picked up. **The survey ring
+stays** on selected and unselected alike, because that one is evidence about
+the geometry rather than a handle: whether a corner was shot is a property of
+the bed, not of what happens to be selected.
+
+**The check needed a sign in it**, which took a second attempt. A box on the
+corner always holds some of the shape's colour — the outline bends through it
+whatever is drawn on top — so an absolute count says little. What flips is the
+relation: the same corner reads **37** selected, where the handle is ringed in
+the shape's colour at 3px, and **22** unselected, which is the outline alone.
+Against the build with the dot on it that unselected reading was **51** — more
+than the selected one, not less. The comparison is the assertion.
+
+And the order of the checks is load-bearing: a drag that is *refused* as a
+corner grab falls through to a map pan, which moves the whole view, so the
+corner is no longer where the test last saw it. That check goes last, and the
+ones that need to know where the corner is go first.
+
 #### A designated colour per assembly
 
 Mulch is brown, stone is grey, sod is green. **🎨** in the map toolbar gives

@@ -2290,6 +2290,111 @@ try {
   ok("and the corner has not moved a millimetre",
     (await nodesNow()) === beforeWobble);
 
+  // 7c-x-b. A SHAPE THAT IS NOT SELECTED IS DRAWN SIMPLY.
+  //
+  // A corner dot on every shape means a plan of six beds carries a hundred
+  // dots that say nothing — and each one was a live handle, so a press meant
+  // to pan the map deformed a finished bed. Both halves are checked here,
+  // because dropping the drawing without dropping the grab would leave an
+  // invisible handle, which is worse than either.
+
+  /** The shape's own colour in a small box on one corner. */
+  const cornerInk = (pt, hex) =>
+    page.evaluate(([x, y, h]) => {
+      const r0 = parseInt(h.slice(1, 3), 16);
+      const g0 = parseInt(h.slice(3, 5), 16);
+      const b0 = parseInt(h.slice(5, 7), 16);
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const rect = c.getBoundingClientRect();
+      const k = c.width / rect.width;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      const cx = (x - rect.left) * k;
+      const cy = (y - rect.top) * k;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const px = (i / 4) % c.width;
+        const py = Math.floor(i / 4 / c.width);
+        if (Math.abs(px - cx) > 7 * k || Math.abs(py - cy) > 7 * k) continue;
+        if (
+          Math.abs(d[i] - r0) <= 30 &&
+          Math.abs(d[i + 1] - g0) <= 30 &&
+          Math.abs(d[i + 2] - b0) <= 30
+        ) n++;
+      }
+      return n;
+    }, [pt.x, pt.y, hex]);
+
+  const bedColor = (await shapes())[0]?.color ?? "#14b8a6";
+
+  // Put the bed down by tapping empty ground.
+  await page.mouse.click(at(0.5, 0.12).x, at(0.5, 0.12).y);
+  await page.waitForTimeout(400);
+  const inkUnselected = await cornerInk(corner1, bedColor);
+  await page.mouse.click(at(0.24, 0.66).x, at(0.24, 0.66).y);
+  await page.waitForTimeout(400);
+  const inkSelected = await cornerInk(corner1, bedColor);
+
+  /*
+    A CHECK WITH A SIGN IN IT, which is what this needed.
+
+    The corner box always holds some of the shape's colour — the outline bends
+    through it whatever is drawn on top — so an absolute count says little on
+    its own. What flips is the RELATION. Measured: the same corner reads 37
+    when the shape is selected, because the handle is ringed in the shape's
+    colour at 3px; unselected it reads 22, which is the outline alone. Against
+    the build with the dot on it, that same reading was 51 — more than the
+    selected one, not less. The comparison is the assertion.
+  */
+  ok("A CORNER OF AN UNSELECTED SHAPE CARRIES NO MARK OF ITS OWN",
+    inkUnselected * 1.4 < inkSelected,
+    `${inkUnselected} unselected against ${inkSelected} selected`);
+
+  /*
+    The order below is not arbitrary.
+
+    A drag that is REFUSED as a corner grab falls through to a map pan, which
+    moves the whole view — so the corner is no longer where the test last saw
+    it, and every check after it reads empty ground. That check therefore goes
+    last, and the one that needs to know where the corner is goes first.
+  */
+
+  // A press still SELECTS, or the corners would be unreachable at all: pick
+  // the shape up, then move the corner. Two gestures, both visible.
+  await page.mouse.click(at(0.5, 0.12).x, at(0.5, 0.12).y);
+  await page.waitForTimeout(300);
+  await page.mouse.click(corner1.x, corner1.y);
+  await page.waitForTimeout(400);
+  ok("a tap on that corner still selects its shape",
+    (await cornerInk(corner1, bedColor)) > inkUnselected * 1.3,
+    `${await cornerInk(corner1, bedColor)} against ${inkUnselected} unselected`);
+
+  // And once it is up, the corner moves exactly as it always did.
+  const nodesArmed = await nodesNow();
+  await page.mouse.move(corner1.x, corner1.y);
+  await page.mouse.down();
+  await page.mouse.move(corner1.x + 55, corner1.y + 40, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  ok("AND THE SELECTED SHAPE'S CORNER STILL DRAGS",
+    (await nodesNow()) !== nodesArmed);
+
+  // The other half of the change. Dropping the drawing without dropping the
+  // grab would leave an invisible handle, which is worse than either — the
+  // rule the planting layer states the other way round. The corner is where
+  // the drag above left it.
+  const moved1 = { x: corner1.x + 55, y: corner1.y + 40 };
+  await page.mouse.click(at(0.5, 0.12).x, at(0.5, 0.12).y);
+  await page.waitForTimeout(400);
+  const nodesUnselected = await nodesNow();
+  await page.mouse.move(moved1.x, moved1.y);
+  await page.mouse.down();
+  await page.mouse.move(moved1.x + 55, moved1.y + 40, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  ok("AND AN UNSELECTED SHAPE'S CORNER CANNOT BE DRAGGED",
+    (await nodesNow()) === nodesUnselected,
+    `${nodesUnselected} then ${await nodesNow()}`);
+
   // 7c-xi. A DESIGNATED COLOUR PER ASSEMBLY.
   //
   // A shape is minted with the next colour off a rotating palette, which is
