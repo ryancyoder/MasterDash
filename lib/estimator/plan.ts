@@ -149,6 +149,31 @@ export interface PlacedPlant {
   variantLabel?: string;
 }
 
+/**
+ * A photograph pinned open on the plan, with a line back to where it was taken.
+ *
+ * The dot answers "a picture was taken here"; the call-out answers "and this is
+ * it", without anybody having to tap the dot to find out. On a plan being read
+ * at a desk — or printed — that is the difference between evidence you can see
+ * and evidence you have to go looking for.
+ *
+ * TWO POSITIONS, and only one of them is stored here. `at` is where the
+ * PICTURE sits, which is somewhere clear of the thing it is a picture of; the
+ * dot stays exactly where the photograph was taken, and is looked up by id at
+ * draw time. Storing the dot's position too would let the two disagree the
+ * first time somebody corrected a pin — the same reason a slope run stores
+ * which two points it joins and derives the grade.
+ *
+ * `photoId` is the id the canvas draws dots under: `event:<id>` for an
+ * appointment photograph, a bare id for one of Upright's own pins.
+ */
+export interface PhotoCallout {
+  id: string;
+  photoId: string;
+  /** Where the picture sits. Never where the dot is. */
+  at: LatLng;
+}
+
 /** A corner tapped while drawing: either a new position, or one that snapped. */
 export interface PendingPoint {
   at: LatLng;
@@ -214,6 +239,15 @@ export interface PlanState {
    * the file.
    */
   plants: PlacedPlant[];
+  /**
+   * Photographs pinned open on the plan, each with a line to its own dot.
+   *
+   * An annotation on THIS take-off rather than a fact about the yard, which is
+   * why it lives on the estimate beside the shapes and not on the property
+   * with the overlays: two estimates for one property can legitimately want
+   * different pictures held open.
+   */
+  callouts: PhotoCallout[];
   /** Overlay ids switched off for this estimate. Absence means shown. */
   hiddenOverlayIds: string[];
 }
@@ -228,6 +262,7 @@ export function emptyPlan(): PlanState {
     review: null,
     shapes: [],
     plants: [],
+    callouts: [],
     hiddenOverlayIds: [],
   };
 }
@@ -581,4 +616,32 @@ export function plantsFrom(value: unknown): PlacedPlant[] {
 /** How a placed plant reads: the cultivar where there is one, else the generic. */
 export function plantLabel(plant: PlacedPlant, genericName: string): string {
   return plant.variantLabel?.trim() || genericName;
+}
+
+/**
+ * Call-outs, read back from a stored plan.
+ *
+ * Rebuilt rather than cast, same as the two above. A call-out with no photo to
+ * point at is a picture frame with nothing in it and no line to draw, so it
+ * goes; one whose photograph is simply not loaded right now does NOT, because
+ * that is the ordinary case of the strip showing the other source.
+ */
+export function calloutsFrom(value: unknown): PhotoCallout[] {
+  const v = (value ?? {}) as Record<string, unknown>;
+  const out: PhotoCallout[] = [];
+  const seen = new Set<string>();
+  for (const raw of Array.isArray(v.callouts) ? v.callouts : []) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    const at = latLngFrom(r.at);
+    if (!at) continue;
+    if (typeof r.photoId !== "string" || !r.photoId) continue;
+    const id = typeof r.id === "string" && r.id && !seen.has(r.id) ? r.id : planId("c");
+    seen.add(id);
+    // One call-out per photograph. Two would sit on top of each other with two
+    // lines to one dot, and nothing on screen would say there were two.
+    if (out.some((c) => c.photoId === r.photoId)) continue;
+    out.push({ id, at, photoId: r.photoId });
+  }
+  return out;
 }

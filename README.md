@@ -1199,6 +1199,92 @@ in the rendered canvas — as well as asserting the coordinate that went to the
 server is near the yard rather than at zero. Removing either the drop or the
 `draggable={false}` guard turns it red.
 
+#### One drag, three errands
+
+A photograph can be dropped in three places now, and each drop means the
+obvious thing for where the drag started. The machinery is ONE drag — same
+threshold, same ghost, same window listeners, same cancel — because everything
+about it except what the drop *means* is identical.
+
+**A frame out of the filmstrip, onto the map: a dot.** Where the photograph was
+taken. 511 of the 705 on the project carry a position from the camera's EXIF;
+this is what gives the other 194 one.
+
+**A frame out of the filmstrip, onto Add plan: a layer.** A site photograph is
+often the only drawing that exists — somebody photographs the customer's sketch
+on the tailgate, or an old survey taped inside a garage — and getting that onto
+the map used to mean saving it out of the strip and re-importing it as a file.
+It lands in alignment like any other import, named by its caption rather than
+by the visit, because "Front bed" identifies a picture where "Appointment · Jun
+2" only identifies where it came from.
+
+Two details are load-bearing. The button is found with `elementFromPoint` and a
+`data-drop` attribute rather than by a rectangle remembered at drag start —
+that row scrolls sideways, so a remembered rect is wrong the moment somebody
+has scrolled the tools. And it **lights up while a frame is in flight**: a drop
+target nobody can see is a drop target nobody finds.
+
+**`addOverlayFromUrl` fetches the bytes** rather than pointing a layer at the
+URL it came from, which was the obvious cheaper design and is wrong twice over.
+`property_map_layers` stores a `storage_path` and the API derives the URL from
+it against the `estimate-plans` bucket, so a row pointing at a `deal-photos`
+object cannot be expressed — the layer would draw on this device and come back
+imageless on every other one, which is exactly the failure this screen has
+already had. And a layer with no local copy is blank with no signal in the
+yards worth taking off. So it costs one copy of a picture already in Storage,
+in exchange for a layer that behaves like every other layer: offline, on a
+second device, and in Upright, which reads the same rows.
+
+#### The picture out of the preview: a call-out
+
+**The same photograph, a different question.** A frame out of the strip asks
+*where was this taken* and answers with a dot. The picture out of the preview
+asks to be **held open on the plan**, where it sits, with a line back to that
+dot. On a plan being read at a desk — or printed — that is the difference
+between evidence you can see and evidence you have to go looking for.
+
+**Two positions, and only one is stored.** `at` is where the picture sits,
+clear of the thing it is a picture of; the dot stays exactly where the
+photograph was taken and is looked up by id at draw time. Store the dot's
+position too and the two disagree the first time somebody corrects a pin — the
+same reason a slope run stores which two points it joins and derives the grade.
+The URL is looked up as well, so a re-uploaded photograph does not leave a
+stale picture pinned to the plan.
+
+**One call-out per photograph.** Dropping the same picture somewhere else MOVES
+it; two frames on one dot would sit on top of each other with two lines to one
+pin and nothing on screen to say there were two.
+
+**It follows its dot's visibility.** The strip's source decides which pins are
+on the map, so a call-out whose dot is not currently drawn is not drawn either
+— a picture on a line to nothing would be claiming a position the map is not
+showing. And the preview can only be dragged once the photograph HAS a dot; the
+card says which of the two states it is in rather than letting the gesture fail
+silently.
+
+**The frame is screen pixels** (132px wide, the picture's own aspect tall),
+like a plant symbol and for the same reason: it is pinned to the plan, not
+occupying ground. Drawn over everything and hit-tested first — a picture that
+size covers whatever is under it, so a tap there is never aimed at that ground.
+The leader runs from the dot to the frame's **centre** and is clipped by the
+frame drawn over it, which is what keeps it off the picture; aiming it at an
+edge needs an intersection test that gets the corner cases wrong at exactly the
+moment the call-out is near its own dot. One `calloutBox()` at module scope
+serves both the drawing and the hit test — a picture you can see and a picture
+you can grab that disagreed by a few pixels is the kind of thing nobody reports
+and everybody swears at.
+
+**Testing the line took two goes, and the first one is the lesson.** Counting
+bright pixels across the whole canvas does not isolate a leader: the frame's
+own border is bright and does not move, so dragging the picture 240px further
+from its dot moved the number from **1449 to 1514** — a 4% signal on a check
+that is supposed to have a sign in it. Masking out the frame's own box leaves
+the connector and its collar as the only bright things that change, and against
+a build with the two `lineTo` calls removed the masked count reads **1470 then
+1470**, identically. Mutation-tested: no leader line turns 1 check red, no
+drop target on Add plan turns 2, two call-outs on one dot turns 1, and a
+call-out with no photograph turns 1.
+
 #### The stage as a photo viewer
 
 A filmstrip thumbnail and the column's 44px preview are enough to *find* a

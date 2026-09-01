@@ -3,6 +3,7 @@
 import {
   emptyPlan,
   nextShapeColor,
+  calloutsFrom,
   planId,
   plantsFrom,
   pruneNodes,
@@ -233,6 +234,7 @@ function planFrom(value: unknown): PlanState {
         : null,
     shapes,
     plants: plantsFrom(v),
+    callouts: calloutsFrom(v),
     hiddenOverlayIds: Array.isArray(v.hiddenOverlayIds)
       ? v.hiddenOverlayIds.filter((id): id is string => typeof id === "string")
       : [],
@@ -362,6 +364,7 @@ function mutate(fn: (draft: Estimate) => void) {
       ...current.plan,
       shapes: [...current.plan.shapes],
       plants: [...current.plan.plants],
+      callouts: [...current.plan.callouts],
     },
     visit: { ...current.visit, findings: [...current.visit.findings] },
     updatedAt: new Date().toISOString(),
@@ -663,6 +666,43 @@ export function removePlantsOfKind(itemId: string, variantId?: string) {
     plants: plan.plants.filter(
       (p) => !(p.itemId === itemId && (p.variantId ?? undefined) === variantId),
     ),
+  }));
+}
+
+/**
+ * Hold a photograph open on the plan.
+ *
+ * One per photograph: asking for a second replaces the first rather than
+ * stacking two frames and two lines onto one dot. Dropping the same picture
+ * somewhere else is how you MOVE a call-out that has drifted under a bed, and
+ * making that quietly create a duplicate would be the wrong reading of an
+ * unmistakable gesture.
+ */
+export function addCallout(photoId: string, at: LatLng): string {
+  const id = planId("callout");
+  mutatePlan((plan) => ({
+    ...plan,
+    callouts: [
+      ...plan.callouts.filter((c) => c.photoId !== photoId),
+      { id, photoId, at },
+    ],
+  }));
+  return id;
+}
+
+/** Move one, on release. Same one-write-per-drag rule a corner follows. */
+export function moveCallout(id: string, at: LatLng) {
+  mutatePlan((plan) => ({
+    ...plan,
+    callouts: plan.callouts.map((c) => (c.id === id ? { ...c, at } : c)),
+  }));
+}
+
+/** Put a photograph away, by the picture rather than by the call-out's id. */
+export function removeCalloutFor(photoId: string) {
+  mutatePlan((plan) => ({
+    ...plan,
+    callouts: plan.callouts.filter((c) => c.photoId !== photoId),
   }));
 }
 
@@ -1057,7 +1097,9 @@ export function mergeRemote(
     plan:
       remoteNewer &&
       remotePlan &&
-      (remotePlan.shapes.length > 0 || remotePlan.plants.length > 0)
+      (remotePlan.shapes.length > 0 ||
+        remotePlan.plants.length > 0 ||
+        remotePlan.callouts.length > 0)
         ? remotePlan
         : current.plan,
     // Same rule as the plan and the job name: a remote visit with no

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PlanCanvas, {
   type PhotoDot,
   type PlanCanvasApi,
+  type CalloutDraw,
   type PlanTool,
   type SurveyLayer,
 } from "@/components/estimator/PlanCanvas";
@@ -78,6 +79,7 @@ import {
 import { photoTakeoffLabel } from "@/lib/estimator/pendingTakeoff";
 import {
   addOverlayFromFile,
+  addOverlayFromUrl,
   uploadLayerImage,
   deleteLayer,
   fetchLayers,
@@ -90,6 +92,7 @@ import {
   type UprightSurveySession,
 } from "@/lib/estimator/propertyLayers";
 import {
+  addCallout,
   addPlant,
   addShape,
   attachProperty,
@@ -97,9 +100,11 @@ import {
   insertVertex,
   linkNodeToSurvey,
   mergeNodes,
+  moveCallout,
   moveNodes,
   movePlant,
   linkPhotoToShape,
+  removeCalloutFor,
   removePlant,
   removePlantsOfKind,
   removeShape,
@@ -386,10 +391,46 @@ export default function PlanPage({
     setPhotoError(null);
   }
 
-  /** The frame being dragged onto the map, and where the pointer is. */
+  /**
+   * The picture being dragged, and where the pointer is.
+   *
+   * ONE drag with two errands rather than two drags, because everything about
+   * it except what the drop MEANS is identical — the threshold, the ghost, the
+   * window listeners, the cancel. What differs is where it came from and
+   * therefore what it is asking for:
+   *
+   *   "pin"     — a frame out of the filmstrip. Dropped on the map it gives a
+   *               photograph a position; dropped on Add plan it becomes a
+   *               georeferenced layer.
+   *   "callout" — the selected picture out of the preview. Dropped on the map
+   *               it holds that photograph open there, with a line back to its
+   *               own dot.
+   *
+   * The preview can only be dragged for a photograph that HAS a dot, so a
+   * call-out always has something to point at.
+   */
   const [dragPhoto, setDragPhoto] = useState<
-    { photo: EventPhoto; label: string; x: number; y: number; moved: boolean } | null
+    | {
+        kind: "pin";
+        photo: EventPhoto;
+        label: string;
+        url: string;
+        x: number;
+        y: number;
+        moved: boolean;
+      }
+    | {
+        kind: "callout";
+        photoId: string;
+        label: string;
+        url: string;
+        x: number;
+        y: number;
+        moved: boolean;
+      }
+    | null
   >(null);
+  const [selectedCalloutId, setSelectedCalloutId] = useState<string | null>(null);
   const canvasApi = useRef<PlanCanvasApi | null>(null);
   /*
     Which photo pin is lit.
@@ -537,6 +578,48 @@ export default function PlanPage({
   }, [eventPhotos]);
 
   /**
+   * Held-open photographs, resolved: the picture, and where its own dot is.
+   *
+   * Both looked up rather than stored, which is the rule everywhere here — a
+   * pin corrected on the map moves the line's far end with it, and a caption
+   * or a URL that had been copied into the call-out would go stale silently.
+   *
+   * A call-out whose dot is not currently drawn is not drawn either. That is
+   * the honest answer rather than a limitation: the strip's source decides
+   * which pins are on the map, and a picture on a line to nothing would be
+   * claiming a position the map is not showing.
+   */
+  const calloutDraws = useMemo<CalloutDraw[]>(() => {
+    if (!photoDots) return [];
+    const dotById = new Map(photoDots.map((d) => [d.id, d.at]));
+    const out: CalloutDraw[] = [];
+    for (const callout of plan.callouts) {
+      const dotAt = dotById.get(callout.photoId);
+      if (!dotAt) continue;
+      const url = callout.photoId.startsWith("event:")
+        ? eventById.get(callout.photoId.slice("event:".length))?.photo.url
+        : visit?.photos.find((p) => p.id === callout.photoId)?.url;
+      if (!url) continue;
+      out.push({ id: callout.id, at: callout.at, dotAt, url });
+    }
+    return out;
+  }, [plan.callouts, photoDots, eventById, visit]);
+
+  /** Whether the picked photograph is already held open, for the preview. */
+  const pickedCalloutId = useMemo(() => {
+    const photoId = selectedPhotoId;
+    if (!photoId) return null;
+    return plan.callouts.find((c) => c.photoId === photoId)?.id ?? null;
+  }, [plan.callouts, selectedPhotoId]);
+
+  /** Whether it has a dot at all — a call-out needs something to point at. */
+  const pickedHasDot = useMemo(
+    () => Boolean(selectedPhotoId && photoDots?.some((d) => d.id === selectedPhotoId)),
+    [selectedPhotoId, photoDots],
+  );
+
+
+  /**
    * The frames captured while shooting grade.
    *
    * THE VISIT'S OWN, when there is a visit. The strip is that session's record,
@@ -577,12 +660,46 @@ export default function PlanPage({
   const DRAG_START_PX = 12;
   const dragStart = useRef<{ x: number; y: number; id: string } | null>(null);
 
+  /*
+    The drop handler reaches `addPhotoAsLayer` through a ref.
+
+    That function is declared several hundred lines below — it needs
+    `startAligning`, which needs the alignment state — and a closure here
+    reaching forward to it is exactly what `react-hooks/immutability` catches:
+    the effect would capture whichever version existed when it was created and
+    stop seeing the current one. A ref kept up to date by its own effect always
+    holds the latest, and nothing here runs before a pointer has been dragged.
+  */
+  const addAsLayerRef = useRef<(url: string, label: string) => void>(() => {});
+
   const beginPhotoDrag = useCallback(
     (photo: EventPhoto, event: PhotoEvent, e: React.PointerEvent) => {
       dragStart.current = { x: e.clientX, y: e.clientY, id: photo.id };
       setDragPhoto({
+        kind: "pin",
         photo,
-        label: eventLabel(event),
+        // The caption first: dropped on Add plan this becomes a layer's name,
+        // and "Front bed" identifies a picture where "Appointment · Jun 2"
+        // only identifies the visit it came from.
+        label: photo.caption?.trim() || eventLabel(event),
+        url: photo.url,
+        x: e.clientX,
+        y: e.clientY,
+        moved: false,
+      });
+    },
+    [],
+  );
+
+  /** The preview, dragged out onto the map to hold that picture open there. */
+  const beginCalloutDrag = useCallback(
+    (photoId: string, url: string, label: string, e: React.PointerEvent) => {
+      dragStart.current = { x: e.clientX, y: e.clientY, id: photoId };
+      setDragPhoto({
+        kind: "callout",
+        photoId,
+        label,
+        url,
         x: e.clientX,
         y: e.clientY,
         moved: false,
@@ -649,13 +766,39 @@ export default function PlanPage({
         from !== null &&
         (Math.abs(e.clientX - from.x) > DRAG_START_PX ||
           Math.abs(e.clientY - from.y) > DRAG_START_PX);
-      const photo = dragPhoto.photo;
+      const drag = dragPhoto;
       setDragPhoto(null);
       if (!dragged) return;
+
+      /*
+        ADD PLAN IS A DROP TARGET.
+
+        Checked before the map, and by asking the DOCUMENT what is under the
+        pointer rather than by comparing rectangles: the button scrolls
+        sideways in its own row, so a remembered rect is wrong the moment
+        somebody has scrolled the tools — and it is a button, so `closest` is
+        the whole test.
+
+        A site photograph is often the only drawing that exists. Somebody
+        photographs the customer's sketch on the tailgate, or an old survey
+        taped to a garage wall, and until now getting that onto the map meant
+        saving it out of the strip and re-importing it as a file.
+      */
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      if (drag.kind === "pin" && under?.closest("[data-drop='add-plan']")) {
+        addAsLayerRef.current(drag.url, drag.label);
+        return;
+      }
+
       // Off the canvas is a cancelled drag, not a pin under the side column.
       const at = canvasApi.current?.latLngAt(e.clientX, e.clientY) ?? null;
       if (!at) return;
-      placePhoto(photo, at);
+      if (drag.kind === "callout") {
+        addCallout(drag.photoId, at);
+        setSelectedCalloutId(drag.photoId);
+        return;
+      }
+      placePhoto(drag.photo, at);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -666,7 +809,7 @@ export default function PlanPage({
       window.removeEventListener("pointercancel", up);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dragPhoto?.photo.id]);
+  }, [dragPhoto?.url]);
 
   /** What the strip has picked, resolved to something the preview can show. */
   const pickedFrame = useMemo(() => {
@@ -1181,6 +1324,41 @@ export default function PlanPage({
     }
   };
 
+  /**
+   * A photograph from the strip, dropped on Add plan, as a layer.
+   *
+   * Straight into alignment like any other import — a layer arrives at a
+   * default size in the middle of the view, which is never where it goes, and
+   * a photograph of a sketch is further from placed than a scanned plan is.
+   */
+  const addPhotoAsLayer = useCallback(
+    async (url: string, label: string) => {
+      if (propertyId === null) return;
+      setError(null);
+      try {
+        const overlay = await addOverlayFromUrl(
+          propertyId,
+          anchor?.centre ?? FALLBACK_CENTRE,
+          url,
+          label,
+          overlays.length,
+        );
+        setOverlays((current) => [...current, overlay]);
+        void saveLayer(overlay);
+        startAligning(overlay.id);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "That photograph could not be read.",
+        );
+      }
+    },
+    [propertyId, anchor, overlays.length, startAligning],
+  );
+
+  useEffect(() => {
+    addAsLayerRef.current = (url, label) => void addPhotoAsLayer(url, label);
+  }, [addPhotoAsLayer]);
+
   const drawing = tool === "area" || tool === "linear";
   const canFinish = pending.length >= (tool === "area" ? 3 : 2);
   const armable = useMemo(
@@ -1245,10 +1423,25 @@ export default function PlanPage({
         >
           {plan.basemap === "satellite" ? "🛰️" : "🛰️ off"}
         </button>
+        {/*
+          Add plan takes a FILE on a tap and a PHOTOGRAPH on a drop. The
+          `data-drop` hook is what the drag's pointerup looks for with
+          `elementFromPoint` — a rect remembered at drag start would be wrong
+          the moment somebody scrolled this row sideways, which it does.
+
+          It lights up while a frame is in flight, because a drop target
+          nobody can see is a drop target nobody finds.
+        */}
         <button
+          data-drop="add-plan"
           onClick={() => fileRef.current?.click()}
           disabled={propertyId === null}
-          className="shrink-0 rounded-xl bg-surface2 px-3 py-2 text-xs font-bold text-muted disabled:opacity-30"
+          title="Tap to import a drawing · drop a photograph here to place it as a layer"
+          className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold disabled:opacity-30 ${
+            dragPhoto?.kind === "pin" && dragPhoto.moved
+              ? "bg-accent text-black"
+              : "bg-surface2 text-muted"
+          }`}
         >
           Add plan
         </button>
@@ -1523,6 +1716,10 @@ export default function PlanPage({
             setStripPick(id ? (id.startsWith("event:") ? id : `photo:${id}`) : null)
           }
           selectedSurveyId={selectedSurveyId}
+          callouts={calloutDraws}
+          selectedCalloutId={selectedCalloutId}
+          onSelectCallout={setSelectedCalloutId}
+          onMoveCallout={moveCallout}
           plants={plan.plants}
           plantFace={plantFace}
           selectedPlantId={selectedPlantId}
@@ -1710,13 +1907,66 @@ export default function PlanPage({
           */}
           {mode === "plan" && stripPick?.startsWith("event:") && pickedFrame && (
             <div className="shrink-0 overflow-hidden rounded-2xl border border-edge bg-surface">
+              {/*
+                THE PREVIEW IS A DRAG SOURCE, and what it drags is different
+                from what the strip drags.
+
+                A frame out of the STRIP asks "where was this taken" and
+                answers it with a dot. The picture out of the PREVIEW asks to
+                be held open on the plan itself — the same photograph, a
+                different question, so the same gesture from the two places
+                means two things and each is the obvious one for where it
+                started.
+
+                Only once it has a dot. A call-out is a line from a picture to
+                a place, and without the dot there is no place — so the strip's
+                own drag comes first, and the caption says so rather than
+                letting the gesture fail silently.
+              */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={pickedFrame.url} alt="" className="max-h-44 w-full object-cover" />
+              <img
+                data-preview="picked"
+                src={pickedFrame.url}
+                alt=""
+                draggable={false}
+                onPointerDown={(e) => {
+                  if (!pickedHasDot || !selectedPhotoId) return;
+                  beginCalloutDrag(
+                    selectedPhotoId,
+                    pickedFrame.url,
+                    pickedFrame.title,
+                    e,
+                  );
+                }}
+                className={`max-h-44 w-full object-cover ${
+                  pickedHasDot ? "cursor-grab touch-none" : ""
+                }`}
+              />
               <div className="px-3 py-2">
                 <p className="text-xs font-bold text-ink">{pickedFrame.title}</p>
                 {pickedFrame.note && (
                   <p className="text-[0.65rem] text-muted">{pickedFrame.note}</p>
                 )}
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  {pickedCalloutId ? (
+                    <button
+                      onClick={() => {
+                        if (selectedPhotoId) removeCalloutFor(selectedPhotoId);
+                        setSelectedCalloutId(null);
+                      }}
+                      title="Take this photograph off the plan"
+                      className="rounded-lg bg-surface2 px-2.5 py-1.5 text-[0.65rem] font-bold text-[#fca5a5]"
+                    >
+                      Put away
+                    </button>
+                  ) : (
+                    <span className="text-[0.65rem] text-muted">
+                      {pickedHasDot
+                        ? "Drag onto the map to hold it open there"
+                        : "Drop it on the map from the strip first"}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -1915,7 +2165,7 @@ export default function PlanPage({
           }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={dragPhoto.photo.url} alt="" className="h-full w-full object-cover" />
+          <img src={dragPhoto.url} alt="" className="h-full w-full object-cover" />
         </div>
       )}
 

@@ -1154,6 +1154,136 @@ try {
   ok("and a drag released off the canvas still writes nothing",
     placed.length === writesBefore, `${placed.length} writes`);
 
+  // 7c-vii-a. A PHOTOGRAPH DROPPED ON "ADD PLAN" IS A LAYER.
+  //
+  // A site photograph is often the only drawing that exists — somebody
+  // photographs the customer's sketch on the tailgate, or an old survey taped
+  // inside a garage. Until now getting that onto the map meant saving it out
+  // of the strip and re-importing it as a file.
+  const savesBefore = layerSaves;
+  const addPlanBtn = await page.locator('button[data-drop="add-plan"]').boundingBox();
+  const layerFrame = await page.locator('div.rounded-xl.border button').first().boundingBox();
+  await page.mouse.move(layerFrame.x + layerFrame.width / 2, layerFrame.y + layerFrame.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(addPlanBtn.x + addPlanBtn.width / 2, addPlanBtn.y + addPlanBtn.height / 2,
+    { steps: 10 });
+  await page.waitForTimeout(150);
+  ok("the drop target lights up while a frame is in flight",
+    (await page.locator('button[data-drop="add-plan"].bg-accent').count()) === 1);
+  await page.mouse.up();
+  await page.waitForTimeout(1200);
+
+  ok("A PHOTOGRAPH DROPPED ON ADD PLAN BECOMES A LAYER",
+    layerSaves > savesBefore, `${savesBefore} then ${layerSaves} saves`);
+  // Straight into alignment, like any other import: a layer arrives at a
+  // default size in the middle of the view, which is never where it goes.
+  ok("and it opens in alignment, named by the picture rather than the visit",
+    /Placing Front bed/.test(await page.textContent("body")));
+  // Guarded: against a build where the drop does nothing there is no alignment
+  // bar to close, and an unguarded click THROWS rather than failing — taking
+  // every check after it out of existence instead of turning one red.
+  if ((await page.locator('button:text-is("Done")').count()) > 0) {
+    await page.click('button:text-is("Done")');
+    await page.waitForTimeout(300);
+  }
+
+  // 7c-vii-b. THE PREVIEW, DRAGGED ONTO THE MAP, HOLDS THE PICTURE OPEN THERE.
+  //
+  // The same photograph, a different question. A frame out of the STRIP asks
+  // "where was this taken" and answers it with a dot; the picture out of the
+  // PREVIEW asks to be held open on the plan, with a line back to that dot —
+  // which is the difference between evidence you can see and evidence you have
+  // to go looking for.
+  const redPixels = () =>
+    page.evaluate(() => {
+      const c = document.querySelector("canvas");
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      let sx = 0;
+      let sy = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        // The fixture photograph is red at half alpha over the frame's own
+        // black ground: r about 127, g and b nothing.
+        if (d[i] > 90 && d[i + 1] < 60 && d[i + 2] < 60) {
+          n++;
+          sx += (i / 4) % c.width;
+          sy += Math.floor(i / 4 / c.width);
+        }
+      }
+      return { n, x: n ? sx / n : 0, y: n ? sy / n : 0 };
+    });
+  /*
+    Bright pixels OUTSIDE the picture's own frame.
+
+    Counting the whole canvas does not isolate the leader: the frame's border
+    is bright too and does not change when the picture moves, so the line's
+    own contribution arrives buried under it — measured at 1449 against 1514,
+    a 4% signal on a check that is supposed to have a sign in it. Masking the
+    frame out leaves the connector and its collar as the only bright things
+    that move, and 120 rather than 200 per channel catches the stroke's
+    antialiasing, which is most of a 1.5px line.
+  */
+  const lineBrightness = (centre, side) =>
+    page.evaluate(([cx, cy, s]) => {
+      const c = document.querySelector("canvas");
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const x = (i / 4) % c.width;
+        const y = Math.floor(i / 4 / c.width);
+        if (Math.abs(x - cx) <= s / 2 + 4 && Math.abs(y - cy) <= s / 2 + 4) continue;
+        if (d[i] > 120 && d[i + 1] > 120 && d[i + 2] > 120) n++;
+      }
+      return n;
+    }, [centre.x, centre.y, side]);
+
+  const stage = await page.locator("canvas").boundingBox();
+  const beforeCallout = await redPixels();
+  const previewBox = await page.locator('img[data-preview="picked"]').boundingBox();
+  ok("the preview offers itself as a drag", previewBox !== null);
+  await page.mouse.move(previewBox.x + previewBox.width / 2, previewBox.y + previewBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(stage.x + 260, stage.y + 120, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(700);
+
+  const held = await redPixels();
+  ok("DRAGGING THE PREVIEW ONTO THE MAP HOLDS THE PHOTOGRAPH OPEN THERE",
+    held.n > beforeCallout.n + 4000, `${beforeCallout.n} then ${held.n} pixels`);
+  const storedCallouts = () =>
+    page.evaluate(() =>
+      JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.callouts ?? []);
+  ok("and the plan records it against the photograph, not against a position",
+    (await storedCallouts()).length === 1 &&
+      typeof (await storedCallouts())[0]?.photoId === "string" &&
+      (await storedCallouts())[0]?.dotAt === undefined,
+    JSON.stringify(await storedCallouts()));
+
+  // THE LINE. A picture with no leader is not a call-out, and a frame drawn
+  // without one looks identical in every other check here — so this one has a
+  // SIGN in it: drag the picture further from its own dot and the connector
+  // gets longer, which nothing else on screen does.
+  const nearLine = await lineBrightness(held, 132);
+  await page.mouse.move(held.x + stage.x, held.y + stage.y);
+  await page.mouse.down();
+  await page.mouse.move(held.x + stage.x + 240, held.y + stage.y + 110, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  const movedTo = await redPixels();
+  const farLine = await lineBrightness(movedTo, 132);
+  ok("AND A LINE RUNS BACK TO ITS DOT — longer when the picture is moved away",
+    farLine > nearLine + 150, `${nearLine} then ${farLine} bright pixels off the frame`);
+  ok("the picture itself moved with the finger",
+    Math.abs(movedTo.x - held.x) > 100, `${held.x} then ${movedTo.x}`);
+
+  // Put it away from the same card that brought it out.
+  await page.click('button[title="Take this photograph off the plan"]');
+  await page.waitForTimeout(500);
+  ok("and Put away takes it off the plan",
+    (await storedCallouts()).length === 0 &&
+      (await redPixels()).n < beforeCallout.n + 2000,
+    JSON.stringify(await storedCallouts()));
+
   // 7c-vii. THE PLANT TAKE-OFF.
   //
   // The third tool, beside Area and Linear, and the only one that is COUNTED

@@ -172,6 +172,43 @@ export async function addOverlayFromFile(
   };
 }
 
+/**
+ * A photograph the project already holds, as a layer.
+ *
+ * It FETCHES the bytes and goes through `addOverlayFromFile`, rather than
+ * pointing a layer at the URL it came from — which was the obvious cheaper
+ * design and is wrong twice over.
+ *
+ * `property_map_layers` stores a `storage_path` and the API derives the URL
+ * from it against the `estimate-plans` bucket, so a row pointing at a
+ * `deal-photos` object cannot be expressed: the layer would draw on this
+ * device and come back imageless on every other one, which is exactly the
+ * failure this screen has already had. And a layer with no local copy is blank
+ * with no signal in the yards worth taking off — the reason plan images land
+ * on the device first.
+ *
+ * So it costs one copy of a picture that is already in Storage. That is a few
+ * megabytes, once, in exchange for a layer that behaves like every other
+ * layer — offline, on a second device, and in Upright, which reads the same
+ * rows.
+ */
+export async function addOverlayFromUrl(
+  propertyId: number,
+  centre: LatLng,
+  url: string,
+  label: string,
+  z: number,
+): Promise<MapOverlay> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("That photograph could not be read.");
+  const blob = await res.blob();
+  const name = `${label.slice(0, 60) || "Photograph"}.${
+    blob.type.includes("png") ? "png" : "jpg"
+  }`;
+  const file = new File([blob], name, { type: blob.type || "image/jpeg" });
+  return addOverlayFromFile(propertyId, centre, file, z);
+}
+
 /** The device's copy, as an object URL, or null if this device never held it. */
 export async function localOverlayUrl(overlay: MapOverlay): Promise<string | null> {
   if (!overlay.imageId) return null;

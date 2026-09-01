@@ -15,6 +15,7 @@ import {
   type ShapePhotoLink,
 } from "../lib/estimator/photoLink.ts";
 import {
+  calloutsFrom,
   emptyPlan,
   plantsFrom,
   topologyFrom,
@@ -654,6 +655,50 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   ok("an empty variant reads as the generic",
     blank[0]?.variantId === undefined && blank[0]?.variantLabel === undefined,
     JSON.stringify(blank[0] ?? null));
+}
+
+// --- Photographs held open on the plan -------------------------------------
+//
+// A dot answers "a picture was taken here"; a call-out answers "and this is
+// it". The rule that shapes the storage is that only ONE of its two positions
+// is written down — the picture's. The dot is looked up at draw time, so
+// correcting a pin moves the line's far end with it.
+
+{
+  const at = { lat: 41.31, lng: -87.15 };
+  const callout = (over = {}) => ({ id: "c1", photoId: "event:p1", at, ...over });
+
+  ok("a call-out round-trips", calloutsFrom({ callouts: [callout()] }).length === 1);
+  ok("and carries only the PICTURE's position",
+    !("dotAt" in (calloutsFrom({ callouts: [callout()] })[0] ?? {})));
+
+  ok("one with nowhere to sit is not a call-out",
+    calloutsFrom({ callouts: [{ id: "c", photoId: "event:p1" }] }).length === 0);
+  ok("nor one with no photograph to point at",
+    calloutsFrom({ callouts: [{ id: "c", at }] }).length === 0);
+  ok("a plan with none reads as none", calloutsFrom({}).length === 0);
+  ok("and so does a callouts field that is not a list",
+    calloutsFrom({ callouts: 3 }).length === 0);
+
+  // Two frames on one dot would sit on top of each other with two lines to one
+  // pin, and nothing on screen would say there were two.
+  const doubled = calloutsFrom({
+    callouts: [callout(), callout({ id: "c2", at: { lat: 41.4, lng: -87.2 } })],
+  });
+  ok("ONE CALL-OUT PER PHOTOGRAPH, not two on one dot",
+    doubled.length === 1, JSON.stringify(doubled));
+
+  const collided = calloutsFrom({
+    callouts: [callout(), callout({ photoId: "event:p2" })],
+  });
+  ok("a duplicate id is renamed rather than dropped",
+    collided.length === 2 && collided[0].id !== collided[1].id,
+    JSON.stringify(collided.map((c) => c.id)));
+
+  // A plan is a document that merges newest-wins, and the guard on that merge
+  // asks whether the remote side has work in it. Call-outs are work.
+  const p = emptyPlan();
+  ok("an empty plan has no call-outs", p.callouts.length === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

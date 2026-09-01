@@ -260,6 +260,50 @@ export interface PhotoDot {
   headingDeg: number | null;
 }
 
+/**
+ * A photograph held open on the plan, resolved for drawing.
+ *
+ * The canvas has no photo lists, so the page hands it the picture AND where
+ * that picture's own dot is — the same division `plantFace` and `labelFor`
+ * follow. `dotAt` is looked up rather than stored, so correcting a pin moves
+ * the line's other end with it.
+ */
+export interface CalloutDraw {
+  id: string;
+  at: LatLng;
+  dotAt: LatLng;
+  url: string;
+}
+
+/**
+ * Where a call-out's frame is on screen.
+ *
+ * ONE function, used by the drawing and by the hit test — a picture you can
+ * see and a picture you can grab that disagreed by a few pixels is the kind of
+ * thing nobody reports and everybody swears at. The height comes from the
+ * DECODED image, so a landscape photograph is not grabbable by a square nobody
+ * can see; 4:3 until it has loaded, which is what a phone shoots.
+ *
+ * At module scope with its inputs passed in, rather than inside the component
+ * closing over them: the draw effect calls it, and a hoisted inner function is
+ * a dependency that effect cannot honestly list.
+ */
+function calloutBox(
+  callout: CalloutDraw,
+  t: Transform,
+  drag: { id: string; at: LatLng } | null,
+  images: Map<string, HTMLImageElement>,
+) {
+  const at = drag && drag.id === callout.id ? drag.at : callout.at;
+  const c = toCanvas(toWorld(at), t);
+  const img = images.get(callout.url);
+  const aspect =
+    img && img.naturalWidth > 0 ? img.naturalHeight / img.naturalWidth : 0.75;
+  const w = CALLOUT_W;
+  const h = Math.round(w * aspect);
+  return { img, c, w, h, x: c.x - w / 2, y: c.y - h / 2 };
+}
+
 /** What the page can ask the canvas, for a drop that starts somewhere else. */
 export interface PlanCanvasApi {
   /** A point on the screen, as a coordinate. Null before the first layout. */
@@ -380,6 +424,17 @@ const PLANT_R = 13;
 /** Comfortably bigger than the glyph, because a thumb is not a cursor. */
 const PLANT_GRAB_PX = 20;
 
+/**
+ * A held-open photograph, in canvas pixels.
+ *
+ * Screen pixels for the same reason a plant symbol is: it is a picture pinned
+ * to the plan, not a thing occupying ground. Big enough to recognise a bed in
+ * at arm's length and small enough that three of them do not bury the yard —
+ * a shade under the filmstrip's own 172px tile, which is the size somebody has
+ * already been reading these at.
+ */
+const CALLOUT_W = 132;
+
 export default function PlanCanvas({
   anchor,
   basemap,
@@ -401,6 +456,10 @@ export default function PlanCanvas({
   selectedPhotoId,
   onSelectPhoto,
   selectedSurveyId,
+  callouts,
+  selectedCalloutId,
+  onSelectCallout,
+  onMoveCallout,
   plants,
   plantFace,
   selectedPlantId,
@@ -476,6 +535,12 @@ export default function PlanCanvas({
   onSelectPhoto: (id: string | null) => void;
   /** A survey point picked from the filmstrip, lit the way a photo pin is. */
   selectedSurveyId: string | null;
+  /** Photographs held open on the plan, each with a line to its own dot. */
+  callouts: CalloutDraw[];
+  selectedCalloutId: string | null;
+  onSelectCallout: (id: string | null) => void;
+  /** One write per drag, on release. */
+  onMoveCallout: (id: string, at: LatLng) => void;
   /** Plants standing on the plan, one symbol each. */
   plants: PlacedPlant[];
   /**
@@ -568,6 +633,7 @@ export default function PlanCanvas({
     | { kind: "shape"; base: Record<string, LatLng>; startWorld: WorldPoint }
     | { kind: "pin"; pin: "survey" | "photo"; id: string }
     | { kind: "plant"; id: string }
+    | { kind: "callout"; id: string }
     | { kind: "pan"; startX: number; startY: number; centre: WorldPoint }
     | null
   >(null);
@@ -575,6 +641,10 @@ export default function PlanCanvas({
   const [dragPin, setDragPin] = useState<{ id: string; at: LatLng } | null>(null);
   /** A plant being moved, held locally and committed on release. Same reason. */
   const [dragPlant, setDragPlant] = useState<{ id: string; at: LatLng } | null>(null);
+  /** A call-out being moved. Likewise. */
+  const [dragCallout, setDragCallout] = useState<{ id: string; at: LatLng } | null>(
+    null,
+  );
   /**
    * Corners being dragged, by id, held locally and committed on release.
    *
@@ -796,8 +866,14 @@ export default function PlanCanvas({
 
   // Decode overlay images as their sources appear.
   const srcs = useMemo(
-    () => overlays.map(overlaySrc).filter((s): s is string => s !== null),
-    [overlays, overlaySrc],
+    () => [
+      ...overlays.map(overlaySrc).filter((s): s is string => s !== null),
+      // Held-open photographs decode through the same cache, keyed by src:
+      // "decoded images, by url" is what it already was, and a second map with
+      // a second effect would be the same code with a different name.
+      ...callouts.map((c) => c.url),
+    ],
+    [overlays, overlaySrc, callouts],
   );
   useEffect(() => {
     let alive = true;
@@ -1556,6 +1632,61 @@ export default function PlanCanvas({
       }
     }
 
+    // 7. Photographs held open, over everything — the line first, so it runs
+    //    UNDER its own picture and under the dot it points at rather than
+    //    across either.
+    //
+    //    A call-out is a plan-reading device, not a measurement: it says "this
+    //    is what that dot is a picture of" without anybody having to tap the
+    //    dot to find out, which is the difference between evidence you can see
+    //    and evidence you have to go looking for.
+    for (const callout of callouts) {
+      const { img, c, w, h, x, y } = calloutBox(
+        callout,
+        t,
+        dragCallout,
+        overlayImages.current,
+      );
+      const dot = toCanvas(toWorld(callout.dotAt), t);
+      const picked = callout.id === selectedCalloutId;
+
+      // The leader runs from the dot to the CENTRE of the frame and is clipped
+      // by the frame drawn over it, so it never crosses the picture however
+      // the two are arranged. Aiming it at an edge instead needs an
+      // intersection test that gets the corner cases wrong at exactly the
+      // moment the call-out is near its own dot.
+      ctx.save();
+      ctx.strokeStyle = picked ? "#22c55e" : "rgba(255,255,255,0.85)";
+      ctx.lineWidth = picked ? 2.5 : 1.5;
+      ctx.beginPath();
+      ctx.moveTo(dot.x, dot.y);
+      ctx.lineTo(c.x, c.y);
+      ctx.stroke();
+      // A collar on the dot end, so the line reads as attached to that pin
+      // rather than as passing near it.
+      ctx.beginPath();
+      ctx.arc(dot.x, dot.y, 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, w, h);
+      ctx.fillStyle = "#000000";
+      ctx.fill();
+      if (img && img.naturalWidth) {
+        ctx.clip();
+        ctx.drawImage(img, x, y, w, h);
+      }
+      ctx.restore();
+
+      ctx.save();
+      ctx.strokeStyle = picked ? "#22c55e" : "rgba(255,255,255,0.9)";
+      ctx.lineWidth = picked ? 3 : 2;
+      ctx.strokeRect(x, y, w, h);
+      ctx.restore();
+    }
+
     // What a drop would land on. Drawn last so it sits over its target, and
     // named — "join" and "survey" are different acts and the word is the only
     // thing that says which one is about to happen.
@@ -1617,6 +1748,9 @@ export default function PlanCanvas({
     }
   }, [
     shapes,
+    callouts,
+    selectedCalloutId,
+    dragCallout,
     plants,
     plantFace,
     selectedPlantId,
@@ -1757,6 +1891,20 @@ export default function PlanCanvas({
     return null;
   }
 
+  /** The call-out under a point, topmost first. */
+  function calloutAt(cp: Pt, t: Transform): CalloutDraw | null {
+    for (let i = callouts.length - 1; i >= 0; i--) {
+      const box = calloutBox(callouts[i], t, dragCallout, overlayImages.current);
+      if (
+        Math.abs(cp.x - box.c.x) <= box.w / 2 &&
+        Math.abs(cp.y - box.c.y) <= box.h / 2
+      ) {
+        return callouts[i];
+      }
+    }
+    return null;
+  }
+
   /** A tap that landed without turning into a pan. */
   function handleTap(cp: Pt) {
     const t = transformNow();
@@ -1777,6 +1925,14 @@ export default function PlanCanvas({
     // checked first, or every correction would plant a second symbol on top of
     // the one being aimed at.
     if (tool === "plant") {
+      // A tap on a held-open photograph picks the photograph, whatever the
+      // tool: it covers the ground under it, so a tap there is never aimed at
+      // that ground.
+      const covered = calloutAt(cp, t);
+      if (covered) {
+        onSelectCallout(covered.id);
+        return;
+      }
       const hit = plantAt(cp, t);
       if (hit) {
         onSelectPlant(hit.id);
@@ -1841,13 +1997,23 @@ export default function PlanCanvas({
       return;
     }
 
-    // select: a plant first, because a plant standing in a bed is drawn over
+    // select: the call-out over everything, matching the grab order above.
+    const held = calloutAt(cp, t);
+    if (held) {
+      onSelectCallout(held.id);
+      onSelectShape(null);
+      onSelectPlant(null);
+      return;
+    }
+
+    // then a plant, because a plant standing in a bed is drawn over
     // it — whichever is tested first is the only one that can ever be picked,
     // and it has to be the one on top.
     const plant = plantAt(cp, t);
     if (plant) {
       onSelectPlant(plant.id);
       onSelectShape(null);
+      onSelectCallout(null);
       return;
     }
 
@@ -1869,6 +2035,7 @@ export default function PlanCanvas({
       if (shape.type === "area" && pointInPolygon(cp, pts)) {
         onSelectShape(shape.id);
         onSelectPlant(null);
+        onSelectCallout(null);
         return;
       }
       if (
@@ -1877,11 +2044,13 @@ export default function PlanCanvas({
       ) {
         onSelectShape(shape.id);
         onSelectPlant(null);
+        onSelectCallout(null);
         return;
       }
     }
     onSelectShape(null);
     onSelectPlant(null);
+    onSelectCallout(null);
   }
 
   function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -1932,6 +2101,17 @@ export default function PlanCanvas({
 
     if (tool === "select") {
       const t = transformNow();
+
+      // 0. A call-out first of all, because it is drawn over everything and a
+      //    picture 132px wide covers whatever is under it — if anything below
+      //    were tested first, a corner beneath a held-open photograph would
+      //    win a grab aimed at the photograph.
+      const heldOpen = calloutAt(cp, t);
+      if (heldOpen) {
+        dragRef.current = { kind: "callout", id: heldOpen.id };
+        onSelectCallout(heldOpen.id);
+        return;
+      }
 
       // 0a. Move a plant. Before the pins and before the corners, because a
       //     plant is drawn over both — the thing on top has to be the thing
@@ -2140,6 +2320,10 @@ export default function PlanCanvas({
       setDragPin({ id: drag.id, at: toLatLng(world) });
       return;
     }
+    if (drag.kind === "callout") {
+      setDragCallout({ id: drag.id, at: toLatLng(world) });
+      return;
+    }
     if (drag.kind === "plant") {
       // Nor here, and it is worth saying why rather than only that it matches
       // the pin above: a corner snaps because two shapes sharing an edge must
@@ -2212,6 +2396,16 @@ export default function PlanCanvas({
       const moved = dragPin;
       setDragPin(null);
       if (moved && press?.moved) onMovePin(drag.pin, drag.id, moved.at);
+      return;
+    }
+
+    // A moved call-out, once, on release. Its own line follows it live during
+    // the drag because both ends are recomputed every frame, so nothing has to
+    // be written for the picture to look attached while it is moving.
+    if (drag && drag.kind === "callout") {
+      const moved = dragCallout;
+      setDragCallout(null);
+      if (moved && press?.moved) onMoveCallout(drag.id, moved.at);
       return;
     }
 
