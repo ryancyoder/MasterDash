@@ -41,6 +41,7 @@ import {
   positionsOf,
   sharedNodeIds,
   type NodeSurveyLink,
+  type PlacedPlant,
   type PendingPoint,
   type PlanNodes,
   type PlanShape,
@@ -362,7 +363,22 @@ type SnapTarget =
   | { kind: "survey"; at: LatLng; label: string; link: NodeSurveyLink }
   | null;
 
-export type PlanTool = "select" | "area" | "linear";
+export type PlanTool = "select" | "area" | "linear" | "plant";
+
+/**
+ * How big a plant symbol is drawn, in canvas pixels.
+ *
+ * SCREEN pixels, not ground feet, and that is deliberate. A plant's symbol is
+ * a notation — it says "one shrub here" — not a claim about a canopy, and this
+ * app has been careful elsewhere about not drawing a number it did not
+ * measure: the spread ring in Upright is ground-scale because somebody typed a
+ * spread, and nothing here has. Ground-scaled symbols would also make a bed of
+ * perennials unreadable at working zoom, which is exactly where they are
+ * placed.
+ */
+const PLANT_R = 13;
+/** Comfortably bigger than the glyph, because a thumb is not a cursor. */
+const PLANT_GRAB_PX = 20;
 
 export default function PlanCanvas({
   anchor,
@@ -385,6 +401,12 @@ export default function PlanCanvas({
   selectedPhotoId,
   onSelectPhoto,
   selectedSurveyId,
+  plants,
+  plantFace,
+  selectedPlantId,
+  onSelectPlant,
+  onPlacePlant,
+  onMovePlant,
   pinsDraggable,
   onMovePin,
   apiRef,
@@ -454,6 +476,23 @@ export default function PlanCanvas({
   onSelectPhoto: (id: string | null) => void;
   /** A survey point picked from the filmstrip, lit the way a photo pin is. */
   selectedSurveyId: string | null;
+  /** Plants standing on the plan, one symbol each. */
+  plants: PlacedPlant[];
+  /**
+   * The glyph and colour a plant is drawn with, asked of the page.
+   *
+   * The canvas has no catalog. Every other label on here arrives the same way
+   * (`labelFor`, `overlaySrc`), which is what keeps this file about geometry —
+   * and it is what lets a named cultivar draw as its own category's symbol
+   * without this component knowing what a cultivar is.
+   */
+  plantFace: (plant: PlacedPlant) => { glyph: string; color: string };
+  selectedPlantId: string | null;
+  onSelectPlant: (id: string | null) => void;
+  /** A tap on open ground while the plant tool is armed. */
+  onPlacePlant: (at: LatLng) => void;
+  /** One write per drag, on release — the same rule a corner follows. */
+  onMovePlant: (id: string, at: LatLng) => void;
   /**
    * Whether survey points and photo pins can be dragged.
    *
@@ -528,11 +567,14 @@ export default function PlanCanvas({
     | { kind: "vertex"; nodeId: string }
     | { kind: "shape"; base: Record<string, LatLng>; startWorld: WorldPoint }
     | { kind: "pin"; pin: "survey" | "photo"; id: string }
+    | { kind: "plant"; id: string }
     | { kind: "pan"; startX: number; startY: number; centre: WorldPoint }
     | null
   >(null);
   /** A pin being corrected, held locally and committed on release. */
   const [dragPin, setDragPin] = useState<{ id: string; at: LatLng } | null>(null);
+  /** A plant being moved, held locally and committed on release. Same reason. */
+  const [dragPlant, setDragPlant] = useState<{ id: string; at: LatLng } | null>(null);
   /**
    * Corners being dragged, by id, held locally and committed on release.
    *
@@ -1470,6 +1512,50 @@ export default function PlanCanvas({
       }
     }
 
+    // 6. Plants, over everything drawn on the ground.
+    //
+    //    Over the beds on purpose: a shrub stands IN a bed, and a symbol
+    //    hidden under the fill of the bed it belongs to is a symbol nobody can
+    //    find. Over the survey too, which is a reference layer here.
+    //
+    //    A disc in the category's colour carrying the category's own glyph,
+    //    which is the same face its tile has — so a row of tiles and a row of
+    //    symbols on the map read as one product, and a named cultivar wears
+    //    its category's mark rather than inventing a second alphabet.
+    for (const plant of plants) {
+      const at = dragPlant && dragPlant.id === plant.id ? dragPlant.at : plant.at;
+      const p = toCanvas(toWorld(at), t);
+      const face = plantFace(plant);
+      const picked = plant.id === selectedPlantId;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, PLANT_R, 0, Math.PI * 2);
+      // Translucent, so the bed underneath still reads through a group of
+      // them. A plan with thirty perennials on it should still show its beds.
+      ctx.fillStyle = `${face.color}cc`;
+      ctx.fill();
+      // White at rest, green when picked: the RING is the only thing that
+      // changes, so selecting never moves or resizes a symbol.
+      ctx.strokeStyle = picked ? "#22c55e" : "rgba(255,255,255,0.9)";
+      ctx.lineWidth = picked ? 3 : 1.5;
+      ctx.stroke();
+      ctx.font = `${Math.round(PLANT_R * 1.25)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      // +1: emoji sit high in their own box, and centring on the baseline
+      // alone leaves every symbol looking a pixel proud of its disc.
+      ctx.fillText(face.glyph, p.x, p.y + 1);
+      ctx.restore();
+
+      // The name only on the picked one. A yard with twelve labelled plants is
+      // unreadable — the same rule Upright's pins follow, arrived at there by
+      // trying the other way first.
+      if (picked && plant.variantLabel) {
+        drawLabel(ctx, plant.variantLabel, p.x, p.y - PLANT_R - 8, "#22c55e");
+      }
+    }
+
     // What a drop would land on. Drawn last so it sits over its target, and
     // named — "join" and "survey" are different acts and the word is the only
     // thing that says which one is about to happen.
@@ -1531,6 +1617,10 @@ export default function PlanCanvas({
     }
   }, [
     shapes,
+    plants,
+    plantFace,
+    selectedPlantId,
+    dragPlant,
     survey,
     photos,
     livePhotoId,
@@ -1653,6 +1743,20 @@ export default function PlanCanvas({
     };
   });
 
+  /**
+   * The plant under a point, topmost first.
+   *
+   * Last drawn is nearest the eye, so the array is walked backwards — the same
+   * order the shape hit test uses, and for the same reason.
+   */
+  function plantAt(cp: Pt, t: Transform): PlacedPlant | null {
+    for (let i = plants.length - 1; i >= 0; i--) {
+      const plant = plants[i];
+      if (dist(cp, toCanvas(toWorld(plant.at), t)) <= PLANT_GRAB_PX) return plant;
+    }
+    return null;
+  }
+
   /** A tap that landed without turning into a pan. */
   function handleTap(cp: Pt) {
     const t = transformNow();
@@ -1667,6 +1771,20 @@ export default function PlanCanvas({
     }
     // While a layer is being placed, a tap is not a request to draw on it.
     if (aligning) return;
+
+    // The plant tool: one tap, one plant. A tap ON one picks it instead, which
+    // is what makes a mis-tap correctable without changing tools — and is
+    // checked first, or every correction would plant a second symbol on top of
+    // the one being aimed at.
+    if (tool === "plant") {
+      const hit = plantAt(cp, t);
+      if (hit) {
+        onSelectPlant(hit.id);
+        return;
+      }
+      onPlacePlant(ll);
+      return;
+    }
 
     if (tool === "area" || tool === "linear") {
       // Tap the first vertex to close. Generous radius: this is the one target
@@ -1723,7 +1841,17 @@ export default function PlanCanvas({
       return;
     }
 
-    // select: topmost shape under the finger, or nothing.
+    // select: a plant first, because a plant standing in a bed is drawn over
+    // it — whichever is tested first is the only one that can ever be picked,
+    // and it has to be the one on top.
+    const plant = plantAt(cp, t);
+    if (plant) {
+      onSelectPlant(plant.id);
+      onSelectShape(null);
+      return;
+    }
+
+    // Then the topmost shape under the finger, or nothing.
     for (let i = shapes.length - 1; i >= 0; i--) {
       const shape = shapes[i];
       // A tap on a corner of the shape already selected toggles whether that
@@ -1740,6 +1868,7 @@ export default function PlanCanvas({
       const pts = shapeOutline(shape).map((v) => toCanvas(toWorld(v), t));
       if (shape.type === "area" && pointInPolygon(cp, pts)) {
         onSelectShape(shape.id);
+        onSelectPlant(null);
         return;
       }
       if (
@@ -1747,10 +1876,12 @@ export default function PlanCanvas({
         pts.some((p, j) => j > 0 && distToSegment(cp, pts[j - 1], p) < 14)
       ) {
         onSelectShape(shape.id);
+        onSelectPlant(null);
         return;
       }
     }
     onSelectShape(null);
+    onSelectPlant(null);
   }
 
   function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -1801,6 +1932,21 @@ export default function PlanCanvas({
 
     if (tool === "select") {
       const t = transformNow();
+
+      // 0a. Move a plant. Before the pins and before the corners, because a
+      //     plant is drawn over both — the thing on top has to be the thing
+      //     you grab, or a shrub standing on a bed corner could never be
+      //     picked up at all.
+      const grabbed = plantAt(cp, t);
+      if (grabbed) {
+        dragRef.current = { kind: "plant", id: grabbed.id };
+        // Selected on the way down rather than on release, so the symbol under
+        // the finger lights up the moment it is picked up and the card in the
+        // column is already the right one when the drag ends.
+        onSelectPlant(grabbed.id);
+        onSelectShape(null);
+        return;
+      }
 
       // 0. Correct a pin. Only while the column is showing Review, and first
       //    in the order because these are drawn on top: in Review the pins ARE
@@ -1994,6 +2140,14 @@ export default function PlanCanvas({
       setDragPin({ id: drag.id, at: toLatLng(world) });
       return;
     }
+    if (drag.kind === "plant") {
+      // Nor here, and it is worth saying why rather than only that it matches
+      // the pin above: a corner snaps because two shapes sharing an edge must
+      // share the corner itself, and nothing is ever measured BETWEEN two
+      // plants. A shrub 6in off the bed line is a shrub 6in off the bed line.
+      setDragPlant({ id: drag.id, at: toLatLng(world) });
+      return;
+    }
     if (drag.kind === "vertex") {
       setDragNodes({ [drag.nodeId]: toLatLng(world) });
       // Offered while the finger is still down, so a join is something you
@@ -2058,6 +2212,15 @@ export default function PlanCanvas({
       const moved = dragPin;
       setDragPin(null);
       if (moved && press?.moved) onMovePin(drag.pin, drag.id, moved.at);
+      return;
+    }
+
+    // A moved plant, once, on release — and only if it actually moved, so a
+    // tap that merely picked one does not write the position it already had.
+    if (drag && drag.kind === "plant") {
+      const moved = dragPlant;
+      setDragPlant(null);
+      if (moved && press?.moved) onMovePlant(drag.id, moved.at);
       return;
     }
 

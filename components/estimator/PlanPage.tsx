@@ -34,7 +34,9 @@ import {
   takeoff,
   unitOfWorkLabel,
 } from "@/lib/estimator/assemblies";
-import { formatMoney, sellFor } from "@/lib/estimator/catalog";
+import { formatMoney, getItem, sellFor } from "@/lib/estimator/catalog";
+import { PLANT_GROUPS } from "@/lib/estimator/tree";
+import { loadPlants, plantsInGroup, type PlantRow } from "@/lib/estimator/plants";
 import {
   FALLBACK_CENTRE,
   parseFeet,
@@ -58,6 +60,7 @@ import {
   sharedNodeIds,
   surveyedCorners,
   workBought,
+  type PlacedPlant,
   type PendingPoint,
   type PlanNodes,
   type PlanShape,
@@ -87,6 +90,7 @@ import {
   type UprightSurveySession,
 } from "@/lib/estimator/propertyLayers";
 import {
+  addPlant,
   addShape,
   attachProperty,
   detachShape,
@@ -94,8 +98,12 @@ import {
   linkNodeToSurvey,
   mergeNodes,
   moveNodes,
+  movePlant,
   linkPhotoToShape,
+  removePlant,
+  removePlantsOfKind,
   removeShape,
+  setPlantVariant,
   setBasemap,
   setOverlayHidden,
   setPlanAnchor,
@@ -134,12 +142,14 @@ const TOOLS: { key: PlanTool; label: string; glyph: string }[] = [
   { key: "select", label: "Select", glyph: "☝︎" },
   { key: "area", label: "Area", glyph: "⬟" },
   { key: "linear", label: "Linear", glyph: "╱" },
+  { key: "plant", label: "Plant", glyph: "🌳" },
 ];
 
 const HINTS: Record<PlanTool, string> = {
   select: "Tap a shape to select it · drag its dots to reshape · + splits a side",
   area: "Tap each corner · tap the big green dot to close",
   linear: "Tap along the run · Finish when done",
+  plant: "Tap to plant one · tap a symbol to pick it · Select to move it",
 };
 
 /**
@@ -941,6 +951,129 @@ export default function PlanPage({
     setPending([]);
   }, []);
 
+  /*
+    THE PLANT TAKE-OFF.
+
+    The third one, beside the area and the run, and the one that is COUNTED
+    rather than measured: a bed is worth the square feet inside it, a run is
+    worth its length, and a tree is worth one tree wherever it stands. So there
+    is no pending state and no Finish — a tap is a whole plant.
+
+    What it arms with is the SAME six categories the grid holds, and a tap
+    commits the same `TileCommit` a tile does, which is what makes a shrub
+    placed here and a shrub tapped there one line on the proposal instead of
+    two. Defaulting to Shrub rather than to nothing: a plan is mostly shrubs,
+    and a tool that refuses to do anything until you have made a choice you
+    would have made anyway is a tool with a lock on it.
+  */
+  const [plantPick, setPlantPick] = useState<{
+    itemId: string;
+    variantId?: string;
+    variantLabel?: string;
+  }>({ itemId: "mat:shrub" });
+  const [selectedPlantId, setSelectedPlantId] = useState<string | null>(null);
+  /** The cultivar list, open on a category. Null is the categories alone. */
+  const [namingGroup, setNamingGroup] = useState<string | null>(null);
+  const [plantRows, setPlantRows] = useState<PlantRow[] | null>(null);
+
+  /*
+    962 rows, fetched the first time somebody opens the names and not before.
+
+    Same reason the grid fetches them lazily: most estimates never drill that
+    deep, and this is a page that has to open on a phone in a driveway. The
+    categories work with nothing loaded, which is what makes the generic a
+    real stopping point rather than a placeholder.
+  */
+  useEffect(() => {
+    if (namingGroup === null || plantRows !== null) return;
+    let live = true;
+    void loadPlants().then((rows) => {
+      if (live) setPlantRows(rows);
+    });
+    return () => {
+      live = false;
+    };
+  }, [namingGroup, plantRows]);
+
+  const plantGroupOf = useCallback(
+    (itemId: string) => PLANT_GROUPS.find((g) => g.itemId === itemId) ?? null,
+    [],
+  );
+
+  /**
+   * The face a symbol is drawn with: its CATEGORY's glyph and colour.
+   *
+   * Not the cultivar's own anything. A named boxwood is still a shrub, and a
+   * plan that gave every cultivar its own mark would need a legend before it
+   * could be read at all. The colour is the catalog item's, so the map and the
+   * tile agree without either being told to.
+   */
+  const plantFace = useCallback((plant: PlacedPlant) => {
+    const item = getItem(plant.itemId);
+    return { glyph: item?.glyph ?? "🌿", color: item?.color ?? "#22c55e" };
+  }, []);
+
+  /** How a placed plant reads: the cultivar where there is one, else its kind. */
+  const plantName = useCallback(
+    (plant: PlacedPlant) =>
+      plant.variantLabel?.trim() ||
+      plantGroupOf(plant.itemId)?.label ||
+      getItem(plant.itemId)?.tileName ||
+      "Plant",
+    [plantGroupOf],
+  );
+
+  const placePlant = useCallback(
+    (at: LatLng) => {
+      const id = addPlant(at, plantPick);
+      // Selected on placement, so the card naming it is already open — which
+      // is the whole reason a plant can be named after the fact rather than
+      // only before.
+      setSelectedPlantId(id);
+    },
+    [plantPick],
+  );
+
+  /**
+   * What is on the plan, by species, newest kind last.
+   *
+   * The card list's counted twin of the shape list. Grouped, because twelve
+   * separate rows saying "Shrub" is not something anybody can read, and the
+   * number is the answer anyway: this is a bill of plants.
+   */
+  const plantKinds = useMemo(() => {
+    const out: {
+      key: string;
+      itemId: string;
+      variantId?: string;
+      label: string;
+      count: number;
+    }[] = [];
+    const byKey = new Map<string, number>();
+    for (const plant of plan.plants) {
+      const key = plant.variantId ? `${plant.itemId}::${plant.variantId}` : plant.itemId;
+      const seen = byKey.get(key);
+      if (seen === undefined) {
+        byKey.set(key, out.length);
+        out.push({
+          key,
+          itemId: plant.itemId,
+          ...(plant.variantId ? { variantId: plant.variantId } : {}),
+          label: plantName(plant),
+          count: 1,
+        });
+      } else {
+        out[seen].count += 1;
+      }
+    }
+    return out;
+  }, [plan.plants, plantName]);
+
+  const selectedPlant = useMemo(
+    () => plan.plants.find((p) => p.id === selectedPlantId) ?? null,
+    [plan.plants, selectedPlantId],
+  );
+
   const finish = useCallback(() => {
     if (tool !== "area" && tool !== "linear") return;
     if (pending.length < (tool === "area" ? 3 : 2)) return;
@@ -1178,6 +1311,106 @@ export default function PlanPage({
         </div>
       )}
 
+      {/*
+        WHAT THE NEXT TAP PLANTS.
+
+        The same row of six the grid holds, in the same order and wearing the
+        same faces — this is the plan's half of one vocabulary, not a second
+        list of plants that happens to look similar.
+
+        "Name it" is the long press, made a button because there is no tile to
+        press here. Tapping a category clears the cultivar with it: having
+        picked Shrub, the next tap must plant a shrub, not the Green Velvet
+        boxwood that was armed three categories ago.
+      */}
+      {tool === "plant" && (
+        <div className="shrink-0 mb-2 flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            <span className="shrink-0 text-[0.65rem] font-bold tracking-widest text-muted">
+              PLANTS
+            </span>
+            {PLANT_GROUPS.map((g) => {
+              const item = getItem(g.itemId);
+              const on = plantPick.itemId === g.itemId;
+              return (
+                <button
+                  key={g.itemId}
+                  onClick={() => {
+                    setPlantPick({ itemId: g.itemId });
+                    setNamingGroup((open) => (open === null ? null : g.group));
+                  }}
+                  className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-bold ${
+                    on ? "bg-accent text-black" : "bg-surface2 text-ink"
+                  }`}
+                >
+                  <span aria-hidden="true" className="mr-1">
+                    {item?.glyph ?? "🌿"}
+                  </span>
+                  {g.label}
+                </button>
+              );
+            })}
+            <button
+              onClick={() =>
+                setNamingGroup((open) =>
+                  open === null ? (plantGroupOf(plantPick.itemId)?.group ?? null) : null,
+                )
+              }
+              aria-pressed={namingGroup !== null}
+              className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-bold ${
+                namingGroup !== null ? "bg-ink text-black" : "bg-surface2 text-muted"
+              }`}
+            >
+              {plantPick.variantLabel ?? "Name it"}
+            </button>
+          </div>
+
+          {namingGroup !== null && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+              {/*
+                The category's own generic leads the list, exactly as it does
+                on the grid: an unnamed shrub is a real answer, and it has to
+                be reachable from inside the naming row or choosing a cultivar
+                would be a one-way door.
+              */}
+              <button
+                onClick={() => setPlantPick({ itemId: plantPick.itemId })}
+                className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-bold ${
+                  plantPick.variantId === undefined
+                    ? "bg-accent text-black"
+                    : "bg-surface2 text-muted"
+                }`}
+              >
+                Any {plantGroupOf(plantPick.itemId)?.label ?? "plant"}
+              </button>
+              {plantRows === null ? (
+                <span className="shrink-0 text-[0.7rem] text-muted">Loading names…</span>
+              ) : (
+                plantsInGroup(plantRows, namingGroup).map((row) => (
+                  <button
+                    key={row.id}
+                    onClick={() =>
+                      setPlantPick({
+                        itemId: plantPick.itemId,
+                        variantId: `plant:${row.id}`,
+                        variantLabel: row.name,
+                      })
+                    }
+                    className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-bold ${
+                      plantPick.variantId === `plant:${row.id}`
+                        ? "bg-accent text-black"
+                        : "bg-surface2 text-ink"
+                    }`}
+                  >
+                    {row.name}
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {aligning ? (
         <div className="shrink-0 mb-2 rounded-xl border border-accent bg-accent/10 p-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -1290,6 +1523,12 @@ export default function PlanPage({
             setStripPick(id ? (id.startsWith("event:") ? id : `photo:${id}`) : null)
           }
           selectedSurveyId={selectedSurveyId}
+          plants={plan.plants}
+          plantFace={plantFace}
+          selectedPlantId={selectedPlantId}
+          onSelectPlant={setSelectedPlantId}
+          onPlacePlant={placePlant}
+          onMovePlant={movePlant}
           pinsDraggable={mode === "review"}
           onMovePin={handleMovePin}
           rightAngle={rightAngle}
@@ -1552,10 +1791,67 @@ export default function PlanPage({
               }}
             />
           )}
+          {/*
+            THE PLANTS, AS A BILL RATHER THAN AS A LIST OF SYMBOLS.
+
+            Grouped by species, because twelve rows all saying "Shrub" is not
+            something anybody can read and the COUNT is the answer here — a
+            plant take-off is a schedule of quantities, which is exactly what
+            the proposal turns it into.
+
+            Above the shapes: a plan is read plants-first when there are any,
+            and a bill that sat under nine beds would need scrolling to.
+          */}
+          {plantKinds.length > 0 && (
+            <PlantsCard
+              kinds={plantKinds}
+              selected={selectedPlant}
+              selectedName={selectedPlant ? plantName(selectedPlant) : null}
+              onRemoveSelected={() => {
+                if (!selectedPlant) return;
+                removePlant(selectedPlant.id);
+                setSelectedPlantId(null);
+              }}
+              onNameSelected={() => {
+                if (!selectedPlant) return;
+                setTool("plant");
+                setPlantPick({
+                  itemId: selectedPlant.itemId,
+                  ...(selectedPlant.variantId
+                    ? {
+                        variantId: selectedPlant.variantId,
+                        variantLabel: selectedPlant.variantLabel,
+                      }
+                    : {}),
+                });
+                setNamingGroup(plantGroupOf(selectedPlant.itemId)?.group ?? null);
+              }}
+              onApplyPick={() => {
+                if (!selectedPlant) return;
+                setPlantVariant(
+                  selectedPlant.id,
+                  plantPick.variantId
+                    ? {
+                        variantId: plantPick.variantId,
+                        variantLabel: plantPick.variantLabel,
+                      }
+                    : null,
+                );
+              }}
+              pickLabel={plantPick.variantLabel ?? null}
+              onRemoveKind={(itemId, variantId) => {
+                removePlantsOfKind(itemId, variantId);
+                setSelectedPlantId(null);
+              }}
+              glyphFor={(itemId) => getItem(itemId)?.glyph ?? "🌿"}
+            />
+          )}
+
           {plan.shapes.length === 0 ? (
             <p className="px-1 text-xs leading-relaxed text-muted">
               No shapes yet. Draw a bed with Area or a run with Linear, and link
-              it to the assembly it buys.
+              it to the assembly it buys. Plant counts the third way: one tap,
+              one plant.
             </p>
           ) : (
             plan.shapes.map((shape) => (
@@ -2161,6 +2457,111 @@ function LayersCard({
  * those loads actually cover — so the gap between what was drawn and what will
  * be bought is on screen rather than discovered on the invoice.
  */
+/**
+ * The plant schedule: what is on the plan, by species and count.
+ *
+ * A card rather than a row per symbol. Twelve identical "Shrub" lines say
+ * nothing a single "Shrub x12" does not, and the schedule is what a plant
+ * take-off IS — the proposal reads exactly these numbers.
+ *
+ * The selected symbol gets its own strip at the bottom, which is where naming
+ * happens: you find out a bed wants three of something specific while looking
+ * at the plan, not while standing at the grid, so a plant placed generic has
+ * to be nameable where it stands.
+ */
+function PlantsCard({
+  kinds,
+  selected,
+  selectedName,
+  onRemoveSelected,
+  onNameSelected,
+  onApplyPick,
+  pickLabel,
+  onRemoveKind,
+  glyphFor,
+}: {
+  kinds: { key: string; itemId: string; variantId?: string; label: string; count: number }[];
+  selected: PlacedPlant | null;
+  selectedName: string | null;
+  onRemoveSelected: () => void;
+  onNameSelected: () => void;
+  onApplyPick: () => void;
+  pickLabel: string | null;
+  onRemoveKind: (itemId: string, variantId?: string) => void;
+  glyphFor: (itemId: string) => string;
+}) {
+  const total = kinds.reduce((sum, k) => sum + k.count, 0);
+  return (
+    <div className="shrink-0 rounded-2xl border border-edge bg-surface p-3">
+      <div className="mb-2 flex items-baseline justify-between">
+        <span className="text-xs font-bold text-ink">Plants</span>
+        <span className="text-xs tabular-nums text-muted">
+          {total} placed
+        </span>
+      </div>
+      <div className="flex flex-col gap-1">
+        {kinds.map((kind) => (
+          <div key={kind.key} className="flex items-center gap-2">
+            <span aria-hidden="true" className="shrink-0 text-sm">
+              {glyphFor(kind.itemId)}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-xs text-ink">
+              {kind.label}
+            </span>
+            <span className="shrink-0 text-xs font-bold tabular-nums text-ink">
+              ×{kind.count}
+            </span>
+            <button
+              onClick={() => onRemoveKind(kind.itemId, kind.variantId)}
+              title={`Remove all ${kind.count} ${kind.label}`}
+              className="shrink-0 rounded-lg bg-surface2 px-2 py-1 text-[0.65rem] font-bold text-muted"
+            >
+              Clear
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {selected && (
+        <div className="mt-2 border-t border-edge pt-2">
+          <p className="mb-1.5 truncate text-[0.7rem] font-bold text-ink">
+            {selectedName}
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={onNameSelected}
+              className="rounded-lg bg-surface2 px-2.5 py-1.5 text-[0.65rem] font-bold text-ink"
+            >
+              Name it
+            </button>
+            {/*
+              Only where a name is armed and it is not already this plant's.
+              A button that would do nothing is worse than no button — it says
+              there is something left to do.
+            */}
+            {pickLabel && pickLabel !== selected.variantLabel && (
+              <button
+                onClick={onApplyPick}
+                className="rounded-lg bg-accent px-2.5 py-1.5 text-[0.65rem] font-bold text-black"
+              >
+                Make it {pickLabel}
+              </button>
+            )}
+            <div className="flex-1" />
+            <button
+              onClick={onRemoveSelected}
+              title="Remove this plant"
+              className="rounded-lg bg-surface2 px-2.5 py-1.5 text-[0.65rem] font-bold text-[#fca5a5]"
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ShapeCard({
   shape,
   nodes,

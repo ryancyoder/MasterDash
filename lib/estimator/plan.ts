@@ -118,6 +118,37 @@ export interface PlanShape {
   photos?: ShapePhotoLink[];
 }
 
+/**
+ * One plant, standing where it will be planted.
+ *
+ * The third take-off, beside the area and the run — and the one that is
+ * COUNTED rather than measured. A bed is worth the square feet inside it; a
+ * tree is worth one tree wherever it stands, so the symbol on the plan is the
+ * quantity and there is nothing to derive from its geometry.
+ *
+ * It carries a `TileCommit`'s two fields rather than a catalog row, and that
+ * is what makes it land on the estimate at all: placing a Green Velvet boxwood
+ * on the map and tapping that same tile in the grid are one act on one line,
+ * exactly as drawing a bed and tapping Mulch Bed three times already are. The
+ * fields are spelled out here instead of importing `TileCommit`, because
+ * `types.ts` imports `PlanState` from this file and a runtime cycle between
+ * the two is not worth one type alias.
+ *
+ * `variantId` absent is the generic — an unnamed shrub — which is a perfectly
+ * good stopping point and prices identically. Refining sharpens the
+ * proposal's wording, not its arithmetic, the same rule the grid follows.
+ */
+export interface PlacedPlant {
+  id: string;
+  at: LatLng;
+  /** The generic catalog item: `mat:shrub`, `mat:shade_tree`, … */
+  itemId: string;
+  /** The cultivar, when one was chosen: `plant:123`. */
+  variantId?: string;
+  /** Its name, carried so a plan can label itself with no plant list loaded. */
+  variantLabel?: string;
+}
+
 /** A corner tapped while drawing: either a new position, or one that snapped. */
 export interface PendingPoint {
   at: LatLng;
@@ -173,6 +204,16 @@ export interface PlanState {
    */
   review: { sessionId: string; label: string } | null;
   shapes: PlanShape[];
+  /**
+   * Plants placed on the map, one symbol each.
+   *
+   * Beside `shapes` rather than among them: a shape is a ring or a run of
+   * corners that MEASURES something, and every operation on one — snapping,
+   * splitting a side, sharing an edge, rounding a corner — is meaningless for
+   * a point. Folding them together would mean a `type` field guarding half
+   * the file.
+   */
+  plants: PlacedPlant[];
   /** Overlay ids switched off for this estimate. Absence means shown. */
   hiddenOverlayIds: string[];
 }
@@ -186,6 +227,7 @@ export function emptyPlan(): PlanState {
     survey: null,
     review: null,
     shapes: [],
+    plants: [],
     hiddenOverlayIds: [],
   };
 }
@@ -495,4 +537,48 @@ export function topologyFrom(value: unknown): {
   }
 
   return { nodes: pruneNodes(nodes, shapes), shapes };
+}
+
+/**
+ * Placed plants, read back from a stored plan.
+ *
+ * Same discipline as `topologyFrom` above and for the same reason: this
+ * rebuilds each plant rather than casting the array, so a hand-edited or
+ * half-written estimate is safe to open — and so anything not named here is
+ * dropped on the next load. A plant with no position or no catalog item is
+ * a symbol that could be drawn nowhere and priced as nothing, so it goes.
+ */
+export function plantsFrom(value: unknown): PlacedPlant[] {
+  const v = (value ?? {}) as Record<string, unknown>;
+  const out: PlacedPlant[] = [];
+  const seen = new Set<string>();
+  for (const raw of Array.isArray(v.plants) ? v.plants : []) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    const at = latLngFrom(r.at);
+    if (!at) continue;
+    if (typeof r.itemId !== "string" || !r.itemId) continue;
+    // An id collision would have two symbols answering to one name, so the
+    // second is renamed rather than dropped: it is still a plant somebody
+    // placed, and the position is the part that matters.
+    const id = typeof r.id === "string" && r.id && !seen.has(r.id) ? r.id : planId("p");
+    seen.add(id);
+    out.push({
+      id,
+      at,
+      itemId: r.itemId,
+      ...(typeof r.variantId === "string" && r.variantId
+        ? { variantId: r.variantId }
+        : {}),
+      ...(typeof r.variantLabel === "string" && r.variantLabel
+        ? { variantLabel: r.variantLabel }
+        : {}),
+    });
+  }
+  return out;
+}
+
+/** How a placed plant reads: the cultivar where there is one, else the generic. */
+export function plantLabel(plant: PlacedPlant, genericName: string): string {
+  return plant.variantLabel?.trim() || genericName;
 }

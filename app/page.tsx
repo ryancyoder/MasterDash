@@ -13,6 +13,7 @@ import {
   assemblyCount,
   planShapeCount,
   assemblyIncrements,
+  planPlants,
   buildProposal,
   rollupCount,
 } from "@/lib/estimator/proposal";
@@ -222,6 +223,16 @@ export default function EstimatorPage() {
    * own taps so the grid shows what the job actually needs, and it is the
    * floor those tiles cannot be taken below.
    */
+  /**
+   * Plants standing on the plan, by selection key.
+   *
+   * A floor on the tile in exactly the way an assembly's loads are, and for
+   * the same reason: a long press giving one back would disagree with the
+   * take-off rather than change it. The symbol is removed on the plan, where
+   * it can be seen.
+   */
+  const planted = useMemo(() => planPlants(estimate), [estimate]);
+
   const derived = useMemo(
     () => assemblyIncrements(estimate),
     [estimate],
@@ -519,10 +530,13 @@ export default function EstimatorPage() {
     if (hasDepth(node)) {
       return subtreeItemIds(node).reduce((sum, id) => sum + (derived[id] ?? 0), 0);
     }
-    // A refined tap — a named plant, say — is never something an assembly
-    // produced, so only the generic tile carries a floor.
-    if (!node.commit || node.commit.variantId) return 0;
-    return derived[node.commit.itemId] ?? 0;
+    if (!node.commit) return 0;
+    // A refined tap is never something an ASSEMBLY produced, so only the
+    // generic tile carries that floor — but a plant IS placed by cultivar, so
+    // the named tile carries its own.
+    const fromPlan = planted[selectionKey(node.commit)] ?? 0;
+    if (node.commit.variantId) return fromPlan;
+    return (derived[node.commit.itemId] ?? 0) + fromPlan;
   };
 
   const countFor = (node: TileNode): number => {
@@ -536,6 +550,8 @@ export default function EstimatorPage() {
     const tapped = node.commit
       ? (estimate.taps[selectionKey(node.commit)] ?? 0)
       : 0;
+    // `locked` carries the placements, so a tile reads one honest number: two
+    // shrubs tapped here and three planted on the map is a tile saying five.
     return tapped + locked;
   };
 
@@ -595,10 +611,12 @@ export default function EstimatorPage() {
         hasDepth(c)
           ? rollupCount(estimate, subtreeItemIds(c)) > 0
           : c.commit
-            ? (estimate.taps[selectionKey(c.commit)] ?? 0) > 0
+            ? (estimate.taps[selectionKey(c.commit)] ?? 0) +
+                (planted[selectionKey(c.commit)] ?? 0) >
+              0
             : false,
       ),
-    [estimate],
+    [estimate, planted],
   );
 
   /**

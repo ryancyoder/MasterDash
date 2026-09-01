@@ -26,6 +26,7 @@ import { getItem, quantityFor, sellFor } from "./catalog";
 import {
   SECTION_ORDER,
   baseItemId,
+  selectionKey,
   type CatalogItem,
   type Estimate,
   type EstimatorSettings,
@@ -98,6 +99,57 @@ export function planBuckets(estimate: Estimate): Record<string, number> {
 }
 
 /**
+ * Plants the map take-off implies, per selection key.
+ *
+ * The counted take-off, against the two measured ones. A bed is worth the
+ * square feet inside it and needs `bucketsForMeasurement()` to say what that
+ * buys; a plant symbol is worth one plant, so this is arithmetic-free — it
+ * counts symbols by what they are of.
+ *
+ * Keyed the same way a tap is (`itemId` or `itemId::variantId`), which is the
+ * whole reason it lands anywhere useful: three Green Velvet boxwood placed on
+ * the plan and three tapped in the grid are six on one line, not two lines of
+ * three. Sold as `ea`, so the count IS the quantity — no increment, no ceiling,
+ * nothing rounded up to a load.
+ */
+export function planPlants(estimate: Estimate): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const plant of estimate.plan.plants) {
+    const key = selectionKey({ itemId: plant.itemId, variantId: plant.variantId });
+    out[key] = (out[key] ?? 0) + 1;
+  }
+  return out;
+}
+
+/** The cultivar names those keys carry, so a proposal can print them offline. */
+export function planPlantLabels(estimate: Estimate): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const plant of estimate.plan.plants) {
+    if (!plant.variantLabel) continue;
+    out[selectionKey({ itemId: plant.itemId, variantId: plant.variantId })] =
+      plant.variantLabel;
+  }
+  return out;
+}
+
+/**
+ * Taps plus what the plan planted — the counted twin of `effectiveBuckets()`.
+ *
+ * Everything that reads a quantity off a tile or prints one on a proposal goes
+ * through this, so the two ways of putting a shrub on a job agree by
+ * construction rather than by discipline. Placements stay OUT of the op log
+ * for the same reason a drawn bed's loads do: the plan is a document that
+ * merges newest-wins, and a projection can never be replayed twice.
+ */
+export function effectiveTaps(estimate: Estimate): Record<string, number> {
+  const out = { ...estimate.taps };
+  for (const [key, n] of Object.entries(planPlants(estimate))) {
+    out[key] = (out[key] ?? 0) + n;
+  }
+  return out;
+}
+
+/**
  * What the job actually needs: hand-tapped buckets plus the ones the plan
  * produced. Everything downstream — the proposal, the tile badges, the
  * material floors — reads this rather than `estimate.assemblyBuckets`, so the
@@ -126,14 +178,19 @@ export function buildProposal(
     return d;
   };
 
-  // 1. Direct taps.
-  for (const [key, taps] of Object.entries(estimate.taps)) {
+  // 1. Direct taps — and the plants standing on the plan, which are the same
+  //    thing counted a different way and therefore the same line.
+  const planted = planPlantLabels(estimate);
+  for (const [key, taps] of Object.entries(effectiveTaps(estimate))) {
     if (taps <= 0) continue;
     const item = getItem(baseItemId(key));
     // A key with no catalog row is a stale estimate from before a sync removed
     // the item. Skip it rather than pricing a ghost.
     if (!item) continue;
-    draftFor(key, item, estimate.labels[key] ?? item.name).taps += taps;
+    // The op log's label wins where there is one: it is what a person last
+    // chose on the grid, and a plant placed generic carries no label at all.
+    draftFor(key, item, estimate.labels[key] ?? planted[key] ?? item.name).taps +=
+      taps;
   }
 
   // 2. Assembly takeoffs, merged into the same lines.
@@ -246,7 +303,10 @@ export function estimateTotal(
 export function rollupCount(estimate: Estimate, itemIds: string[]): number {
   const wanted = new Set(itemIds);
   let total = 0;
-  for (const [key, taps] of Object.entries(estimate.taps)) {
+  // Effective, so a Plants folder lights up for shrubs that only exist as
+  // symbols on the plan. A folder that stayed dim with twelve trees drawn on
+  // the map would break the one promise the grid makes as a checklist.
+  for (const [key, taps] of Object.entries(effectiveTaps(estimate))) {
     if (wanted.has(baseItemId(key))) total += taps;
   }
   return total;
@@ -282,10 +342,17 @@ export function assemblyCount(estimate: Estimate): number {
   return Object.values(effectiveBuckets(estimate)).reduce((a, b) => a + b, 0);
 }
 
-/** Shapes that measure something, for the Plan tile badge. */
+/**
+ * What is on the plan, for the Plan tile badge.
+ *
+ * Shapes that measure something, PLUS the plants standing on it. A yard with
+ * twelve trees drawn on it and no beds is not an empty take-off, and a badge
+ * reading zero there says the plan holds nothing — which is the one thing a
+ * badge on a folder must never get wrong.
+ */
 export function planShapeCount(estimate: Estimate): number {
-  const { nodes, shapes } = estimate.plan;
-  return shapes.filter((s) => measurementOf(s, nodes) > 0).length;
+  const { nodes, shapes, plants } = estimate.plan;
+  return shapes.filter((s) => measurementOf(s, nodes) > 0).length + plants.length;
 }
 
 export const ALL_ASSEMBLY_IDS = ASSEMBLY_MODELS.map((m) => m.id);

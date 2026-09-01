@@ -1154,6 +1154,134 @@ try {
   ok("and a drag released off the canvas still writes nothing",
     placed.length === writesBefore, `${placed.length} writes`);
 
+  // 7c-vii. THE PLANT TAKE-OFF.
+  //
+  // The third tool, beside Area and Linear, and the only one that is COUNTED
+  // rather than measured. Everything here is really one claim checked from
+  // several sides: a plant placed on the map and the same plant tapped on the
+  // grid are ONE line, because the map is another way of entering the estimate
+  // rather than a second estimate that has to be reconciled with it.
+  const plantGreen = () =>
+    page.evaluate(() => {
+      const c = document.querySelector("canvas");
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        // #22c55e, the plant categories' shared tile colour, drawn at 80% over
+        // whatever is under it — so a hue test rather than an exact value.
+        // Greener than it is red AND greener than it is blue, by margins that
+        // survive the disc being 80% over whatever is beneath it — including
+        // the magenta test layer, where a plain "blue is low" test would fail.
+        if (d[i + 1] > 120 && d[i + 1] - d[i] > 40 && d[i + 1] - d[i + 2] > 25) n++;
+      }
+      return n;
+    });
+
+  const greenBefore = await plantGreen();
+  await page.click('button:text-is("Plant")');
+  await page.waitForTimeout(250);
+  ok("the plan has a Plant tool beside Area and Linear",
+    (await page.locator('button:text-is("Plant")').count()) === 1);
+  ok("and it arms with the same six categories the grid holds",
+    (await page.locator('button:has-text("Shade Tree")').count()) >= 1 &&
+      (await page.locator('button:has-text("Perennial")').count()) >= 1);
+
+  // Two taps, two plants. No pending state, no Finish — a plant is one point
+  // and it is complete the moment it exists, which is the whole difference
+  // from drawing a bed.
+  const canvasNow = await page.locator("canvas").boundingBox();
+  await page.mouse.click(canvasNow.x + 300, canvasNow.y + 150);
+  await page.waitForTimeout(200);
+  await page.mouse.click(canvasNow.x + 360, canvasNow.y + 190);
+  await page.waitForTimeout(400);
+
+  // READ THE CANVAS. A count in a card is exactly what would still be right
+  // against a build that never drew the symbol, which is the failure this
+  // screen has already had once with a layer.
+  const greenAfter = await plantGreen();
+  ok("A TAP PLANTS ONE, AND IT IS DRAWN ON THE MAP",
+    greenAfter > greenBefore + 200, `${greenBefore} then ${greenAfter}`);
+
+  const columnText = async () => (await page.textContent("aside")) ?? "";
+  ok("and the column keeps a schedule rather than a list of symbols",
+    /Shrub/.test(await columnText()) && /\u00d72/.test(await columnText()),
+    (await columnText()).slice(0, 200));
+
+  // The claim itself, read off the ESTIMATE the app actually stores.
+  const planted = () =>
+    page.evaluate(() => {
+      const e = JSON.parse(localStorage.getItem("qe-estimate") ?? "{}");
+      return {
+        plants: (e?.plan?.plants ?? []).map((p) => p.itemId),
+        taps: e?.taps ?? {},
+      };
+    });
+  const afterPlacing = await planted();
+  ok("two shrubs are on the plan", afterPlacing.plants.length === 2,
+    JSON.stringify(afterPlacing.plants));
+  ok("and NOT in the op log — the plan is a document, not a counter",
+    (afterPlacing.taps["mat:shrub"] ?? 0) === 0, JSON.stringify(afterPlacing.taps));
+
+  // Back on the grid: the Plants folder has to light up, or the checklist the
+  // whole grid is stops being trustworthy.
+  await page.click("text=/^\u2039/");
+  await page.waitForSelector("main button.aspect-square");
+  const plantsTile = await page.$$eval("main button.aspect-square", (els) =>
+    els.map((b) => b.textContent ?? "").find((t) => /Plants/.test(t)) ?? "");
+  ok("THE PLANTS TILE COUNTS WHAT IS ON THE MAP",
+    /2/.test(plantsTile), plantsTile);
+
+  // And back into the plan, to take one away. Removing is done where the
+  // symbol is: the grid's long press gives back a TAP, and a placement is not
+  // one — the tile carries it as a floor exactly as an assembly's loads are.
+  const planAgain = await page.$$eval("main button.aspect-square", (els) =>
+    els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
+  await page.locator("main button.aspect-square").nth(planAgain).click();
+  await page.waitForSelector('button:text-is("Plant")', { timeout: 15000 });
+  await page.waitForTimeout(900);
+
+  await page.click('button:text-is("Select")');
+  await page.waitForTimeout(200);
+
+  // Coming back is a fresh mount, and a fresh mount FITS the map to what is
+  // drawn — so the symbols are no longer where they were tapped. Find one on
+  // screen instead of assuming: the first green pixel scanning top-left is on
+  // the rim of a disc, and a 13px disc's rim is well inside the 20px grab
+  // radius a thumb is given. Assuming the old coordinates is how this check
+  // passed for the wrong reason the first time it was written.
+  const canvasBack = await page.locator("canvas").boundingBox();
+  const onAPlant = await page.evaluate(() => {
+    const c = document.querySelector("canvas");
+    const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 1] > 120 && d[i + 1] - d[i] > 40 && d[i + 1] - d[i + 2] > 25) {
+        const px = (i / 4) % c.width;
+        const py = Math.floor(i / 4 / c.width);
+        // Canvas pixels are device pixels; the box is CSS pixels.
+        return { x: px / (c.width / c.getBoundingClientRect().width),
+                 y: py / (c.height / c.getBoundingClientRect().height) };
+      }
+    }
+    return null;
+  });
+  ok("a symbol is still on screen after the map re-fits to it", onAPlant !== null);
+  await page.mouse.click(canvasBack.x + (onAPlant?.x ?? 0), canvasBack.y + (onAPlant?.y ?? 0));
+  await page.waitForTimeout(300);
+  ok("tapping a symbol in Select picks it rather than planting another",
+    (await page.locator('button[title="Remove this plant"]').count()) === 1 &&
+      (await planted()).plants.length === 2);
+  // Guarded, because a build that cannot pick a plant has no Remove button to
+  // press — and an unguarded click there does not fail this check, it THROWS
+  // and takes every check after it out of existence. A crashed test is not a
+  // failing test; the sweep would report a smaller suite, not a red one.
+  if ((await page.locator('button[title="Remove this plant"]').count()) === 1) {
+    await page.locator('button[title="Remove this plant"]').click();
+    await page.waitForTimeout(400);
+  }
+  ok("and Remove takes that one away",
+    (await planted()).plants.length === 1,
+    JSON.stringify((await planted()).plants));
+
   await page.click('button:text-is("Visit")');
   await page.waitForTimeout(200);
   ok("and the switch goes back to the visit's own",

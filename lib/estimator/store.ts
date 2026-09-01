@@ -4,6 +4,7 @@ import {
   emptyPlan,
   nextShapeColor,
   planId,
+  plantsFrom,
   pruneNodes,
   topologyFrom,
   type NodeSurveyLink,
@@ -231,6 +232,7 @@ function planFrom(value: unknown): PlanState {
           }
         : null,
     shapes,
+    plants: plantsFrom(v),
     hiddenOverlayIds: Array.isArray(v.hiddenOverlayIds)
       ? v.hiddenOverlayIds.filter((id): id is string => typeof id === "string")
       : [],
@@ -356,7 +358,11 @@ function mutate(fn: (draft: Estimate) => void) {
     // Shapes are replaced wholesale by every plan reducer below, so the array
     // is copied here and its members are never mutated in place — a dragged
     // vertex must not reach through the snapshot React last rendered.
-    plan: { ...current.plan, shapes: [...current.plan.shapes] },
+    plan: {
+      ...current.plan,
+      shapes: [...current.plan.shapes],
+      plants: [...current.plan.plants],
+    },
     visit: { ...current.visit, findings: [...current.visit.findings] },
     updatedAt: new Date().toISOString(),
   };
@@ -575,6 +581,89 @@ export function addShape(
     };
   });
   return shapeId;
+}
+
+/**
+ * Plant one, where the finger went down.
+ *
+ * A tap, not a drawing: there is no pending state, no finish button and no
+ * minimum number of corners, because a plant is one point and it is complete
+ * the moment it exists. It is placed generic-or-named exactly as the tile
+ * grid commits — `variantId` absent is an unnamed shrub, which prices the
+ * same and reads as "Shrub" on the proposal.
+ */
+export function addPlant(
+  at: LatLng,
+  commit: { itemId: string; variantId?: string; variantLabel?: string },
+): string {
+  const id = planId("plant");
+  mutatePlan((plan) => ({
+    ...plan,
+    plants: [
+      ...plan.plants,
+      {
+        id,
+        at,
+        itemId: commit.itemId,
+        ...(commit.variantId ? { variantId: commit.variantId } : {}),
+        ...(commit.variantLabel ? { variantLabel: commit.variantLabel } : {}),
+      },
+    ],
+  }));
+  return id;
+}
+
+/** Move one, on release. Same one-write-per-drag rule a corner follows. */
+export function movePlant(id: string, at: LatLng) {
+  mutatePlan((plan) => ({
+    ...plan,
+    plants: plan.plants.map((p) => (p.id === id ? { ...p, at } : p)),
+  }));
+}
+
+/**
+ * Name one that was planted generic, or rename it.
+ *
+ * The plan is where you find out a bed wants three of something specific, and
+ * walking back to the grid to place it again would leave two symbols where one
+ * plant is going. Clearing the variant is deliberately possible — the generic
+ * is a valid answer, not a failure to finish.
+ */
+export function setPlantVariant(
+  id: string,
+  variant: { variantId?: string; variantLabel?: string } | null,
+) {
+  mutatePlan((plan) => ({
+    ...plan,
+    plants: plan.plants.map((p) =>
+      p.id === id
+        ? {
+            id: p.id,
+            at: p.at,
+            itemId: p.itemId,
+            ...(variant?.variantId ? { variantId: variant.variantId } : {}),
+            ...(variant?.variantLabel ? { variantLabel: variant.variantLabel } : {}),
+          }
+        : p,
+    ),
+  }));
+}
+
+export function removePlant(id: string) {
+  mutatePlan((plan) => ({
+    ...plan,
+    plants: plan.plants.filter((p) => p.id !== id),
+  }));
+}
+
+/** Every plant of one species, gone at once — the way a card is cleared. */
+export function removePlantsOfKind(itemId: string, variantId?: string) {
+  mutatePlan((plan) => ({
+    ...plan,
+    plants: plan.plants.filter(
+      (p) => !(p.itemId === itemId && (p.variantId ?? undefined) === variantId),
+    ),
+  }));
 }
 
 /**
@@ -960,8 +1049,15 @@ export function mergeRemote(
     // drew. An empty remote plan never replaces one with work in it, for the
     // same reason an empty job name does not un-name this estimate — an
     // estimate saved before anyone drew is not evidence the drawing should go.
+    //
+    // "Work in it" counts PLANTS as well as shapes. A yard taken off as
+    // twelve trees and no beds is a real take-off, and reading it as empty
+    // would silently discard the whole of it on the next merge — the one
+    // failure this guard exists to prevent, arrived at from the other side.
     plan:
-      remoteNewer && remotePlan && remotePlan.shapes.length > 0
+      remoteNewer &&
+      remotePlan &&
+      (remotePlan.shapes.length > 0 || remotePlan.plants.length > 0)
         ? remotePlan
         : current.plan,
     // Same rule as the plan and the job name: a remote visit with no

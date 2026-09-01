@@ -601,6 +601,85 @@ The whole module is checked against a Vincenty inverse on WGS84. Distances
 agree to under a millimetre over a kilometre, and a 100 m square comes back at
 107,639 sq ft exactly.
 
+#### The third take-off: plants are counted, not measured
+
+Area and Linear measure; **Plant** counts. A bed is worth the square feet
+inside it, a run is worth its length, and a tree is worth one tree wherever it
+stands — so the plant tool has no pending state, no Finish button and no
+minimum number of corners. One tap is a whole plant.
+
+**A placement commits the same `TileCommit` a tile does**, and that is the
+whole design. The six categories on the plan's plant row are exactly the six
+in the grid's Plants folder (`PLANT_GROUPS`, now exported for that reason),
+and a symbol is stored as `itemId` plus an optional `variantId` — the same
+`itemId::variantId` key a tapped tile writes. Three Green Velvet boxwood placed
+on the map and three tapped on the grid are therefore **six on one proposal
+line**, not two lines of three. It is the same sentence the drawn bed already
+answers to: *drawing a 1,200 sq ft bed and tapping Mulch Bed three times are
+the same act*.
+
+**Placements are projected, never logged.** `planPlants()` counts symbols and
+`effectiveTaps()` adds them to the tapped ones, exactly as `planBuckets()` and
+`effectiveBuckets()` already do for drawn shapes. They stay out of the op log
+for the reason the loads do: the plan is a document that merges newest-wins, so
+a projection can never be replayed twice, while an op can. The consequence
+worth stating is that a long press on the tile cannot give a placement back —
+the tile carries it as a **floor**, the same way an assembly's loads are a
+floor, and the symbol is removed on the plan where it can be seen.
+
+**Refining is optional and reversible, both ways.** `variantId` absent is the
+generic — an unnamed shrub — which prices identically and prints as "Shrub":
+refining sharpens the proposal's wording, not its arithmetic, which is the
+grid's own rule. The naming row is the plan's version of the long press, and a
+plant placed generic can be named where it stands, because finding out a bed
+wants three of something specific happens while looking at the plan, not while
+standing at the grid. The cultivar's name rides on the placement, so a proposal
+built with no plant list loaded still says which boxwood. All 962 rows are
+fetched only when the naming row is first opened — the categories work with
+nothing loaded, which is what makes the generic a real stopping point.
+
+**A symbol wears its CATEGORY's face**, in screen pixels:
+
+- The glyph and colour are the catalog item's, so a row of tiles and a row of
+  symbols read as one product. A named boxwood is still a shrub; a plan that
+  gave every cultivar its own mark would need a legend before it could be read.
+- **Screen pixels, not ground feet.** A symbol says "one shrub here" — it is a
+  notation, not a claim about a canopy. Upright's spread ring is ground-scaled
+  because somebody typed a spread; nothing here has, and a ground-scaled symbol
+  would make a bed of perennials unreadable at exactly the zoom they are placed
+  at.
+- **Drawn over the beds**, because a shrub stands *in* one, and hit-tested
+  first for the same reason — whatever is drawn on top has to be what you grab,
+  or a shrub on a bed corner could never be picked up at all.
+- No snapping when dragged. A corner snaps because two shapes sharing an edge
+  must share the corner itself; nothing is ever measured *between* two plants.
+
+**Beside `shapes`, not among them.** Every operation a shape has — snapping,
+splitting a side, sharing an edge, rounding a corner — is meaningless for a
+point, and folding them together would mean a `type` field guarding half of
+`plan.ts`.
+
+**One bug this turned up on the way in**, in code that predates it: the merge
+guard adopted a remote plan only when `shapes.length > 0`. A yard taken off as
+twelve trees and no beds would have read as empty and been discarded whole on
+the next merge — the exact failure that guard exists to prevent, arrived at
+from the other side. `planShapeCount()` had the same blind spot, so the Plan
+tile read zero over a plan with plants on it.
+
+**Checked on both sides.** `test:plan` pins the arithmetic and the read-back
+(a cultivar counts on its own key, placed plus tapped is one number *and* one
+proposal line priced for five, an unnamed plant still prints a name, a
+duplicate id is renamed rather than dropped so removing one cannot remove two,
+an empty variant reads as the generic). `test:board-ui` drives the real canvas
+and counts the symbol's own pixels — a count in a card is exactly what would
+still be right against a build that never drew anything, which is the failure
+this screen has already had once with a layer. It also checks that the estimate
+holds the placements and that `taps` stays empty, that the Plants tile counts
+them back on the grid, and that a tap in Select picks a symbol rather than
+planting another. Mutation-tested: cutting the projection turns 5 checks red,
+folding cultivars into the generic turns 3, keeping duplicate ids turns 1, and
+never drawing the symbol turns 4.
+
 #### Corners are shared, not copied
 
 A mulch bed and the lawn beside it meet along an edge. Those are not two

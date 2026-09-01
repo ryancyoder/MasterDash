@@ -22,7 +22,15 @@ import { ITEMS, getItem } from "./catalog";
 import type { CatalogItem, TileNode } from "./types";
 
 /** Plant categories at L2, each opening its slice of the 962-row plant list. */
-const PLANT_GROUPS: { itemId: string; group: string; label: string }[] = [
+/**
+ * The six plant categories, and the catalog item each one buys.
+ *
+ * Exported because the plan's plant take-off arms from exactly this list: the
+ * symbol you place on the map and the tile you tap in the grid have to be the
+ * same six things, or the two ways of putting a shrub on a job would drift
+ * into two different vocabularies.
+ */
+export const PLANT_GROUPS: { itemId: string; group: string; label: string }[] = [
   { itemId: "mat:shade_tree", group: "shade_tree", label: "Shade Tree" },
   { itemId: "mat:ornamental_tree", group: "ornamental_tree", label: "Ornamental" },
   { itemId: "mat:evergreen_tree", group: "evergreen_tree", label: "Evergreen" },

@@ -14,7 +14,21 @@ import {
   withoutPhotoLink,
   type ShapePhotoLink,
 } from "../lib/estimator/photoLink.ts";
-import { topologyFrom, type PlanShape } from "../lib/estimator/plan.ts";
+import {
+  emptyPlan,
+  plantsFrom,
+  topologyFrom,
+  type PlacedPlant,
+  type PlanShape,
+} from "../lib/estimator/plan.ts";
+import {
+  buildProposal,
+  effectiveTaps,
+  planPlants,
+  planShapeCount,
+  rollupCount,
+} from "../lib/estimator/proposal.ts";
+import { DEFAULT_ESTIMATOR_SETTINGS, type Estimate } from "../lib/estimator/types.ts";
 import {
   pendingTakeoffs,
   photoTakeoffLabel,
@@ -514,6 +528,132 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     "nor a layer with no ground width at all",
     zoomCeiling(BASE, [{ georef: plan({ widthM: 0 }), widthPx: 4000 }]) === BASE,
   );
+}
+
+// --- The plant take-off ----------------------------------------------------
+//
+// The third one, beside the area and the run, and the only one that is COUNTED
+// rather than measured. Everything below is about the one property that makes
+// it worth having: a plant placed on the map and the same plant tapped on the
+// grid are ONE line on the proposal, because the map is another way of
+// entering the estimate rather than a second estimate.
+
+{
+  const estimateWith = (over: Partial<Estimate> = {}): Estimate => ({
+    clientId: "e1",
+    jobName: "",
+    dealId: null,
+    propertyId: null,
+    taps: {},
+    labels: {},
+    assemblyBuckets: {},
+    ops: [],
+    plan: emptyPlan(),
+    visit: { transcript: "", source: null, findings: [], extractedFrom: null },
+    updatedAt: "2026-09-01T00:00:00.000Z",
+    ...over,
+  } as Estimate);
+
+  const plant = (id: string, over: Partial<PlacedPlant> = {}): PlacedPlant => ({
+    id,
+    at: { lat: 41.31, lng: -87.15 },
+    itemId: "mat:shrub",
+    ...over,
+  });
+
+  const withPlants = (plants: PlacedPlant[], over: Partial<Estimate> = {}) =>
+    estimateWith({ plan: { ...emptyPlan(), plants }, ...over });
+
+  // 1. Counting. No arithmetic at all, which is the difference from a bed:
+  //    1,200 sq ft has to be divided by a load size before it means anything,
+  //    and three shrubs are three shrubs.
+  ok("nothing planted counts as nothing",
+    Object.keys(planPlants(estimateWith())).length === 0);
+
+  const three = withPlants([plant("a"), plant("b"), plant("c")]);
+  ok("three of one kind count as three", planPlants(three)["mat:shrub"] === 3);
+
+  // 2. A cultivar is its OWN line, keyed exactly as a refined tap is. This is
+  //    the join: get the key wrong and the map quietly opens a second line
+  //    beside the grid's, which is the failure this whole design avoids.
+  const mixed = withPlants([
+    plant("a"),
+    plant("b", { variantId: "plant:12", variantLabel: "Green Velvet Boxwood" }),
+    plant("c", { variantId: "plant:12", variantLabel: "Green Velvet Boxwood" }),
+    plant("d", { itemId: "mat:shade_tree" }),
+  ]);
+  const counts = planPlants(mixed);
+  ok("a named cultivar counts on its own key",
+    counts["mat:shrub::plant:12"] === 2, JSON.stringify(counts));
+  ok("and the generic beside it keeps its own", counts["mat:shrub"] === 1);
+  ok("as does another category entirely", counts["mat:shade_tree"] === 1);
+
+  // 3. The join itself: placed plus tapped, on one key.
+  const both = withPlants([plant("a"), plant("b")], { taps: { "mat:shrub": 3 } });
+  ok("PLACED AND TAPPED ARE ONE NUMBER, not two",
+    effectiveTaps(both)["mat:shrub"] === 5, JSON.stringify(effectiveTaps(both)));
+  ok("and the raw taps are left alone, since the plan is not an op",
+    both.taps["mat:shrub"] === 3);
+
+  // 4. And one LINE on the proposal, which is the claim that actually matters
+  //    — the two above could both hold with the proposal still printing twice.
+  const proposal = buildProposal(both, DEFAULT_ESTIMATOR_SETTINGS);
+  const shrubLines = proposal.lines.filter((l) => l.key === "mat:shrub");
+  ok("ONE PROPOSAL LINE, carrying both", shrubLines.length === 1,
+    JSON.stringify(proposal.lines.map((l) => l.key)));
+  ok("and it is priced for five", (shrubLines[0]?.quantity ?? 0) === 5,
+    JSON.stringify(shrubLines[0] ?? null));
+
+  // A plant placed generic and never named still prints as something a
+  // person can read, rather than as a catalog id.
+  const generic = buildProposal(withPlants([plant("a")]), DEFAULT_ESTIMATOR_SETTINGS);
+  ok("an unnamed plant still prints a name",
+    (generic.lines.find((l) => l.key === "mat:shrub")?.label ?? "").length > 0,
+    JSON.stringify(generic.lines.find((l) => l.key === "mat:shrub") ?? null));
+
+  // The cultivar's name rides on the placement, so a proposal built with no
+  // plant list loaded still says which boxwood.
+  const named = buildProposal(
+    withPlants([plant("a", { variantId: "plant:12", variantLabel: "Green Velvet Boxwood" })]),
+    DEFAULT_ESTIMATOR_SETTINGS,
+  );
+  ok("a cultivar's name reaches the proposal without the plant list",
+    named.lines.find((l) => l.key === "mat:shrub::plant:12")?.label ===
+      "Green Velvet Boxwood");
+
+  // 5. The checklist. A Plants folder that stayed dim with twelve shrubs on
+  //    the map would break the one promise the grid makes.
+  ok("the folder rollup sees them", rollupCount(three, ["mat:shrub"]) === 3);
+  ok("and the Plan tile does not read as empty",
+    planShapeCount(three) === 3, String(planShapeCount(three)));
+
+  // 6. Read back from storage. Same discipline as topologyFrom: rebuilt, not
+  //    cast, so a hand-edited or half-written estimate opens.
+  ok("a plant round-trips", plantsFrom({ plants: [plant("a")] }).length === 1);
+  ok("one with no position is not a plant",
+    plantsFrom({ plants: [{ id: "x", itemId: "mat:shrub" }] }).length === 0);
+  ok("nor one with no catalog item",
+    plantsFrom({ plants: [{ id: "x", at: { lat: 41, lng: -87 } }] }).length === 0);
+  ok("a plan with no plants at all reads as none", plantsFrom({}).length === 0);
+  ok("and so does a plants field that is not a list",
+    plantsFrom({ plants: "shrubs" }).length === 0);
+
+  // Two symbols answering to one id would make removing one remove both. The
+  // second is RENAMED rather than dropped — it is still a plant somebody
+  // placed, and the position is the part that matters.
+  const collided = plantsFrom({ plants: [plant("dup"), plant("dup")] });
+  ok("a duplicate id is renamed, not dropped",
+    collided.length === 2 && collided[0].id !== collided[1].id,
+    JSON.stringify(collided.map((p) => p.id)));
+
+  // The variant fields are optional and must stay optional: a generic that
+  // came back carrying an empty label would print as a nameless cultivar.
+  const blank = plantsFrom({
+    plants: [{ ...plant("a"), variantId: "", variantLabel: "" }],
+  });
+  ok("an empty variant reads as the generic",
+    blank[0]?.variantId === undefined && blank[0]?.variantLabel === undefined,
+    JSON.stringify(blank[0] ?? null));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
