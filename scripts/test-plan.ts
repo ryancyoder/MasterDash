@@ -27,11 +27,15 @@ import {
   planViewFrom,
   pxPerWorldFor,
   mergeLayerRows,
+  overlayNativePxPerWorld,
   shouldAdoptAnchor,
   visibleOverlays,
+  zoomCeiling,
+  ZOOM_MAGNIFY,
   type MapAnchor,
   type MapOverlay,
 } from "../lib/estimator/mapLayers.ts";
+import { metresPerWorldUnit, type Georef } from "../lib/estimator/geo.ts";
 
 let pass = 0;
 let fail = 0;
@@ -397,6 +401,119 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   ok("nor one with no centre", planViewFrom({ metresPerPixel: 0.3 }) === null);
   ok("nor a centre that is not one", planViewFrom({ centre: { lat: "x" }, metresPerPixel: 0.3 }) === null);
   ok("and null is no view, which is the fit", planViewFrom(null) === null);
+}
+
+// --- How far in the map may zoom ------------------------------------------
+//
+// The complaint this answers: an imported plan is sharper than the satellite
+// under it, and the map stopped at the satellite's limit — so the detail
+// somebody imported the drawing for could not be reached, and a zoom that
+// simply stops reads as the map being broken rather than as a rule.
+
+{
+  const TILE = 256;
+  const BASE = TILE * 2 ** 21; // the satellite's own ceiling
+  const centre = { lat: 41.32, lng: -87.2 };
+
+  const plan = (over: Partial<Georef> = {}): Georef => ({
+    centre,
+    widthM: 30,
+    aspect: 0.75,
+    rotDeg: 0,
+    ...over,
+  });
+
+  ok("with nothing imported the ceiling is the satellite's", zoomCeiling(BASE, []) === BASE);
+
+  // A row exists before its bytes do. Until the image has decoded there is no
+  // resolution to read, and guessing one would let the ceiling jump about as
+  // layers load.
+  ok(
+    "a layer whose image has not decoded raises nothing",
+    zoomCeiling(BASE, [{ georef: plan(), widthPx: 0 }]) === BASE,
+  );
+
+  // Independent of the function: a 30 m plan spans widthM / metresPerWorldUnit
+  // of the Mercator world at this latitude, so 4000 image pixels across it is
+  // that many pixels per World unit at 1:1.
+  const worldWidth = 30 / metresPerWorldUnit(centre.lat);
+  const expected = 4000 / worldWidth;
+  const native = overlayNativePxPerWorld(plan(), 4000);
+  // Within 0.3%, and the slack is the point rather than sloppiness: this side
+  // goes through `georefCorners`, which converts local metres with the
+  // ELLIPSOID's radii, while `metresPerWorldUnit` uses the spherical one. They
+  // disagree by a measured 0.146% here, which is the same documented
+  // approximation `cornersWorld` already carries — a difference of a
+  // millimetre and a half over a 30 m plan, and nothing a zoom ceiling can
+  // care about. A wrong factor or a squared term would be orders out, not a
+  // tenth of a percent.
+  ok(
+    "a layer's native resolution is its pixels over its ground width",
+    Math.abs(native - expected) / expected < 3e-3,
+    `${native} vs ${expected}`,
+  );
+
+  // 4000px over 30m is about 7mm of ground per image pixel — far finer than
+  // Esri's deepest tile, which is the whole reason for this.
+  ok("which for a photographed survey is far past the satellite", native > BASE * 4,
+    `${native / BASE}x base`);
+
+  const ceiling = zoomCeiling(BASE, [{ georef: plan(), widthPx: 4000 }]);
+  ok(
+    "and the ceiling is that, magnified by the same allowance the aerial gets",
+    Math.abs(ceiling - native * ZOOM_MAGNIFY) < 1e-6,
+  );
+
+  // The failure this guards is the obvious one: a low-resolution layer must
+  // not be able to take zoom AWAY from the satellite underneath it.
+  const coarse = zoomCeiling(BASE, [{ georef: plan({ widthM: 300 }), widthPx: 500 }]);
+  ok("a coarse layer never lowers the ceiling", coarse === BASE);
+
+  ok(
+    "the sharpest layer wins, whatever order they come in",
+    zoomCeiling(BASE, [
+      { georef: plan({ widthM: 300 }), widthPx: 500 },
+      { georef: plan(), widthPx: 4000 },
+      { georef: plan({ widthM: 60 }), widthPx: 1000 },
+    ]) === ceiling,
+  );
+
+  // Scale a plan down and the same pixels cover less ground, so it resolves
+  // finer and the ceiling has to follow it in — the case that makes this a
+  // live number rather than one settled at import.
+  const half = zoomCeiling(BASE, [{ georef: plan({ widthM: 15 }), widthPx: 4000 }]);
+  ok("halving a plan's ground width doubles its reach",
+    Math.abs(half - ceiling * 2) / ceiling < 1e-3, `${half / ceiling}`);
+
+  // Turning a plan does not change how much detail is in it. Worth pinning:
+  // the resolution is read off the placed top edge, so a bug in the corner
+  // maths would show up as a ceiling that moved when the plan was rotated.
+  //
+  // It moves by a measured 0.38% at 90° and nothing at 0° or 180°, which is
+  // not this function: the local frame's metres-per-degree differ by axis
+  // (ellipsoid again) while Mercator's scale does not, so a north-south metre
+  // and an east-west one land 0.4% apart in World space. Half a percent on a
+  // ceiling is invisible; half a percent on a measurement would not be, which
+  // is why the number is written down here rather than left as a loose bound.
+  const turned = zoomCeiling(BASE, [{ georef: plan({ rotDeg: 30 }), widthPx: 4000 }]);
+  const square = zoomCeiling(BASE, [{ georef: plan({ rotDeg: 90 }), widthPx: 4000 }]);
+  const flipped = zoomCeiling(BASE, [{ georef: plan({ rotDeg: 180 }), widthPx: 4000 }]);
+  ok("rotating a plan does not change its resolution",
+    Math.abs(turned - ceiling) / ceiling < 5e-3 &&
+      Math.abs(square - ceiling) / ceiling < 5e-3,
+    `${(turned / ceiling - 1) * 100}% / ${(square / ceiling - 1) * 100}%`);
+  ok("and turning it right over changes it not at all",
+    Math.abs(flipped - ceiling) / ceiling < 1e-9);
+
+  // Nonsense in, no extra reach out — a decoded width should never be these,
+  // but the ceiling divides the canvas transform and a NaN would take the map
+  // down rather than just misbehave.
+  ok("a negative width raises nothing", zoomCeiling(BASE, [{ georef: plan(), widthPx: -4000 }]) === BASE);
+  ok("nor a NaN", zoomCeiling(BASE, [{ georef: plan(), widthPx: Number.NaN }]) === BASE);
+  ok(
+    "nor a layer with no ground width at all",
+    zoomCeiling(BASE, [{ georef: plan({ widthM: 0 }), widthPx: 4000 }]) === BASE,
+  );
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

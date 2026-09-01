@@ -1163,6 +1163,65 @@ comes back, and counts the layer's magenta pixels. Against a build that ignores
 the saved view it reports **18,632 locked, 72,092 on return** — and 72,092 is
 exactly the fit's own framing.
 
+#### How far in the map may zoom
+
+Reported from the field: *the map seems to restrict zooming to a certain point,
+but more detailed overlays should allow the user to zoom in more.*
+
+The old ceiling was one number for everybody — four times Esri's deepest tile,
+matching Upright's `maxZoom` of 21 over a `maxNativeZoom` of 19. That is the
+right answer when the aerial is all there is. Past z19 there is no more
+imagery, only magnification, and the two doublings on top exist so a **vertex
+is placeable more precisely than the pixels it is placed against**: nudging a
+bed corner half a pixel is not a gesture anyone can make.
+
+**A plan is not bound by the satellite's limit, and that is the whole point of
+importing one.** A survey photographed at 2048px across a 60 ft yard resolves
+about **7mm of ground per image pixel**; the satellite's own floor here is
+**5.6cm**. Capping the map at the aerial's limit therefore hid detail by an
+order of magnitude — a dimension string, a spot elevation, the difference
+between two hatch patterns — and hid it *silently*, because a zoom that stops
+does not read as a rule, it reads as the map being stuck.
+
+So `zoomCeiling()` takes the satellite's ceiling as a **floor** and raises it to
+whatever the sharpest drawn layer is worth: that layer's own resolution (one
+image pixel to one canvas pixel), times the same magnification allowance the
+aerial gets, for the same reason. The reachable ground scale then works out at
+`widthM / (4 x widthPx)` — independent of latitude, since the metres-per-World
+term cancels.
+
+Four properties fall out of deriving it rather than picking a bigger constant:
+
+- **A coarse layer never takes zoom away.** The ceiling is a maximum over the
+  layers and the satellite, so an 8px scan of a site plan leaves the map
+  behaving exactly as it did before anybody imported anything.
+- **It follows the layer.** Scale a plan down and the same pixels cover less
+  ground, so it resolves finer and the ceiling rises with it — live, mid-pinch,
+  because having to let go before the map would follow you in is the same stuck
+  feeling. Hide the layer, or remove it, and the extra reach goes with it; the
+  view is clamped back there and then rather than snapping on the next touch.
+- **It waits for the bytes.** A layer's resolution is not known until its image
+  has decoded, so the recount hangs off `assetVersion` and not off the row
+  arriving. Miss that and the first plan of a session stays capped until
+  something else happens to force a recount.
+- **The tiles are unaffected.** `zoomForScale()` already clamps to
+  `MAX_NATIVE_ZOOM`, so past z19 the aerial is simply enlarged underneath a
+  plan that stays sharp — which is the honest picture of what is known.
+
+**Verified through the clamp, not only through the arithmetic.** This codebase
+has been caught before with maths verified and rendering not, so `test:plan`
+pins the pure function (a coarse layer raises nothing, the sharpest wins,
+halving a plan's ground width doubles its reach, rotating it changes nothing,
+a NaN width raises nothing) and `test:board-ui` drives the real canvas: zoom in
+until the map refuses, **lock the view** — which is what writes the reached
+ground scale somewhere a test can read it — and check the number. It comes back
+at **0.0560 m/px** with the 8px layer, which is the satellite's own limit
+derived independently as `2 pi a cos(lat) / (256 x 2^21)`, and at **0.00732
+m/px** with a 2048px one, which is `60 / (4 x 2048)` to within a tenth of a
+percent. A 4096px layer goes exactly twice as far again — the check that says
+this is a ceiling that follows the layer and not one more constant. Against the
+old build all three report **0.0561 m/px** and the ratio is 1.
+
 #### A layer has to survive leaving the view
 
 Reported from the field: *added a plan overlay, left the plan view, and it

@@ -798,6 +798,133 @@ try {
   ok("and the button says so again",
     (await page.textContent('button[title="Fit the take-off"]')) === "Fit");
 
+  // 7c-iii-b. A PLAN LETS THE MAP GO FURTHER IN THAN THE SATELLITE DOES.
+  //
+  // The map used to stop at four times Esri's deepest tile for everyone, which
+  // is right when the aerial is all there is — past that it is only being
+  // enlarged. An imported plan is not bound by it: a survey photographed at
+  // 4000px across a yard resolves millimetres where the satellite resolves
+  // centimetres, and capping the map at the satellite's limit hid the very
+  // detail somebody imported the drawing to read. Worse, it hid it silently —
+  // a zoom that stops just feels like the map is stuck.
+  //
+  // Read through the REAL clamp rather than the pure function, which
+  // scripts/test-plan.ts already pins: zoom in until the map refuses to go
+  // further, then LOCK the view, because the lock is what writes the reached
+  // scale somewhere a test can read it — in ground metres per pixel, which is
+  // exactly the unit this claim is about.
+  const LAYER_ID = "11111111-2222-4333-8444-555555555555";
+  const putLayerImage = (px) =>
+    page.evaluate(async ([id, size]) => {
+      const c = document.createElement("canvas");
+      c.width = size;
+      c.height = size;
+      const g = c.getContext("2d");
+      g.fillStyle = "#ff00ff";
+      g.fillRect(0, 0, size, size);
+      const blob = await new Promise((res) => c.toBlob(res, "image/png"));
+      await new Promise((res, rej) => {
+        const open = indexedDB.open("qe-plans", 1);
+        open.onupgradeneeded = () => open.result.createObjectStore("images");
+        open.onsuccess = () => {
+          const t = open.result.transaction("images", "readwrite");
+          t.objectStore("images").put(blob, id);
+          t.oncomplete = () => res(null);
+          t.onerror = () => rej(t.error);
+        };
+        open.onerror = () => rej(open.error);
+      });
+    }, [LAYER_ID, px]);
+
+  const reopenPlan = async () => {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector("main button.aspect-square");
+    const i = await page.$$eval("main button.aspect-square", (els) =>
+      els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
+    await page.locator("main button.aspect-square").nth(i).click();
+    await page.waitForSelector("text=Back yard plan", { timeout: 15000 });
+    await page.waitForTimeout(1200);
+  };
+
+  // Fit first so the layer is centred: zoom holds the point under the finger
+  // still, so zooming at the canvas centre keeps whatever is there on screen.
+  // 32 steps of x1.4 is 1e5, which overshoots any ceiling here by orders — the
+  // clamp lands the view exactly on the ceiling rather than on a step short of
+  // it, which is what makes these numbers exact rather than approximate.
+  const deepestMpp = async () => {
+    await page.click('button[title="Fit the take-off"]');
+    await page.waitForTimeout(250);
+    const zoomIn = page.locator('button[aria-label="Zoom in"]');
+    for (let i = 0; i < 32; i++) await zoomIn.click();
+    await page.waitForTimeout(350);
+    await page.click('button[aria-pressed][title*="Lock this view"]');
+    await page.waitForTimeout(250);
+    const v = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.view ?? null);
+    await page.click('button[aria-pressed][title*="Unlock"]');
+    await page.waitForTimeout(250);
+    return v?.metresPerPixel ?? null;
+  };
+
+  // The layer on screen is 8px across a 60m box — coarser than the aerial
+  // under it, so it must not move the ceiling at all, and certainly must not
+  // LOWER it. Expected independently: one World unit is 2*pi*a*cos(lat) metres
+  // and the satellite's ceiling is 256 * 2^21 pixels across it.
+  const satelliteMpp =
+    (2 * Math.PI * 6378137 * Math.cos((41.31 * Math.PI) / 180)) / (256 * 2 ** 21);
+  const coarseMpp = await deepestMpp();
+  ok("A COARSE LAYER LEAVES THE SATELLITE'S OWN LIMIT EXACTLY WHERE IT WAS",
+    coarseMpp !== null && Math.abs(coarseMpp - satelliteMpp) / satelliteMpp < 0.01,
+    `${coarseMpp} vs ${satelliteMpp} m/px`);
+
+  // Now the same layer with real detail in it. The reached scale should be the
+  // plan's own resolution magnified four times — and that number is
+  // widthM / (4 * widthPx) whatever the latitude, since the metres-per-World
+  // term cancels. 60m over 2048px, magnified 4x, is 7.3mm per screen pixel:
+  // eight times finer than the satellite could ever be.
+  await putLayerImage(2048);
+  await reopenPlan();
+  const sharpMpp = await deepestMpp();
+  ok("A SHARP PLAN LETS THE MAP GO FURTHER IN THAN THE SATELLITE EVER COULD",
+    sharpMpp !== null && sharpMpp < coarseMpp / 5, `${coarseMpp} then ${sharpMpp} m/px`);
+  ok("as far in as the plan's own pixels are worth, and no further",
+    sharpMpp !== null && Math.abs(sharpMpp - 60 / (4 * 2048)) / (60 / (4 * 2048)) < 0.01,
+    `${sharpMpp} vs ${60 / (4 * 2048)} m/px`);
+
+  // And it is the plan being read, not a hole where the aerial ran out: the
+  // tiles stop at z19 and are only magnified past it, so what is on screen at
+  // this depth had better still be the drawing.
+  ok("and the drawing is still what is on screen down there",
+    (await magentaCount(page)) > 500);
+
+  // Twice the pixels, twice the reach. This is the check that says the ceiling
+  // follows the layer rather than being one more constant: a fixed deeper cap
+  // would give the same answer for both.
+  await putLayerImage(4096);
+  await reopenPlan();
+  const sharperMpp = await deepestMpp();
+  ok("and a plan with twice the pixels goes twice as far",
+    sharperMpp !== null && Math.abs(sharpMpp / sharperMpp - 2) < 0.05,
+    `${sharpMpp} then ${sharperMpp} — ratio ${sharpMpp / sharperMpp}`);
+
+  // Put the 8px layer back, so everything after this sees the world it did
+  // before: the checks below read the same canvas.
+  await page.evaluate(async (id) => {
+    const blob = await (await fetch("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAE0lEQVR4nGP4z/D/Pz7MMDIUAACD5r9BB2dd7wAAAABJRU5ErkJggg==")).blob();
+    await new Promise((res, rej) => {
+      const open = indexedDB.open("qe-plans", 1);
+      open.onupgradeneeded = () => open.result.createObjectStore("images");
+      open.onsuccess = () => {
+        const t = open.result.transaction("images", "readwrite");
+        t.objectStore("images").put(blob, id);
+        t.oncomplete = () => res(null);
+        t.onerror = () => rej(t.error);
+      };
+      open.onerror = () => rej(open.error);
+    });
+  }, LAYER_ID);
+  await reopenPlan();
+
   // 7c-iv. THE FILMSTRIP CAN SHOW THE YARD'S OWN PHOTOGRAPHS, BY VISIT.
   //
   // Upright has a handful; the Sales Board's appointments and site visits have

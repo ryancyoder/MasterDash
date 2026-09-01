@@ -22,6 +22,7 @@ import { smoothOutline } from "@/lib/estimator/curve";
 import {
   metresPerPixel,
   pxPerWorldFor,
+  zoomCeiling,
   type Basemap,
   type MapAnchor,
   type MapOverlay,
@@ -111,6 +112,11 @@ const SQUARE_PX = 26;
  * imagery is only being magnified, but a vertex still needs to be placeable
  * more precisely than the pixels of an aerial allow. The bottom end is about
  * a continent, which is as far out as a take-off screen has any reason to go.
+ *
+ * The top end is a FLOOR for the real ceiling rather than the ceiling itself:
+ * an imported plan can resolve far finer than the satellite ever will, so
+ * `zoomCeiling()` raises it to whatever the sharpest drawn layer is worth.
+ * See there for why.
  */
 const MIN_PX_PER_WORLD = TILE_SIZE * 2 ** 3;
 const MAX_PX_PER_WORLD = TILE_SIZE * 2 ** 21;
@@ -559,13 +565,21 @@ export default function PlanCanvas({
   /** Decoded overlay images, by src. Kept so a pan does not re-decode them. */
   const overlayImages = useRef(new Map<string, HTMLImageElement>());
 
+  /**
+   * How far in the map may go right now — the satellite's ceiling, or a
+   * sharper imported layer's, whichever is higher. A ref rather than state
+   * because the two clamps that read it are called from a pinch, where a
+   * render per frame is exactly what the rest of this view avoids.
+   */
+  const zoomMaxRef = useRef(MAX_PX_PER_WORLD);
+
   const bumpAssets = useCallback(() => setAssetVersion((n) => n + 1), []);
 
   const clampView = useCallback(() => {
     const v = viewRef.current;
     v.pxPerWorld = Math.max(
       MIN_PX_PER_WORLD,
-      Math.min(MAX_PX_PER_WORLD, v.pxPerWorld),
+      Math.min(zoomMaxRef.current, v.pxPerWorld),
     );
     // Keep the centre on the globe. Unlike the old image clamp this does not
     // try to stop the edges showing: over the open ground there is no edge to
@@ -610,7 +624,7 @@ export default function PlanCanvas({
       const before = fromCanvas({ x: focalX, y: focalY }, transformNow());
       v.pxPerWorld = Math.max(
         MIN_PX_PER_WORLD,
-        Math.min(MAX_PX_PER_WORLD, v.pxPerWorld * factor),
+        Math.min(zoomMaxRef.current, v.pxPerWorld * factor),
       );
       // Hold the point under the fingers still: recompute where it landed and
       // shift the centre back by the difference.
@@ -783,6 +797,35 @@ export default function PlanCanvas({
       liveGeoref && aligning && o.id === aligning.id ? liveGeoref : o.georef,
     [liveGeoref, aligning],
   );
+
+  /**
+   * Keep the ceiling in step with what is actually drawn.
+   *
+   * `assetVersion` is in the deps because a layer's resolution is not known
+   * until its bytes have decoded — the ceiling has to rise when the image
+   * arrives, not when the row does, or the first plan of a session is capped
+   * at the satellite's limit until something else forces a recount. It reads
+   * `georefOf` rather than the stored georef so that scaling a plan mid-pinch
+   * raises the ceiling as it goes; a plan shrunk to half its size resolves
+   * twice as fine, and having to let go before the map would follow you in is
+   * exactly the stuck feeling this is here to remove.
+   */
+  useEffect(() => {
+    zoomMaxRef.current = zoomCeiling(
+      MAX_PX_PER_WORLD,
+      overlays.map((o) => {
+        const src = overlaySrc(o);
+        const img = src ? overlayImages.current.get(src) : null;
+        return { georef: georefOf(o), widthPx: img?.naturalWidth ?? 0 };
+      }),
+    );
+    // Removing the layer that earned the extra reach takes it away again, so
+    // bring the view back inside the new ceiling here rather than leaving it
+    // to snap on the next touch. This mutates the view in place and does not
+    // re-render; it runs before the draw effect below, which is declared
+    // after it, so nothing paints outside the ceiling even for one frame.
+    clampView();
+  }, [overlays, overlaySrc, georefOf, assetVersion, clampView]);
 
   /** Identifies the anchor's position, so a change of property is detectable. */
   const anchorKey = anchor ? `${anchor.centre.lat},${anchor.centre.lng}` : null;

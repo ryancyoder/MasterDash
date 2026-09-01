@@ -21,6 +21,8 @@
 // port on that side is a rename rather than a translation.
 
 import {
+  cornersWorld,
+  georefCorners,
   isLatLng,
   latLngFrom,
   metresPerWorldUnit,
@@ -327,4 +329,68 @@ export function visibleOverlays(
   return overlays.filter(
     (o) => !hidden.has(o.id) && (o.imageId !== null || o.imageUrl !== null),
   );
+}
+
+// --- How far in the map may zoom ------------------------------------------
+
+/**
+ * Magnification allowed past the sharpest thing on screen.
+ *
+ * The aerial already gets this: the canvas stops at z21 over a deepest real
+ * tile of z19, so the last two doublings are the satellite being enlarged. It
+ * is there because a vertex has to be *placeable* more precisely than the
+ * pixels it is placed against — nudging a bed corner half a pixel is not a
+ * gesture anyone can make. An overlay gets the same allowance for the same
+ * reason, no more.
+ */
+export const ZOOM_MAGNIFY = 4;
+
+/**
+ * A layer's own resolution, in canvas pixels per World unit: the scale at
+ * which one pixel of the imported image is one pixel on screen.
+ *
+ * Taken off the placed top edge rather than from `widthM`, so it is measured
+ * through exactly the affine the canvas draws the image with.
+ */
+export function overlayNativePxPerWorld(georef: Georef, widthPx: number): number {
+  if (!(widthPx > 0)) return 0;
+  const c = cornersWorld(georefCorners(georef));
+  const edge = Math.hypot(c.tr.x - c.tl.x, c.tr.y - c.tl.y);
+  return edge > 0 ? widthPx / edge : 0;
+}
+
+/** A drawn layer, for the ceiling: where it sits, and how many pixels it has. */
+export interface OverlayPixels {
+  georef: Georef;
+  /** Decoded width of the image. 0 until it has loaded, which contributes nothing. */
+  widthPx: number;
+}
+
+/**
+ * The zoom ceiling, in canvas pixels per World unit.
+ *
+ * `base` is the satellite's own ceiling and is the floor of this number: with
+ * nothing imported the map behaves exactly as it always did.
+ *
+ * A plan is not bound by that ceiling, and this is the whole point of it. The
+ * aerial stops being informative at z19 because that is the last tile Esri
+ * has; a survey photographed at 4000px across a 30 m yard resolves about 7mm
+ * of ground per image pixel, which is two orders finer. Capping the map at the
+ * satellite's limit hides detail the user imported the drawing to see — a
+ * dimension string, a spot elevation, the difference between two hatch
+ * patterns — and it hides it silently, since a zoom that stops just feels like
+ * the map is stuck.
+ *
+ * So each drawn layer raises the ceiling to its own resolution, and the
+ * highest wins. It follows the layer: scale a plan down and it resolves finer,
+ * so the ceiling rises with it; hide it, or unload it, and the extra reach
+ * goes with it rather than lingering as a zoom level with nothing to show.
+ */
+export function zoomCeiling(base: number, layers: OverlayPixels[]): number {
+  let ceiling = base;
+  for (const layer of layers) {
+    const native = overlayNativePxPerWorld(layer.georef, layer.widthPx);
+    if (native > 0) ceiling = Math.max(ceiling, native * ZOOM_MAGNIFY);
+  }
+  return ceiling;
 }
