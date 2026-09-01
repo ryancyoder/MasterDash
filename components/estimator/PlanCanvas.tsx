@@ -2121,6 +2121,27 @@ export default function PlanCanvas({
           return;
         }
       }
+      /*
+        A corner of a shape that is NOT selected selects it.
+
+        Otherwise swapping a corner needed a tap somewhere in the middle of the
+        bed and then a tap on the corner — and a tap ON the corner did nothing
+        useful, because `pointInPolygon` at a vertex is exactly the borderline
+        case: land a hair outside and the tap falls through to deselect. So the
+        rule is now the plain one it looks like — one tap picks the shape up,
+        one tap on a corner swaps it — and the handles appear on the first tap
+        to say which corners are which.
+      */
+      if (shape.id !== selectedShapeId) {
+        const corners = shapePoints(shape).map((v) => toCanvas(toWorld(v), t));
+        if (corners.some((p) => dist(cp, p) <= VERTEX_GRAB_PX)) {
+          onSelectShape(shape.id);
+          onSelectPlant(null);
+          onSelectCallout(null);
+          return;
+        }
+      }
+
       const pts = shapeOutline(shape).map((v) => toCanvas(toWorld(v), t));
       if (shape.type === "area" && pointInPolygon(cp, pts)) {
         onSelectShape(shape.id);
@@ -2390,6 +2411,25 @@ export default function PlanCanvas({
 
     const drag = dragRef.current;
     if (!drag) return;
+
+    /*
+      NOTHING MOVES UNTIL THE FINGER REALLY HAS.
+
+      `TAP_SLOP_PX` exists because a finger on glass never holds still, and the
+      pan and the layer-align both honour it — but the vertex, shape, pin,
+      call-out and plant drags below did not. One pixel of tremble set
+      `dragNodes`, and pointerup takes the drag branch whenever that is set, so
+      `handleTap` never ran: a tap on a corner of a selected shape, which is
+      how a corner is swapped between an angle and a curve, silently became a
+      sub-pixel move of that corner instead. Reported as "it doesn't seem to
+      work reliably", which is exactly what a gesture looks like when it
+      depends on holding a thumb perfectly still.
+
+      It was writing, too. A vertex move commits on release without consulting
+      `moved`, so every one of those non-taps was a real edit to the take-off —
+      and now an undo entry as well.
+    */
+    if (!press?.moved) return;
 
     if (drag.kind === "pan") {
       if (!press?.moved) return;

@@ -1881,6 +1881,36 @@ try {
   ok("and it is a real edit, not a no-op", (await rounded()) === 0,
     `${await rounded()} corners rounded`);
 
+  // 7c-x. AND A TAP THAT WOBBLES IS STILL A TAP.
+  //
+  // Reported: swapping a corner does not work reliably. It was a real bug and
+  // not a gesture anybody was getting wrong — the vertex drag updated on the
+  // first pointermove without consulting the tap slop every other gesture
+  // honours, so one pixel of tremble set `dragNodes`, pointerup took the drag
+  // branch, and the tap never happened. What did happen was a sub-pixel MOVE
+  // of that corner, committed and written, because a vertex move does not
+  // consult `moved` on release either.
+  //
+  // `page.mouse.click` puts the pointer down and up on one pixel, which is
+  // why every check above passed while the thing was broken in the hand. This
+  // one wobbles 4px, well inside the 10px slop, and asks for both halves: the
+  // corner swapped, and the corner did not move.
+  const nodesNow = () =>
+    page.evaluate(() =>
+      JSON.stringify(JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.nodes ?? {}));
+  const beforeWobble = await nodesNow();
+  const roundedBefore = await rounded();
+  await page.mouse.move(corner1.x, corner1.y);
+  await page.mouse.down();
+  await page.mouse.move(corner1.x + 4, corner1.y + 3, { steps: 3 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  ok("A TAP THAT WOBBLES STILL SWAPS THE CORNER",
+    (await rounded()) !== roundedBefore,
+    `${roundedBefore} then ${await rounded()} corners rounded`);
+  ok("and the corner has not moved a millimetre",
+    (await nodesNow()) === beforeWobble);
+
   await page.click('button:text-is("Visit")');
   await page.waitForTimeout(200);
   ok("and the switch goes back to the visit's own",

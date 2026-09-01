@@ -1017,6 +1017,35 @@ out on both axes, so both handles were white there. Area has a sign in it — 19
 pixels for the square against 254 for the circle. Restoring the old gate turns
 2 checks red; drawing every handle as a circle turns 1.
 
+**It is a SINGLE TAP, and it was not working reliably. That was a real bug.**
+Reported from the field, and worth writing down because the mechanism is one
+every gesture in this file could have had:
+
+`TAP_SLOP_PX` is 10 — a finger on glass never holds still, so a press only
+becomes a drag once it has travelled that far. The pan honours it and the
+layer-align honours it. **The vertex, shape, pin, call-out and plant drags did
+not.** One pixel of tremble called `setDragNodes`, and pointerup takes the drag
+branch whenever that is set, so `handleTap` never ran: the tap that swaps a
+corner silently became a sub-pixel *move* of that corner instead. And it was
+written — a vertex move commits on release without consulting `moved` either —
+so every one of those non-taps was a real edit to the take-off.
+
+One guard, where the pan already had one: nothing moves until the finger really
+has.
+
+**The other half was the first tap.** Swapping a corner needs the shape
+selected, and a tap ON a corner of an unselected shape did nothing useful,
+because `pointInPolygon` at a vertex is exactly the borderline case — land a
+hair outside and the tap falls through to deselect. A corner of an unselected
+shape now selects it, so the rule is the plain one it looks like: **one tap
+picks the shape up, one tap on a corner swaps it**, and the handles appear on
+the first tap to say which corners are which.
+
+**Every check here passed while it was broken in the hand**, because
+`page.mouse.click` puts the pointer down and up on one pixel. The new one
+wobbles 4px — well inside the slop — and asks for both halves: the corner
+swapped, and the corner did not move. Against the old code it reports both red.
+
 #### Curved edges
 
 A bed is rarely a polygon. **◠** in the toolbar rounds the edges of shapes
