@@ -1955,6 +1955,19 @@ try {
   // ornamentals at 15ft should be able to say so. The panel sits on the plant
   // row rather than behind a gear three screens away, which is this app's
   // habit everywhere: the setting lives where its effect is.
+  /*
+    ONE MORE SHRUB, IN THE MIDDLE, AND THE READINGS BELOW DEPEND ON IT.
+
+    The plant left over from the drag above sits near the edge after being
+    moved, and at its 6ft default it was drawing ZERO green — which made the
+    comparison below `8 > 0 * 1.4`, a check that passes against a build that
+    draws nothing at all. A symbol has to be on the canvas before its size can
+    be measured, so one is planted where the canvas certainly is.
+  */
+  const midBox = await page.locator("canvas[data-plan-canvas]").boundingBox();
+  await page.mouse.click(midBox.x + midBox.width / 2, midBox.y + midBox.height / 2);
+  await page.waitForTimeout(400);
+
   const symbolsBtn = page.locator('button[aria-label="Plant symbols and sizes"]');
   await symbolsBtn.click();
   await page.waitForTimeout(300);
@@ -1981,8 +1994,12 @@ try {
   await symbolsBtn.click();
   await page.waitForTimeout(500);
   const inkAtTwenty = await plantGreen();
+  // `inkAtSix > 0` is not padding. It was 0 before the shrub above was planted
+  // in the middle, which made this `8 > 0 * 1.4` — true against a build that
+  // drew no symbol at all.
   ok("A CUSTOM SPREAD REACHES THE DRAWING",
-    inkAtTwenty > inkAtSix * 1.4, `${inkAtSix} at 6ft, ${inkAtTwenty} at 20ft`);
+    inkAtSix > 0 && inkAtTwenty > inkAtSix * 1.4,
+    `${inkAtSix} at 6ft, ${inkAtTwenty} at 20ft`);
   ok("and it is kept as an override, not as a copy of the table",
     await page.evaluate(() => {
       const s = JSON.parse(localStorage.getItem("qe-settings") ?? "{}");
@@ -2003,6 +2020,86 @@ try {
           .length)) === 0,
     `${inkAtTwenty} then ${await plantGreen()}`);
 
+
+  // 7c-vii-5. THE PLANTING CAN BE SWITCHED OFF.
+  //
+  // The symbols are drawn at the spread the plant will reach, which is the
+  // whole point of them and also the reason this is needed: a bed under a 20ft
+  // shade tree is a bed whose edge you cannot see. So the layer switches off —
+  // and the thing that makes it a VIEW preference rather than a delete is that
+  // every count stays exactly where it was.
+  const hideBtn = page.locator('button[aria-label="Show or hide the planting"]');
+  ok("there is a switch for the planting", (await hideBtn.count()) === 1);
+
+  // Guarded: against a build without the switch there is nothing to click, and
+  // a test that throws prints neither PASS nor FAIL.
+  const shownInk = await plantGreen();
+  if ((await hideBtn.count()) === 1) await hideBtn.click();
+  await page.waitForTimeout(400);
+  const hiddenInk = await plantGreen();
+  // READ THE CANVAS. A flag in localStorage is exactly what would still be
+  // right against a build that stored the preference and drew the plant
+  // anyway — the same failure this screen has had twice.
+  /*
+    AN ABSOLUTE FLOOR, NOT A FRACTION OF WHAT WAS THERE.
+
+    The card grows a line when the layer goes off, which shortens the map —
+    so a build that stored the preference and drew the plants anyway still
+    reads LOWER than before, purely from the layout. Off means off: no plant
+    green at all, give or take antialiasing. Measured 0 here, and 62 against
+    exactly that mutation.
+  */
+  ok("SWITCHING IT OFF TAKES THE SYMBOLS OFF THE MAP",
+    shownInk > 100 && hiddenInk < 20,
+    `${shownInk} drawn, ${hiddenInk} hidden`);
+
+  // The half that makes it honest.
+  ok("and the plants are still on the take-off, still counted",
+    (await planted()).plants.length === 2 &&
+      (await page.locator("text=/2 placed/").count()) === 1,
+    JSON.stringify((await planted()).plants));
+  ok("the card says the map is not showing them",
+    (await page.locator('button:has-text("Not drawn on the map")').count()) === 1);
+
+  /*
+    THE TOOL GOES DOWN WITH THE LAYER.
+
+    A Plant tool armed over a switched-off layer plants symbols nobody can
+    see — a tap that looks like it did nothing, three times over, and then a
+    count that has jumped by three for no visible reason.
+  */
+  ok("and the Plant tool is put down with it",
+    (await page.locator('button[aria-label="Plant"]').getAttribute("aria-pressed")) === "false",
+    await page.locator('button[aria-label="Plant"]').getAttribute("aria-pressed"));
+
+  // It lives in the plan document beside `hiddenOverlayIds`, so it survives
+  // the page. A preference that came back on every reload would be one you
+  // set again every time you opened the estimate.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("main button.aspect-square");
+  const planAfterHide = await page.$$eval("main button.aspect-square", (els) =>
+    els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
+  await page.locator("main button.aspect-square").nth(planAfterHide).click();
+  await page.waitForSelector('button[aria-label="Plant"]', { timeout: 15000 });
+  await page.waitForTimeout(1200);
+  const reloadInk = await plantGreen();
+  ok("IT SURVIVES THE PAGE BEING RELOADED",
+    reloadInk < 20 &&
+      (await page.locator('button:has-text("Not drawn on the map")').count()) === 1,
+    `${reloadInk} against ${shownInk} drawn`);
+
+  // And the other end of the rule: reaching for the tool brings the layer
+  // back, so nobody can be planting into nothing.
+  await page.click('button[aria-label="Plant"]');
+  await page.waitForTimeout(500);
+  // Against what the map was showing a moment ago, rather than against the
+  // reading from before the reload: the map is a different height once the
+  // card's line has gone, and this check is about the symbols coming back.
+  ok("ARMING THE PLANT TOOL SHOWS THEM AGAIN",
+    (await plantGreen()) > reloadInk + 100,
+    `${await plantGreen()} against ${reloadInk} hidden`);
+  ok("and nothing was planted by reaching for the tool",
+    (await planted()).plants.length === 2);
 
   // 7c-viii. A CORNER CAN BE SWAPPED BETWEEN AN ANGLE AND A CURVE.
   //

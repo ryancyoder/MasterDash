@@ -248,6 +248,9 @@ function planFrom(value: unknown): PlanState {
     hiddenOverlayIds: Array.isArray(v.hiddenOverlayIds)
       ? v.hiddenOverlayIds.filter((id): id is string => typeof id === "string")
       : [],
+    // Shown unless the estimate says otherwise, so every plan saved before
+    // this existed opens with its planting drawn.
+    plantsHidden: v.plantsHidden === true,
   };
 }
 
@@ -625,6 +628,18 @@ export function setSurveySession(survey: { sessionId: string; label: string } | 
  */
 export function setReviewSession(review: { sessionId: string; label: string } | null) {
   mutatePlan((plan) => ({ ...plan, review }));
+}
+
+/**
+ * Draw the planting, or don't.
+ *
+ * Beside `setOverlayHidden` and through `mutatePlan` for the same reason it
+ * is: this is a preference about this estimate's plan, it lives in the plan
+ * document, and it steps back with Undo like everything else that does. It
+ * changes nothing about what is on the take-off — see `plantsHidden`.
+ */
+export function setPlantsHidden(hidden: boolean) {
+  mutatePlan((plan) => ({ ...plan, plantsHidden: hidden }));
 }
 
 export function setOverlayHidden(overlayId: string, hidden: boolean) {

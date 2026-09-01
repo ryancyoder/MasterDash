@@ -133,6 +133,7 @@ import {
   updateSettings,
   setBasemap,
   setOverlayHidden,
+  setPlantsHidden,
   setPlanAnchor,
   setPlanView,
   setShapeSmooth,
@@ -1163,6 +1164,11 @@ export default function PlanPage({
   const chooseTool = useCallback((next: PlanTool) => {
     setTool(next);
     setPending([]);
+    // ARMING THE PLANT TOOL SHOWS THE PLANTING. Placing a symbol into a
+    // switched-off layer looks exactly like a tap that did nothing, and the
+    // other half of the rule is below: switching the layer off puts the tool
+    // down. The tool and the layer are one thing to a person using them.
+    if (next === "plant") setPlantsHidden(false);
   }, []);
 
   /*
@@ -1298,6 +1304,31 @@ export default function PlanPage({
     () => plan.plants.find((p) => p.id === selectedPlantId) ?? null,
     [plan.plants, selectedPlantId],
   );
+
+  /** What the map draws. Empty while the layer is switched off. */
+  const drawnPlants = useMemo(
+    () => (plan.plantsHidden ? [] : plan.plants),
+    [plan.plants, plan.plantsHidden],
+  );
+
+  /**
+   * Switch the planting off, or back on.
+   *
+   * TWO THINGS GO WITH IT, and both are the same rule from opposite ends: the
+   * Plant tool is put down, because a tool that plants into a layer you cannot
+   * see is a tool that does nothing visible; and the selection is dropped,
+   * because the card's Remove and Name buttons would otherwise be acting on a
+   * plant nobody can point at. Arming the tool again shows the layer — see
+   * `chooseTool`.
+   */
+  const togglePlants = useCallback(() => {
+    const next = !plan.plantsHidden;
+    setPlantsHidden(next);
+    if (next) {
+      setSelectedPlantId(null);
+      setTool((t) => (t === "plant" ? "select" : t));
+    }
+  }, [plan.plantsHidden]);
 
   const finish = useCallback(() => {
     if (tool !== "area" && tool !== "linear") return;
@@ -1558,6 +1589,34 @@ export default function PlanPage({
         >
           {showMeasurements ? "123" : "···"}
         </button>
+        {/*
+          THE PLANTING, ON OR OFF.
+
+          Here rather than on the Plants card, next to the numbers and the
+          satellite, because those three are the same question — what is drawn
+          on the map — and this is the row you are in while drawing a bed. The
+          card says the layer is off; this is where it is switched.
+
+          Only where there is planting to switch. A button that hides nothing
+          says there is something on the map that is not.
+        */}
+        {plan.plants.length > 0 && (
+          <button
+            onClick={togglePlants}
+            aria-label="Show or hide the planting"
+            aria-pressed={!plan.plantsHidden}
+            className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${
+              plan.plantsHidden ? "bg-surface2 text-muted" : "bg-surface2 text-ink"
+            }`}
+            title={
+              plan.plantsHidden
+                ? `Show the ${plan.plants.length} plants on the map`
+                : `Hide the ${plan.plants.length} plants — they stay on the take-off`
+            }
+          >
+            {plan.plantsHidden ? "🌳 off" : "🌳"}
+          </button>
+        )}
         <button
           onClick={() => setBasemap(plan.basemap === "satellite" ? "none" : "satellite")}
           className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${
@@ -1928,7 +1987,15 @@ export default function PlanPage({
             );
           }}
           onMoveCallout={moveCallout}
-          plants={plan.plants}
+          /*
+            HIDDEN MEANS NOT THERE, for every purpose the canvas has.
+
+            Filtered here rather than checked inside the canvas, the same way
+            `drawnOverlays` is, so one line covers drawing, grabbing and the
+            bounds the view fits itself to. A symbol nobody can see that still
+            takes a drag is worse than one that is simply drawn.
+          */
+          plants={drawnPlants}
           plantFace={plantFace}
           selectedPlantId={selectedPlantId}
           onSelectPlant={setSelectedPlantId}
@@ -2305,6 +2372,8 @@ export default function PlanPage({
           {plantKinds.length > 0 && (
             <PlantsCard
               kinds={plantKinds}
+              hidden={plan.plantsHidden}
+              onShow={togglePlants}
               selected={selectedPlant}
               selectedName={selectedPlant ? plantName(selectedPlant) : null}
               onRemoveSelected={() => {
@@ -3154,6 +3223,8 @@ function PlantSymbolPanel({
 
 function PlantsCard({
   kinds,
+  hidden,
+  onShow,
   selected,
   selectedName,
   onRemoveSelected,
@@ -3164,6 +3235,8 @@ function PlantsCard({
   glyphFor,
 }: {
   kinds: { key: string; itemId: string; variantId?: string; label: string; count: number }[];
+  hidden: boolean;
+  onShow: () => void;
   selected: PlacedPlant | null;
   selectedName: string | null;
   onRemoveSelected: () => void;
@@ -3182,6 +3255,23 @@ function PlantsCard({
           {total} placed
         </span>
       </div>
+      {/*
+        THE COUNT IS NOT A LIE, AND THIS IS WHAT KEEPS IT FROM READING AS ONE.
+
+        Every row and every number below stays exactly as it was while the
+        layer is off — the plants are on the take-off and they are priced.
+        Without this line the card says "12 placed" over a map with nothing on
+        it, which reads as the count being wrong rather than as the drawing
+        being switched off.
+      */}
+      {hidden && (
+        <button
+          onClick={onShow}
+          className="mb-2 w-full rounded-lg bg-surface2 px-2 py-1.5 text-left text-[0.65rem] font-bold text-muted"
+        >
+          Not drawn on the map · counted here · <span className="text-ink">show</span>
+        </button>
+      )}
       <div className="flex flex-col gap-1">
         {kinds.map((kind) => (
           <div key={kind.key} className="flex items-center gap-2">

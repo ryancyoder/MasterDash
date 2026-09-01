@@ -800,6 +800,57 @@ being wrong rather than the thing measured:
 Mutation-tested: making a plant grabbable in Select again turns 1 check red,
 and ignoring the custom spread turns 2 here and 2 in `test:plan`.
 
+#### The planting switches off
+
+The symbols are drawn **at the spread the plant will reach**, which is the
+whole reason to draw them rather than list them — and the whole reason this is
+needed. A bed with a 20ft shade tree over it is a bed whose edge you cannot
+see, so the layer switches off from the map toolbar, beside the numbers and the
+satellite. Those three are one question — what is drawn — and that row is where
+you already are when a canopy is in the way of the bed you are drawing.
+
+**A view preference, not a delete, and the counts are what say so.** Every row
+and every number on the Plants card stays exactly as it was; the plants are on
+the take-off and they are priced. The card says *Not drawn on the map · counted
+here* while the layer is off, because otherwise it reads "12 placed" over an
+empty map and the count looks like the thing that is wrong. Node checks pin the
+other half: hiding changes no count, no proposal line, and no merge-guard
+weight — the obvious wrong build, filtering the plants where they are *read* so
+the map is easy, drops them from the price, and a plant quietly missing from a
+price is worth a great deal more than a symbol left on a map.
+
+**Hidden means not there, for every purpose the canvas has.** It is filtered
+once where the canvas is handed its plants, exactly as `visibleOverlays()` is,
+so one line covers drawing, grabbing and the bounds the view fits itself to. A
+symbol nobody can see that still swallows a drag is worse than one that is
+simply drawn.
+
+**The tool and the layer go together, both ways.** Switching the layer off puts
+the Plant tool down and drops the selection; arming the Plant tool brings the
+layer back. Planting into a switched-off layer is a tap that looks like it did
+nothing — three times over, and then a count that has jumped by three for no
+visible reason.
+
+It lives in the plan document beside `hiddenOverlayIds`, so it is per-estimate,
+it survives the page, and it steps back with Undo like everything else in
+there. A preference that came back on every reload is one you set again every
+time you open the estimate.
+
+**One check in the suite had to be fixed to write this one.** *A custom spread
+reaches the drawing* compared the ink at 6ft with the ink at 20ft — and the
+plant it was measuring had been dragged near the edge, so the reading at 6ft
+was **0** and the comparison was `8 > 0 × 1.4`: true against a build that drew
+no symbol at all. A shrub is planted in the middle of the canvas first now, and
+the check requires a reading above zero on both sides.
+
+And the threshold for *switched off* is **absolute, not a fraction of what was
+there**. The card grows a line when the layer goes off, which shortens the map,
+so a build that stored the preference and drew the plants anyway still reads
+lower than before purely from the layout — 62 against 280, which a "less than a
+tenth" test very nearly passes. Off means no plant green at all. That is the
+symbols-panel lesson from two features ago: the ruler was inside the thing
+being measured.
+
 #### Corners are shared, not copied
 
 A mulch bed and the lawn beside it meet along an edge. Those are not two

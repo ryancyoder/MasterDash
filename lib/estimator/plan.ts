@@ -281,6 +281,22 @@ export interface PlanState {
   callouts: PhotoCallout[];
   /** Overlay ids switched off for this estimate. Absence means shown. */
   hiddenOverlayIds: string[];
+  /**
+   * The planting, switched off for this estimate.
+   *
+   * A VIEW PREFERENCE, NOT A DELETION, and the counts are what say so: the
+   * Plants card keeps every row and every number while this is set, because
+   * the plants are still on the take-off and still priced. What is switched
+   * off is the drawing.
+   *
+   * It has to be switchable because the symbols are drawn at the spread the
+   * plant will reach, which is the whole point of them — and a bed with a
+   * 20ft shade tree over it is a bed you cannot see the edge of. One flag
+   * rather than a hidden-id list like the overlays': the overlays are
+   * separate pictures of the yard and you choose between them, while the
+   * planting is one layer.
+   */
+  plantsHidden: boolean;
 }
 
 export function emptyPlan(): PlanState {
@@ -295,6 +311,7 @@ export function emptyPlan(): PlanState {
     plants: [],
     callouts: [],
     hiddenOverlayIds: [],
+    plantsHidden: false,
   };
 }
 

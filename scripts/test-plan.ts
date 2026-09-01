@@ -622,6 +622,33 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   ok("and it is priced for five", (shrubLines[0]?.quantity ?? 0) === 5,
     JSON.stringify(shrubLines[0] ?? null));
 
+  /*
+    5. SWITCHING THE PLANTING OFF ON THE MAP PRICES EXACTLY THE SAME.
+
+    `plantsHidden` is a view preference on the plan document, beside
+    `hiddenOverlayIds`, and this is the check that keeps it one: the symbols
+    stop being drawn and nothing else moves. The obvious wrong way to build
+    it — filter the plants where they are read, so the map is easy — would
+    take them off the proposal too, and a plant quietly dropped from a price
+    is worth a great deal more than a symbol quietly left on a map.
+  */
+  const shown = withPlants([plant("a"), plant("b"), plant("c")]);
+  const off = estimateWith({
+    plan: { ...emptyPlan(), plants: shown.plan.plants, plantsHidden: true },
+  });
+  ok("a plan starts with its planting drawn", emptyPlan().plantsHidden === false);
+  ok("HIDING THE PLANTING CHANGES NO COUNT",
+    planPlants(off)["mat:shrub"] === 3, JSON.stringify(planPlants(off)));
+  ok("and no proposal line",
+    JSON.stringify(buildProposal(off, DEFAULT_ESTIMATOR_SETTINGS).lines) ===
+      JSON.stringify(buildProposal(shown, DEFAULT_ESTIMATOR_SETTINGS).lines));
+  // The merge guard counts shapes, plants and call-outs to decide whether
+  // this device's plan is worth keeping against another's. A hidden layer
+  // that read as an empty plan would let a remote save quietly win.
+  ok("and it is still a plan with something on it, to the merge guard",
+    planShapeCount(off) === 3 && planShapeCount(off) === planShapeCount(shown),
+    `${planShapeCount(off)} against ${planShapeCount(shown)}`);
+
   // A plant placed generic and never named still prints as something a
   // person can read, rather than as a catalog id.
   const generic = buildProposal(withPlants([plant("a")]), DEFAULT_ESTIMATOR_SETTINGS);
