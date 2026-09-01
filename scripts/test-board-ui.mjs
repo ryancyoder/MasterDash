@@ -1722,6 +1722,102 @@ try {
     (await planted()).plants.length === 1,
     JSON.stringify((await planted()).plants));
 
+  // 7c-viii. A CORNER CAN BE SWAPPED BETWEEN AN ANGLE AND A CURVE.
+  //
+  // Storing the rounding PER CORNER is what a real bed needs — one that runs
+  // straight along a drive and sweeps round the lawn is two sharp corners and
+  // the rest rounded — and the model has always held it that way. What was
+  // missing was any way in: the gesture was gated on the shape already having
+  // a rounded corner, so on a shape drawn straight (the default) tapping a
+  // corner did nothing, and hardening a rounded shape's corners one at a time
+  // reached zero and switched the gesture off again.
+  //
+  // This also draws the suite's first shape, which is worth having on its own:
+  // the take-off's central gesture had no end-to-end check at all.
+  await page.click('button:text-is("Area")');
+  await page.waitForTimeout(200);
+  const canvasForShape = await page.locator("canvas").boundingBox();
+  const at = (fx, fy) => ({
+    x: canvasForShape.x + canvasForShape.width * fx,
+    y: canvasForShape.y + canvasForShape.height * fy,
+  });
+  // Four corners, well clear of everything else on the plan. The FIRST one is
+  // the one checked below, because squaring-up can move the later ones and a
+  // check has to know exactly where it is looking.
+  const corner1 = at(0.14, 0.52);
+  for (const p of [corner1, at(0.34, 0.52), at(0.34, 0.8), at(0.14, 0.8)]) {
+    await page.mouse.click(p.x, p.y);
+    await page.waitForTimeout(150);
+  }
+  await page.click('button:text-is("Finish")');
+  await page.waitForTimeout(500);
+
+  const shapes = () =>
+    page.evaluate(() =>
+      JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.shapes ?? []);
+  ok("a bed drawn on the map is four corners and no curves",
+    (await shapes()).length === 1 &&
+      (await shapes())[0].vertices.length === 4 &&
+      ((await shapes())[0].smoothVertices ?? []).length === 0,
+    JSON.stringify(await shapes()));
+
+  // Select it, then tap the corner. Both are plain taps on the map; the only
+  // difference is where they land.
+  await page.mouse.click(at(0.24, 0.66).x, at(0.24, 0.66).y);
+  await page.waitForTimeout(400);
+
+  /*
+    READ THE HANDLE, not the estimate.
+
+    The handle is the affordance itself — the thing somebody looks at to know
+    which kind of corner they are about to tap — and a build that stored the
+    swap while drawing every handle the same would pass a check on the stored
+    array and fail this one.
+
+    Counted as WHITE AREA rather than sampled at the square's diagonal, which
+    was the first attempt and was simply wrong: a circle of radius 9 contains
+    the point 6px out on both axes (8.49 away), so both handles were white
+    there and the check read 0 then 2 for reasons of antialiasing. Area is
+    the honest difference — a 14px square is 196px and a radius-9 circle is
+    254 — and it has a sign in it.
+  */
+  const handleWhite = (pt) =>
+    page.evaluate(([x, y]) => {
+      const c = document.querySelector("canvas");
+      const rect = c.getBoundingClientRect();
+      const k = c.width / rect.width;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      const cx = (x - rect.left) * k;
+      const cy = (y - rect.top) * k;
+      let white = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const px = (i / 4) % c.width;
+        const py = Math.floor(i / 4 / c.width);
+        if (Math.abs(px - cx) > 14 * k || Math.abs(py - cy) > 14 * k) continue;
+        if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) white++;
+      }
+      return white;
+    }, [pt.x, pt.y]);
+
+  const sharpHandle = await handleWhite(corner1);
+  ok("a sharp corner draws a handle at all", sharpHandle > 80,
+    `${sharpHandle} white pixels`);
+  await page.mouse.click(corner1.x, corner1.y);
+  await page.waitForTimeout(400);
+  const swapped = (await shapes())[0]?.smoothVertices ?? [];
+  ok("TAPPING A CORNER OF A STRAIGHT SHAPE ROUNDS THAT CORNER",
+    swapped.length === 1 && (await shapes())[0].vertices.includes(swapped[0]),
+    JSON.stringify(swapped));
+  const roundHandle = await handleWhite(corner1);
+  ok("AND THE HANDLE SAYS SO — a round corner wears a round handle",
+    roundHandle > sharpHandle + 30, `${sharpHandle} square, ${roundHandle} round`);
+
+  await page.mouse.click(corner1.x, corner1.y);
+  await page.waitForTimeout(400);
+  ok("AND TAPPING IT AGAIN HOLDS IT SHARP — the swap goes both ways",
+    ((await shapes())[0]?.smoothVertices ?? []).length === 0,
+    JSON.stringify((await shapes())[0]?.smoothVertices ?? []));
+
   await page.click('button:text-is("Visit")');
   await page.waitForTimeout(200);
   ok("and the switch goes back to the visit's own",

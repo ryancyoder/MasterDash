@@ -2991,7 +2991,20 @@ function ShapeCard({
         )
       : 0;
   const unit = shape.type === "area" ? "sq ft" : "ln ft";
-  const isRounded = (shape.smoothVertices?.length ?? 0) > 0;
+  /*
+    How many of this shape's corners are rounded.
+
+    A count rather than a flag, because a shape is not one or the other: a bed
+    that runs straight along a drive and sweeps round the lawn is two sharp
+    corners and the rest rounded, which is what storing this per corner was
+    always for. The button underneath therefore says what it will DO rather
+    than what the shape IS — `Curved` on a shape with three of eight corners
+    rounded was a label that could only mislead.
+  */
+  const roundCount = (shape.smoothVertices ?? []).filter((v) =>
+    shape.vertices.includes(v),
+  ).length;
+  const allStraight = roundCount === 0;
 
   /**
    * What the survey makes of this shape's corners.
@@ -3067,21 +3080,23 @@ function ShapeCard({
         <button
           onClick={(e) => {
             e.stopPropagation();
-            setShapeSmooth(shape.id, !isRounded);
+            setShapeSmooth(shape.id, allStraight);
           }}
-          className={`rounded-lg px-2.5 py-1 text-[0.65rem] font-bold ${
-            isRounded ? "bg-accent text-black" : "bg-surface2 text-ink"
-          }`}
+          className="rounded-lg bg-surface2 px-2.5 py-1 text-[0.65rem] font-bold text-ink"
         >
-          {isRounded ? "Curved" : "Straight"}
+          {allStraight ? "Round all" : "Straighten all"}
         </button>
-        {isRounded && (
-          // The per-corner control has no button of its own: tapping a corner
-          // of the selected shape on the map is the whole gesture.
-          <span className="text-[0.65rem] leading-tight text-muted">
-            tap a corner on the map to hold it sharp
-          </span>
-        )}
+        {/*
+          The per-corner control has no button of its own: tapping a corner of
+          the selected shape on the map is the whole gesture. Said whatever
+          state the shape is in — it used to appear only on an already-rounded
+          shape, which is the one case where you did not need telling.
+        */}
+        <span className="text-[0.65rem] leading-tight text-muted">
+          {roundCount > 0 && roundCount < shape.vertices.length
+            ? `${roundCount} of ${shape.vertices.length} corners rounded · tap one on the map to swap it`
+            : "tap a corner on the map to round it or hold it sharp"}
+        </span>
       </div>
 
       {grade && (

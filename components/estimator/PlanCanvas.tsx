@@ -1295,10 +1295,15 @@ export default function PlanCanvas({
           ctx.strokeStyle = shape.color;
           ctx.lineWidth = 3;
           ctx.beginPath();
-          if (rounded.size > 0 && !rounded.has(shape.vertices[i] ?? "")) {
-            ctx.rect(p.x - 7, p.y - 7, 14, 14);
-          } else {
+          // ROUND HANDLE, ROUND CORNER. Square is a hard angle. The same
+          // `rounded.size > 0` gate was here too, so an all-straight shape
+          // drew every corner as a circle — the handles said curved and the
+          // outline said straight, and the one that was lying was the one
+          // you were about to tap.
+          if (rounded.has(shape.vertices[i] ?? "")) {
             ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
+          } else {
+            ctx.rect(p.x - 7, p.y - 7, 14, 14);
           }
           ctx.fill();
           ctx.stroke();
@@ -2095,10 +2100,20 @@ export default function PlanCanvas({
     // Then the topmost shape under the finger, or nothing.
     for (let i = shapes.length - 1; i >= 0; i--) {
       const shape = shapes[i];
-      // A tap on a corner of the shape already selected toggles whether that
-      // corner rounds — the cheapest way to hold one side of a bed straight,
-      // and it needs no control of its own.
-      if (shape.id === selectedShapeId && (shape.smoothVertices?.length ?? 0) > 0) {
+      /*
+        A tap on a corner of the SELECTED shape swaps that corner between a
+        hard angle and a curve. It needs no control of its own: the corner is
+        the thing being changed and it is right there under the finger.
+
+        It used to be gated on the shape already having at least one rounded
+        corner, which made it unreachable from the case it exists for. A shape
+        is drawn straight by default, so tapping a corner did nothing at all —
+        the only way in was Curved, which rounds every corner, and hardening
+        them back one at a time hit zero and switched the gesture off again.
+        A bed that runs straight along a drive and sweeps round the lawn could
+        not be drawn, which is most beds.
+      */
+      if (shape.id === selectedShapeId) {
         const corners = shapePoints(shape).map((v) => toCanvas(toWorld(v), t));
         const hit = corners.findIndex((p) => dist(cp, p) <= VERTEX_GRAB_PX);
         if (hit >= 0) {

@@ -924,6 +924,47 @@ unused since the table was created — the map anchor carried a property id and
 the column never did, so every estimate on the project read `property_id: null`
 and nothing looking for "the take-off for this yard" could find one.
 
+#### One corner at a time
+
+Reported: *some shapes have a combination of hard angles and curves.* They do —
+a bed that runs straight along a drive and sweeps round the lawn is two sharp
+corners and the rest rounded — and `smoothVertices` has stored the rounding
+**per corner** since it was written. What was missing was any way to reach it.
+
+**The gesture was gated on the shape already having a rounded corner.** A shape
+is drawn straight by default, so tapping a corner did nothing at all; the only
+way in was the Curved button, which rounds *every* corner, and hardening them
+back one at a time reached zero and switched the gesture off again. The one
+combination the per-corner storage exists for was the one combination you could
+not produce.
+
+**The same gate had leaked into the drawing**, which is the part that made it
+hard to see: an all-straight shape drew every corner as a circle, because the
+handles only distinguished the two states once at least one corner was rounded.
+The handles said curved and the outline said straight, and the one that was
+lying was the one you were about to tap.
+
+Both are gone. A corner of the selected shape is tapped to swap it, whatever
+the shape's current state; a **round handle means a round corner and a square
+one means a hard angle**, always. The card's button now says what it will *do*
+— `Round all` or `Straighten all` — rather than what the shape *is*, because
+"Curved" on a shape with three of eight corners rounded is a label that can
+only mislead, and the hint carries the count.
+
+**`outlineOf()` and the measurement needed nothing**: they have taken a
+per-corner flag array all along, so rounding one corner of a bed re-derives its
+area on the spot — a chord cuts inside the arc it stands for, so the number
+moves, which is the whole reason the curve is measured rather than decorative.
+
+**This also gave the suite its first drawn shape.** `test:board-ui` now taps out
+a four-corner bed, selects it, and swaps a corner — the take-off's central
+gesture had no end-to-end check at all before. The handle is read as WHITE AREA
+around the corner rather than sampled at the square's diagonal, which was the
+first attempt and was simply wrong: a radius-9 circle contains the point 6px
+out on both axes, so both handles were white there. Area has a sign in it — 196
+pixels for the square against 254 for the circle. Restoring the old gate turns
+2 checks red; drawing every handle as a circle turns 1.
+
 #### Curved edges
 
 A bed is rarely a polygon. **◠** in the toolbar rounds the edges of shapes
