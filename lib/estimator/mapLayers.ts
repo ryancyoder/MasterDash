@@ -331,6 +331,46 @@ export function visibleOverlays(
   );
 }
 
+// --- The order they draw in ------------------------------------------------
+
+/**
+ * New `z` values after moving one layer up or down the stack.
+ *
+ * `z` has been on the row since the first version and every read sorts by it,
+ * but nothing could ever change it — a second plan landed on top of the first
+ * because it happened to be added second, and that was that. Which matters as
+ * soon as there are two: an old survey under a new one is a reference, and the
+ * same two the other way round is the old drawing hiding the current one.
+ *
+ * It RENUMBERS DENSELY from the new order rather than swapping two numbers,
+ * which repairs the collisions the old numbering could produce: `z` is set
+ * from `overlays.length` at import, so removing a layer and adding another
+ * gives two layers the same z, and swapping equal numbers does nothing at all.
+ *
+ * Only the layers whose z actually changes come back, because each one is a
+ * PATCH and a write for a row that did not move is noise on a connection this
+ * app cannot count on.
+ */
+export function reorderLayers(
+  overlays: MapOverlay[],
+  id: string,
+  delta: 1 | -1,
+): { id: string; z: number }[] {
+  const order = [...overlays].sort((a, b) => a.z - b.z);
+  const from = order.findIndex((o) => o.id === id);
+  const to = from + delta;
+  // Already at the end it is being asked to move towards, or not here at all.
+  if (from === -1 || to < 0 || to >= order.length) return [];
+  const [moved] = order.splice(from, 1);
+  order.splice(to, 0, moved);
+  return order
+    .map((o, i) => ({ id: o.id, z: i }))
+    .filter(({ id: layerId, z }) => {
+      const before = overlays.find((o) => o.id === layerId);
+      return before !== undefined && before.z !== z;
+    });
+}
+
 // --- How far in the map may zoom ------------------------------------------
 
 /**

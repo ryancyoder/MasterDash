@@ -51,6 +51,7 @@ import {
   anchorIsReal,
   layersNeedingUpload,
   mergeLayerRows,
+  reorderLayers,
   visibleOverlays,
   type MapOverlay,
 } from "@/lib/estimator/mapLayers";
@@ -61,6 +62,11 @@ import {
   sharedNodeIds,
   surveyedCorners,
   workBought,
+  CALLOUT_DEFAULT_W,
+  CALLOUT_MAX_W,
+  CALLOUT_MIN_W,
+  calloutWidth,
+
   type PlacedPlant,
   type PendingPoint,
   type PlanNodes,
@@ -106,6 +112,7 @@ import {
   linkPhotoToShape,
   removeCalloutFor,
   removePlant,
+  setCalloutWidth,
   removePlantsOfKind,
   removeShape,
   setPlantVariant,
@@ -600,7 +607,13 @@ export default function PlanPage({
         ? eventById.get(callout.photoId.slice("event:".length))?.photo.url
         : visit?.photos.find((p) => p.id === callout.photoId)?.url;
       if (!url) continue;
-      out.push({ id: callout.id, at: callout.at, dotAt, url });
+      out.push({
+        id: callout.id,
+        at: callout.at,
+        dotAt,
+        url,
+        w: calloutWidth(callout.w),
+      });
     }
     return out;
   }, [plan.callouts, photoDots, eventById, visit]);
@@ -610,6 +623,13 @@ export default function PlanPage({
     const photoId = selectedPhotoId;
     if (!photoId) return null;
     return plan.callouts.find((c) => c.photoId === photoId)?.id ?? null;
+  }, [plan.callouts, selectedPhotoId]);
+
+  /** The picked photograph's call-out width, for the card's slider. */
+  const pickedCalloutWidth = useMemo(() => {
+    const photoId = selectedPhotoId;
+    if (!photoId) return CALLOUT_DEFAULT_W;
+    return plan.callouts.find((c) => c.photoId === photoId)?.w ?? CALLOUT_DEFAULT_W;
   }, [plan.callouts, selectedPhotoId]);
 
   /** Whether it has a dot at all — a call-out needs something to point at. */
@@ -794,8 +814,10 @@ export default function PlanPage({
       const at = canvasApi.current?.latLngAt(e.clientX, e.clientY) ?? null;
       if (!at) return;
       if (drag.kind === "callout") {
-        addCallout(drag.photoId, at);
-        setSelectedCalloutId(drag.photoId);
+        // Selected by the CALL-OUT's id, which is what `selectedCalloutId`
+        // means everywhere else — handing it a photograph's id left the new
+        // frame drawn as though nothing were selected.
+        setSelectedCalloutId(addCallout(drag.photoId, at));
         return;
       }
       placePhoto(drag.photo, at);
@@ -1245,6 +1267,28 @@ export default function PlanPage({
     },
     [],
   );
+
+  /**
+   * Move a layer up or down the stack.
+   *
+   * Everything that changed is applied in ONE `setOverlays`, re-sorted, rather
+   * than as a patch per row: the array on screen is what the canvas draws in
+   * order, and patching one row at a time would leave it briefly holding two
+   * layers claiming the same place. The writes are fire-and-forget after that,
+   * like every other layer edit.
+   */
+  const moveLayer = useCallback((id: string, delta: 1 | -1) => {
+    setOverlays((current) => {
+      const moves = reorderLayers(current, id, delta);
+      if (moves.length === 0) return current;
+      const byId = new Map(moves.map((m) => [m.id, m.z]));
+      const next = current
+        .map((o) => (byId.has(o.id) ? { ...o, z: byId.get(o.id)! } : o))
+        .sort((a, b) => a.z - b.z);
+      for (const o of next) if (byId.has(o.id)) void saveLayer(o);
+      return next;
+    });
+  }, []);
 
   const startAligning = useCallback((id: string) => {
     setAligningId(id);
@@ -1718,7 +1762,21 @@ export default function PlanPage({
           selectedSurveyId={selectedSurveyId}
           callouts={calloutDraws}
           selectedCalloutId={selectedCalloutId}
-          onSelectCallout={setSelectedCalloutId}
+          onSelectCallout={(id) => {
+            setSelectedCalloutId(id);
+            // Tapping a held-open photograph on the map PICKS that
+            // photograph, so its own card comes up with the controls on it.
+            // Without this the card could be showing a different picture and
+            // the size slider would resize something you are not looking at.
+            if (!id) return;
+            const held = plan.callouts.find((c) => c.id === id);
+            if (!held) return;
+            setStripPick(
+              held.photoId.startsWith("event:")
+                ? held.photoId
+                : `photo:${held.photoId}`,
+            );
+          }}
           onMoveCallout={moveCallout}
           plants={plan.plants}
           plantFace={plantFace}
@@ -1957,26 +2015,57 @@ export default function PlanPage({
                 {pickedFrame.note && (
                   <p className="text-[0.65rem] text-muted">{pickedFrame.note}</p>
                 )}
-                <div className="mt-1.5 flex items-center gap-1.5">
-                  {pickedCalloutId ? (
-                    <button
-                      onClick={() => {
-                        if (selectedPhotoId) removeCalloutFor(selectedPhotoId);
-                        setSelectedCalloutId(null);
-                      }}
-                      title="Take this photograph off the plan"
-                      className="rounded-lg bg-surface2 px-2.5 py-1.5 text-[0.65rem] font-bold text-[#fca5a5]"
-                    >
-                      Put away
-                    </button>
-                  ) : (
+                {/*
+                  The size lives HERE rather than on the map, beside Put away,
+                  because this card is already the one place a held-open
+                  photograph is administered — and because a handle on the
+                  frame itself would be a fifth thing to hit-test on a surface
+                  where a picture already sits over the ground it is about.
+
+                  It is the same control the layers get for the same job, which
+                  is the point: sizing a picture on the plan is one idea, not
+                  two that happen to look alike.
+                */}
+                {pickedCalloutId ? (
+                  <>
+                    <label className="mt-1.5 flex items-center gap-2">
+                      <span className="w-8 shrink-0 text-[0.6rem] text-muted">Size</span>
+                      <input
+                        type="range"
+                        min={CALLOUT_MIN_W}
+                        max={CALLOUT_MAX_W}
+                        value={calloutWidth(pickedCalloutWidth)}
+                        aria-label="Call-out size"
+                        onChange={(e) => {
+                          if (selectedPhotoId) {
+                            setCalloutWidth(selectedPhotoId, Number(e.target.value));
+                          }
+                        }}
+                        className="w-full"
+                      />
+                    </label>
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <button
+                        onClick={() => {
+                          if (selectedPhotoId) removeCalloutFor(selectedPhotoId);
+                          setSelectedCalloutId(null);
+                        }}
+                        title="Take this photograph off the plan"
+                        className="rounded-lg bg-surface2 px-2.5 py-1.5 text-[0.65rem] font-bold text-[#fca5a5]"
+                      >
+                        Put away
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="mt-1.5 flex items-center gap-1.5">
                     <span className="text-[0.65rem] text-muted">
                       {pickedHasDot
                         ? "Drag onto the map to hold it open there"
                         : "Drop it on the map from the strip first"}
                     </span>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2040,6 +2129,7 @@ export default function PlanPage({
           {overlays.length > 0 && (
             <LayersCard
               overlays={overlays}
+              onMove={moveLayer}
               hidden={plan.hiddenOverlayIds}
               aligningId={aligningId}
               onAlign={startAligning}
@@ -2570,6 +2660,7 @@ function SurveyCard({
  */
 function LayersCard({
   overlays,
+  onMove,
   hidden,
   aligningId,
   onAlign,
@@ -2578,6 +2669,7 @@ function LayersCard({
   onRemove,
 }: {
   overlays: MapOverlay[];
+  onMove: (id: string, delta: 1 | -1) => void;
   hidden: string[];
   aligningId: string | null;
   onAlign: (id: string) => void;
@@ -2590,8 +2682,18 @@ function LayersCard({
       <span className="text-[0.65rem] font-bold tracking-widest text-muted">
         LAYERS
       </span>
+      {/*
+        TOP OF THE LIST IS TOP OF THE STACK.
+
+        `overlays` arrives sorted by z, lowest first, because that is the order
+        the canvas draws them in. Listing it that way round would put the layer
+        somebody is looking at — the one on top — at the bottom of the card,
+        and make an up arrow mean "draw underneath". Every tool that has ever
+        had layers lists them the other way, so this reverses for display and
+        the arrows mean what they look like.
+      */}
       <div className="mt-2 flex flex-col gap-3">
-        {overlays.map((o) => {
+        {[...overlays].reverse().map((o, i, list) => {
           const off = hidden.includes(o.id);
           return (
             <div key={o.id}>
@@ -2610,6 +2712,24 @@ function LayersCard({
                 >
                   {o.label}
                 </span>
+                <button
+                  onClick={() => onMove(o.id, 1)}
+                  disabled={i === 0}
+                  aria-label={`Bring ${o.label} forward`}
+                  title="Bring forward"
+                  className="shrink-0 rounded-lg px-1 text-xs text-muted disabled:opacity-20"
+                >
+                  ▲
+                </button>
+                <button
+                  onClick={() => onMove(o.id, -1)}
+                  disabled={i === list.length - 1}
+                  aria-label={`Send ${o.label} back`}
+                  title="Send back"
+                  className="shrink-0 rounded-lg px-1 text-xs text-muted disabled:opacity-20"
+                >
+                  ▼
+                </button>
                 <button
                   onClick={() => onRemove(o.id)}
                   aria-label={`Remove ${o.label}`}

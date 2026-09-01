@@ -15,6 +15,10 @@ import {
   type ShapePhotoLink,
 } from "../lib/estimator/photoLink.ts";
 import {
+  CALLOUT_DEFAULT_W,
+  CALLOUT_MAX_W,
+  CALLOUT_MIN_W,
+  calloutWidth,
   calloutsFrom,
   emptyPlan,
   plantsFrom,
@@ -43,6 +47,7 @@ import {
   pxPerWorldFor,
   mergeLayerRows,
   overlayNativePxPerWorld,
+  reorderLayers,
   shouldAdoptAnchor,
   visibleOverlays,
   zoomCeiling,
@@ -699,6 +704,121 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   // asks whether the remote side has work in it. Call-outs are work.
   const p = emptyPlan();
   ok("an empty plan has no call-outs", p.callouts.length === 0);
+}
+
+// --- The order layers draw in ----------------------------------------------
+//
+// `z` has been on the row since the first version and every read sorts by it,
+// but nothing could ever change it: a second plan landed on top of the first
+// because it happened to be added second. Which matters as soon as there are
+// two — an old survey under a new one is a reference, and the same two the
+// other way round is the old drawing hiding the current one.
+
+{
+  const layer = (id: string, z: number): MapOverlay => ({
+    id,
+    propertyId: 13,
+    label: id,
+    imageId: null,
+    storagePath: null,
+    imageUrl: `https://x/${id}.png`,
+    georef: { centre: { lat: 41.31, lng: -87.15 }, widthM: 30, aspect: 1, rotDeg: 0 },
+    opacity: 1,
+    z,
+    locked: false,
+    scaleLocked: false,
+    source: "masterdash",
+    updatedAt: null,
+  });
+
+  const three = [layer("a", 0), layer("b", 1), layer("c", 2)];
+
+  const up = reorderLayers(three, "a", 1);
+  ok("moving one up swaps it with the one above",
+    up.length === 2 && up.find((m) => m.id === "a")?.z === 1 &&
+      up.find((m) => m.id === "b")?.z === 0,
+    JSON.stringify(up));
+
+  // A write for a row that did not move is noise on a connection this app
+  // cannot count on, so only what changed comes back.
+  ok("and the layer that did not move is not rewritten",
+    !up.some((m) => m.id === "c"), JSON.stringify(up));
+
+  ok("moving the top one up does nothing at all",
+    reorderLayers(three, "c", 1).length === 0);
+  ok("nor the bottom one down", reorderLayers(three, "a", -1).length === 0);
+  ok("nor a layer that is not here", reorderLayers(three, "gone", 1).length === 0);
+
+  const down = reorderLayers(three, "c", -1);
+  ok("moving one down swaps it with the one below",
+    down.find((m) => m.id === "c")?.z === 1 && down.find((m) => m.id === "b")?.z === 2,
+    JSON.stringify(down));
+
+  // THE COLLISION IS THE INTERESTING CASE. `z` is set from `overlays.length`
+  // at import, so removing a layer and adding another gives two the same
+  // number — and swapping two equal numbers does nothing whatsoever. It
+  // renumbers densely from the new order instead.
+  const collided = [layer("a", 1), layer("b", 1), layer("c", 1)];
+  const fixed = reorderLayers(collided, "a", 1);
+  ok("layers sharing a z are renumbered rather than left in a tie",
+    new Set(fixed.map((m) => m.z)).size === fixed.length && fixed.length >= 2,
+    JSON.stringify(fixed));
+  // Checked by the ORDER THAT RESULTS, not by which rows came back. With three
+  // layers all at z=1 the moved one keeps the number it had and its neighbour
+  // changes instead — so asking whether `a` is in the list tests the mechanism
+  // and says nothing about whether anything moved. Applying the moves and
+  // sorting is what the app does, so it is what the check should do.
+  const orderAfter = (layers: MapOverlay[], moves: { id: string; z: number }[]) => {
+    const byId = new Map(moves.map((m) => [m.id, m.z]));
+    return [...layers]
+      .map((o) => (byId.has(o.id) ? { ...o, z: byId.get(o.id)! } : o))
+      .sort((a, b) => a.z - b.z)
+      .map((o) => o.id)
+      .join("");
+  };
+  ok("and the move still happens", orderAfter(collided, fixed) === "bac",
+    orderAfter(collided, fixed));
+  ok("a plain move reorders as it reads", orderAfter(three, up) === "bac",
+    orderAfter(three, up));
+  ok("and downwards too", orderAfter(three, down) === "acb",
+    orderAfter(three, down));
+
+  const sparse = reorderLayers([layer("a", 3), layer("b", 40)], "a", 1);
+  ok("a gappy numbering comes back dense from zero",
+    sparse.some((m) => m.id === "a" && m.z === 1) &&
+      sparse.some((m) => m.id === "b" && m.z === 0),
+    JSON.stringify(sparse));
+}
+
+// --- How big a call-out is drawn -------------------------------------------
+//
+// One size cannot serve: a wide shot of the whole back garden is worth reading
+// big and a close-up of an edging detail is not, and on a plan with six of
+// them the difference between a thumbnail and a picture is whether the plan
+// can be read at all.
+
+{
+  ok("no width is the default", calloutWidth(undefined) === CALLOUT_DEFAULT_W);
+  ok("and so is nonsense", calloutWidth("wide") === CALLOUT_DEFAULT_W);
+  ok("and a NaN", calloutWidth(Number.NaN) === CALLOUT_DEFAULT_W);
+  // A zero or a negative width is a frame with no picture in it and a hit test
+  // nothing can ever land inside.
+  ok("a zero is clamped up", calloutWidth(0) === CALLOUT_MIN_W);
+  ok("and something absurd is clamped down", calloutWidth(9999) === CALLOUT_MAX_W);
+  ok("a real one is kept", calloutWidth(200) === 200);
+
+  const at = { lat: 41.31, lng: -87.15 };
+  const sized = calloutsFrom({ callouts: [{ id: "c1", photoId: "event:p1", at, w: 300 }] });
+  ok("a stored width round-trips", sized[0]?.w === 300, JSON.stringify(sized[0] ?? null));
+
+  // Absent when it is the default, so a plan full of ordinary call-outs does
+  // not carry the same number on every one of them.
+  const plain = calloutsFrom({
+    callouts: [{ id: "c1", photoId: "event:p1", at, w: CALLOUT_DEFAULT_W }],
+  });
+  ok("the default is not written down", plain[0]?.w === undefined);
+  const bad = calloutsFrom({ callouts: [{ id: "c1", photoId: "event:p1", at, w: 9999 }] });
+  ok("and one out of range comes back inside it", bad[0]?.w === CALLOUT_MAX_W);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -1,9 +1,11 @@
 "use client";
 
 import {
+  CALLOUT_DEFAULT_W,
+  calloutWidth,
+  calloutsFrom,
   emptyPlan,
   nextShapeColor,
-  calloutsFrom,
   planId,
   plantsFrom,
   pruneNodes,
@@ -695,6 +697,26 @@ export function moveCallout(id: string, at: LatLng) {
   mutatePlan((plan) => ({
     ...plan,
     callouts: plan.callouts.map((c) => (c.id === id ? { ...c, at } : c)),
+  }));
+}
+
+/**
+ * Resize one, by the photograph rather than by the call-out's id.
+ *
+ * Keyed the same way `removeCalloutFor` is, and for the same reason: the card
+ * that does both is the picture's, and it knows which photograph is picked
+ * rather than which call-out row that made.
+ */
+export function setCalloutWidth(photoId: string, w: number) {
+  mutatePlan((plan) => ({
+    ...plan,
+    callouts: plan.callouts.map((c) =>
+      c.photoId === photoId
+        ? calloutWidth(w) === CALLOUT_DEFAULT_W
+          ? { id: c.id, photoId: c.photoId, at: c.at }
+          : { ...c, w: calloutWidth(w) }
+        : c,
+    ),
   }));
 }
 

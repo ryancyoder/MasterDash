@@ -1235,6 +1235,70 @@ yards worth taking off. So it costs one copy of a picture already in Storage,
 in exchange for a layer that behaves like every other layer: offline, on a
 second device, and in Upright, which reads the same rows.
 
+#### Layers have an order, and call-outs have a size
+
+Two things asked for together, and both are the same shape of gap: a number
+that existed and could not be changed.
+
+**`z` has been on `property_map_layers` since the first version** and every read
+sorts by it, but nothing could ever set it — a second plan landed on top of the
+first because it happened to be added second. That is fine with one layer and
+wrong the moment there are two: an old survey *under* a new one is a reference,
+and the same two the other way round is the old drawing hiding the current one.
+▲/▼ on each row now move it, and **the card lists the top of the stack first**,
+because every tool that has ever had layers does and an up arrow that meant
+"draw underneath" would be a puzzle.
+
+`reorderLayers()` **renumbers densely from the new order** rather than swapping
+two numbers, which repairs a collision the old numbering could produce: `z` is
+set from `overlays.length` at import, so removing a layer and adding another
+gives two the same number — and swapping equal numbers does nothing at all.
+Only the rows whose `z` actually changes come back, because each one is a PATCH
+and a write for a row that did not move is noise on a connection this app
+cannot count on.
+
+**A call-out's width is per call-out**, 70–420px, on the same card as Put away.
+One size cannot serve: a wide shot of the whole back garden is worth reading big
+and a close-up of an edging detail is not, and on a plan with six of them the
+difference between a thumbnail and a picture is whether the plan can be read at
+all. Screen pixels, like the frame itself — it must not grow when you zoom in on
+the bed it is a picture of. The default is not written to the row, so a plan
+full of ordinary call-outs does not carry the same number on every one of them.
+Tapping a call-out on the map now also **picks its photograph**, so the card
+that appears is the one holding the controls for the thing you just tapped.
+
+**Two bugs fixed on the way in.** A dropped call-out was selected by the
+photograph's id rather than the call-out's, so a new frame drew as though
+nothing were selected. And the test's own `/api/property-layers` stub answered
+every save with a fixed row — harmless with one layer, quietly destructive with
+two, since the page merges the response by id: saving the *second* layer handed
+the *first* a storage path and an image URL nothing served, and the magenta
+layer went blank with every check about it failing for a reason unrelated to
+the code under test.
+
+**And the leader-line check took five tries.** It is worth writing down what
+each one got wrong, because they are all the same mistake in different clothes:
+
+1. Bright pixels across the whole canvas — the frame's own white border is
+   bright and does not move.
+2. Bright pixels outside the frame, near versus far — read **491 then 414**,
+   backwards, because which direction is "away" depends on where the pin
+   happens to sit once the map has fitted two layers.
+3. The same, with the frame's position taken from the centroid of every red
+   pixel — but the photograph dropped on Add plan is *also* red and covers a
+   swathe of the map, so the centroid landed nowhere in particular and the
+   grab that was meant to move the picture panned the map instead.
+4. With the position known exactly (the coordinates the drop was aimed at) it
+   still read **402 with the line and 402 without**: a call-out is *selected*
+   the moment it is dropped, so its leader is `#22c55e`, and no channel of that
+   is above 150.
+5. White **or** green, outside a box at the known drop point, with the picture
+   and then without it. Against a build with the two `lineTo` calls removed it
+   reads 402 and 402 — identically.
+
+Mutation-tested: no leader turns 1 check red, a reorder that does nothing turns
+1, and a call-out that ignores its stored width turns 1.
+
 #### The picture out of the preview: a call-out
 
 **The same photograph, a different question.** A frame out of the strip asks

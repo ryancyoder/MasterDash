@@ -172,6 +172,37 @@ export interface PhotoCallout {
   photoId: string;
   /** Where the picture sits. Never where the dot is. */
   at: LatLng;
+  /**
+   * How wide the picture is drawn, in SCREEN pixels. Absent is the default.
+   *
+   * Screen rather than ground, the same as the frame itself: a call-out is
+   * pinned to the plan, not occupying the yard, so it must not grow when you
+   * zoom in on the bed it is a picture of. Which is also why one size cannot
+   * serve — a wide shot of the whole back garden is worth reading big and a
+   * close-up of an edging detail is not, and on a plan with six of them the
+   * difference between a thumbnail and a picture is whether the plan can be
+   * read at all.
+   */
+  w?: number;
+}
+
+/** The width a call-out is drawn at when nobody has said otherwise. */
+export const CALLOUT_DEFAULT_W = 132;
+/**
+ * The range one can be sized to.
+ *
+ * The floor is where a photograph stops being recognisable and becomes a
+ * coloured square; the ceiling is about a third of a landscape iPad, past
+ * which the call-out is no longer an annotation on a plan, it is a picture
+ * with a plan behind it — and there is a photo viewer for that.
+ */
+export const CALLOUT_MIN_W = 70;
+export const CALLOUT_MAX_W = 420;
+
+/** A stored width, made safe: out of range is clamped, nonsense is the default. */
+export function calloutWidth(w: unknown): number {
+  if (typeof w !== "number" || !Number.isFinite(w)) return CALLOUT_DEFAULT_W;
+  return Math.min(CALLOUT_MAX_W, Math.max(CALLOUT_MIN_W, Math.round(w)));
 }
 
 /** A corner tapped while drawing: either a new position, or one that snapped. */
@@ -641,7 +672,16 @@ export function calloutsFrom(value: unknown): PhotoCallout[] {
     // One call-out per photograph. Two would sit on top of each other with two
     // lines to one dot, and nothing on screen would say there were two.
     if (out.some((c) => c.photoId === r.photoId)) continue;
-    out.push({ id, at, photoId: r.photoId });
+    out.push({
+      id,
+      at,
+      photoId: r.photoId,
+      // Only when it is not the default, so a plan full of ordinary call-outs
+      // does not carry the same number on every one of them.
+      ...(r.w !== undefined && calloutWidth(r.w) !== CALLOUT_DEFAULT_W
+        ? { w: calloutWidth(r.w) }
+        : {}),
+    });
   }
   return out;
 }

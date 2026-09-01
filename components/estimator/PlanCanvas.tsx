@@ -273,6 +273,8 @@ export interface CalloutDraw {
   at: LatLng;
   dotAt: LatLng;
   url: string;
+  /** Its own width in canvas pixels, resolved by the page. */
+  w: number;
 }
 
 /**
@@ -299,7 +301,7 @@ function calloutBox(
   const img = images.get(callout.url);
   const aspect =
     img && img.naturalWidth > 0 ? img.naturalHeight / img.naturalWidth : 0.75;
-  const w = CALLOUT_W;
+  const w = callout.w;
   const h = Math.round(w * aspect);
   return { img, c, w, h, x: c.x - w / 2, y: c.y - h / 2 };
 }
@@ -424,16 +426,11 @@ const PLANT_R = 13;
 /** Comfortably bigger than the glyph, because a thumb is not a cursor. */
 const PLANT_GRAB_PX = 20;
 
-/**
- * A held-open photograph, in canvas pixels.
- *
- * Screen pixels for the same reason a plant symbol is: it is a picture pinned
- * to the plan, not a thing occupying ground. Big enough to recognise a bed in
- * at arm's length and small enough that three of them do not bury the yard —
- * a shade under the filmstrip's own 172px tile, which is the size somebody has
- * already been reading these at.
- */
-const CALLOUT_W = 132;
+// A held-open photograph is measured in canvas pixels, for the same reason a
+// plant symbol is: it is pinned to the plan, not occupying ground. The default
+// is a shade under the filmstrip's own 172px tile — the size these have
+// already been read at — and each one can be sized from there. See
+// CALLOUT_DEFAULT_W in plan.ts for why one size cannot serve.
 
 export default function PlanCanvas({
   anchor,
@@ -1744,7 +1741,9 @@ export default function PlanCanvas({
         // loading, not that it failed, not which picture it was meant to be.
         // The two states are different and both are worth a word.
         ctx.fillStyle = "rgba(255,255,255,0.65)";
-        ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+        // Scaled with the frame, or the message runs off the sides of a small
+        // one and reads as a picture that half-loaded.
+        ctx.font = `${Math.max(8, Math.min(13, Math.round(w / 12)))}px ui-sans-serif, system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(

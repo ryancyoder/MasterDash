@@ -28,6 +28,14 @@ const PORT = 3111;
 const BASE = `http://127.0.0.1:${PORT}`;
 
 /** A 1x1 transparent PNG, standing in for a property's cover photograph. */
+const MAGENTA_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAE0lEQVR4nGP4z/D/Pz7MMDIUAACD5r9BB2dd7wAAAABJRU5ErkJggg==",
+  "base64",
+);
+const BLUE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg0Pj/HwADegInV9T7/gAAAABJRU5ErkJggg==",
+  "base64",
+);
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
@@ -193,17 +201,44 @@ try {
     opacity: 0.85, z: 0, locked: false, scaleLocked: false,
     source: "masterdash", updatedAt: null,
   };
+  /*
+    A second layer, opaque blue, the same yard and larger — and z BELOW the
+    magenta one, so everything already checked here still sees magenta on top.
+    It exists for the ORDER: with two layers the question "which is drawn over
+    which" finally has an answer that can be read off the canvas.
+  */
+  const UNDER = {
+    id: "22222222-3333-4444-8555-666666666666",
+    propertyId: 13, label: "Old survey",
+    imageId: null, storagePath: null, imageUrl: null,
+    georef: { centre: { lat: 41.31, lng: -87.15 }, widthM: 90, aspect: 1, rotDeg: 0 },
+    opacity: 1, z: -1, locked: false, scaleLocked: false,
+    source: "masterdash", updatedAt: null,
+  };
   let layerSaves = 0;
   await page.route("**/api/property-layers**", (r) => {
     if (r.request().method() === "POST") {
       layerSaves++;
+      /*
+        ECHO THE LAYER THAT WAS POSTED, not a fixed one.
+
+        This used to answer every save with the magenta layer's own row, which
+        was harmless while there was one layer and quietly destructive the
+        moment there were two: the page merges the response by id, so saving
+        the SECOND layer handed the FIRST one a storage path and an imageUrl
+        that no route serves — and the magenta layer went blank with every
+        check about it failing for a reason that had nothing to do with the
+        code under test. A stub that cannot tell two rows apart is not a stub
+        of this API.
+      */
+      const posted = r.request().postDataJSON() ?? {};
       return r.fulfill({ contentType: "application/json",
         body: JSON.stringify({ ok: true,
-          layer: { ...LAYER, storagePath: "property-13/x.jpg",
-                   imageUrl: "https://x/property-13/x.jpg" } }) });
+          layer: { ...posted, storagePath: `property-13/${posted.id}.jpg`,
+                   imageUrl: `https://cover.test/layer-${posted.id}.png` } }) });
     }
     return r.fulfill({ contentType: "application/json",
-      body: JSON.stringify({ ok: true, layers: [LAYER] }) });
+      body: JSON.stringify({ ok: true, layers: [LAYER, UNDER] }) });
   });
   // Two visits to property 13, one typed and one not — which is the ordinary
   // shape: 70 of the 120 events on file carry no event_type at all.
@@ -277,6 +312,17 @@ try {
       body: PNG,
     }));
   await page.route("**cover.test/broken.png", (r) => r.fulfill({ status: 404, body: "" }));
+  // A layer's Storage copy, once it has been "uploaded": the same colour its
+  // local copy is, so a layer that falls back to the remote URL still looks
+  // like itself rather than going blank.
+  const LAYER_PNG = {
+    "11111111-2222-4333-8444-555555555555": MAGENTA_PNG,
+    "22222222-3333-4444-8555-666666666666": BLUE_PNG,
+  };
+  await page.route("**cover.test/layer-*.png", (r) => {
+    const id = (r.request().url().split("layer-")[1] ?? "").replace(".png", "");
+    return r.fulfill({ contentType: "image/png", body: LAYER_PNG[id] ?? PNG });
+  });
 
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("main");
@@ -725,23 +771,28 @@ try {
   // The bytes are put into IndexedDB under the row's own id, which is what
   // addOverlayFromFile() does, and then the page is reloaded so the mount is
   // as fresh as it gets.
-  await page.evaluate(async (id) => {
+  await page.evaluate(async ([magentaId, blueId]) => {
     // Opaque magenta, so the check can be "is the picture ON THE MAP" rather
     // than "is a row in a list" — the layer is painted into a canvas, and a
-    // transparent pixel would prove nothing.
-    const blob = await (await fetch("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAE0lEQVR4nGP4z/D/Pz7MMDIUAACD5r9BB2dd7wAAAABJRU5ErkJggg==")).blob();
-    await new Promise((res, rej) => {
-      const open = indexedDB.open("qe-plans", 1);
-      open.onupgradeneeded = () => open.result.createObjectStore("images");
-      open.onsuccess = () => {
-        const t = open.result.transaction("images", "readwrite");
-        t.objectStore("images").put(blob, id);
-        t.oncomplete = () => res(null);
-        t.onerror = () => rej(t.error);
-      };
-      open.onerror = () => rej(open.error);
-    });
-  }, "11111111-2222-4333-8444-555555555555");
+    // transparent pixel would prove nothing. Opaque blue for the one beneath
+    // it, so which of the two is on top is a question the pixels answer.
+    const put = async (id, data) => {
+      const blob = await (await fetch(data)).blob();
+      await new Promise((res, rej) => {
+        const open = indexedDB.open("qe-plans", 1);
+        open.onupgradeneeded = () => open.result.createObjectStore("images");
+        open.onsuccess = () => {
+          const t = open.result.transaction("images", "readwrite");
+          t.objectStore("images").put(blob, id);
+          t.oncomplete = () => res(null);
+          t.onerror = () => rej(t.error);
+        };
+        open.onerror = () => rej(open.error);
+      });
+    };
+    await put(magentaId, "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAE0lEQVR4nGP4z/D/Pz7MMDIUAACD5r9BB2dd7wAAAABJRU5ErkJggg==");
+    await put(blueId, "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg0Pj/HwADegInV9T7/gAAAABJRU5ErkJggg==");
+  }, ["11111111-2222-4333-8444-555555555555", "22222222-3333-4444-8555-666666666666"]);
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForSelector("main button.aspect-square");
@@ -765,6 +816,43 @@ try {
   ok("and the bytes are pushed to Storage, so it is not one iPad's secret",
     imageUploads > 0, `${imageUploads} uploads`);
   ok("with the row updated to say where they landed", layerSaves > 0, `${layerSaves} saves`);
+
+  // 7c-ii-b. AND THE LAYERS CAN BE PUT IN ORDER.
+  //
+  // `z` has been on the row since the first version and every read sorts by
+  // it, but nothing could ever change it: a second plan landed on top of the
+  // first because it happened to be added second. That matters as soon as
+  // there are two — an old survey under a new one is a reference, and the same
+  // two the other way round is the old drawing hiding the current one.
+  //
+  // Read off the CANVAS. The blue layer is larger and directly beneath, so
+  // sending the magenta one back does not merely change a number in a card,
+  // it puts blue where magenta was.
+  const layerOrder = await page.$$eval('aside button[aria-label^="Send"]', (els) =>
+    els.map((e) => e.getAttribute("aria-label")));
+  ok("the layers card lists the top one first, and offers to move it",
+    layerOrder[0] === "Send Back yard plan back" && layerOrder.length === 2,
+    JSON.stringify(layerOrder));
+
+  await page.locator('button[aria-label="Send Back yard plan back"]').click();
+  await page.waitForTimeout(800);
+  const buried = await magentaCount(page);
+  ok("SENDING A LAYER BACK PUTS THE OTHER ONE OVER IT",
+    buried < drawn * 0.2, `${drawn} on top, ${buried} once sent back`);
+
+  // Guarded: against a build where nothing moved, this button is the top
+  // layer's and therefore disabled, and an unguarded click THROWS rather
+  // than failing — taking every check after it out of existence instead of
+  // turning one red.
+  const bringForward = page.locator('button[aria-label="Bring Back yard plan forward"]');
+  if (await bringForward.isEnabled()) {
+    await bringForward.click();
+    await page.waitForTimeout(800);
+  }
+  const raised = await magentaCount(page);
+  ok("and bringing it forward puts it back over",
+    Math.abs(raised - drawn) < drawn * 0.05, `${drawn} then ${raised}`);
+  ok("which is a real write, not just a redraw", layerSaves > 0, `${layerSaves} saves`);
 
   // 7c-iii. THE VIEW CAN BE LOCKED, AND IT COMES BACK.
   //
@@ -1244,27 +1332,70 @@ try {
     that move, and 120 rather than 200 per channel catches the stroke's
     antialiasing, which is most of a 1.5px line.
   */
-  const lineBrightness = (centre, side) =>
-    page.evaluate(([cx, cy, s]) => {
+  /*
+    HOW MUCH IS DRAWN OUTSIDE THE PICTURE'S OWN FRAME.
+
+    The frame is masked out because its border is white and does not change;
+    what is left that can change is the leader and the collar on its dot.
+  */
+  /*
+    RED INSIDE A NAMED BOX.
+
+    The centroid of every red pixel on the canvas is NOT where the call-out
+    is: the photograph dropped on Add plan is a red layer covering a swathe
+    of the map, so a centroid mixes the two and lands nowhere in particular.
+    Everything positional below therefore works from the coordinates the drop
+    was aimed at, which are known exactly.
+  */
+  const redIn = (bx, by, side) =>
+    page.evaluate(([x, y, s]) => {
+      const c = document.querySelector("canvas");
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const px = (i / 4) % c.width;
+        const py = Math.floor(i / 4 / c.width);
+        if (Math.abs(px - x) > s / 2 || Math.abs(py - y) > s / 2) continue;
+        if (d[i] > 90 && d[i + 1] < 60 && d[i + 2] < 60) n++;
+      }
+      return n;
+    }, [bx, by, side]);
+
+  const lineBrightness = (boxes, side) =>
+    page.evaluate(([bs, s]) => {
       const c = document.querySelector("canvas");
       const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
       let n = 0;
       for (let i = 0; i < d.length; i += 4) {
         const x = (i / 4) % c.width;
         const y = Math.floor(i / 4 / c.width);
-        if (Math.abs(x - cx) <= s / 2 + 4 && Math.abs(y - cy) <= s / 2 + 4) continue;
-        if (d[i] > 120 && d[i + 1] > 120 && d[i + 2] > 120) n++;
+        if (bs.some((b) => Math.abs(x - b.x) <= s / 2 + 6 && Math.abs(y - b.y) <= s / 2 + 6))
+          continue;
+        // WHITE OR GREEN. The leader is white at rest and the selection
+        // green when the call-out is picked — and a call-out is picked the
+        // moment it is dropped or dragged, which is exactly when this
+        // measures. A white-only test read 402 with the line and 402
+        // without it, because #22c55e has no channel above 150.
+        const [r, g, b] = [d[i], d[i + 1], d[i + 2]];
+        if ((r > 150 && g > 150 && b > 150) || (g > 140 && r < 110 && b < 140)) n++;
       }
       return n;
-    }, [centre.x, centre.y, side]);
+    }, [boxes, side]);
 
   const stage = await page.locator("canvas").boundingBox();
+  // Where the picture is dropped, and where it is dragged to. Known rather
+  // than measured, so every box below is over the frame and not over the
+  // average of everything red on the map.
+  const CX = 260;
+  const CY = 120;
+  const MX = 760;
+  const MY = 330;
   const beforeCallout = await redPixels();
   const previewBox = await page.locator('img[data-preview="picked"]').boundingBox();
   ok("the preview offers itself as a drag", previewBox !== null);
   await page.mouse.move(previewBox.x + previewBox.width / 2, previewBox.y + previewBox.height / 2);
   await page.mouse.down();
-  await page.mouse.move(stage.x + 260, stage.y + 120, { steps: 10 });
+  await page.mouse.move(stage.x + CX, stage.y + CY, { steps: 10 });
   await page.mouse.up();
   await page.waitForTimeout(700);
 
@@ -1279,27 +1410,57 @@ try {
       typeof (await storedCallouts())[0]?.photoId === "string" &&
       (await storedCallouts())[0]?.dotAt === undefined,
     JSON.stringify(await storedCallouts()));
+  ok("and it is where it was dropped", (await redIn(CX, CY, 120)) > 3000,
+    `${await redIn(CX, CY, 120)} red pixels in the frame`);
+
+  // Drag it clear, grabbing the frame's own centre — which is where it was
+  // dropped. Grabbing a centroid instead grabbed the map and panned it.
+  await page.mouse.move(stage.x + CX, stage.y + CY);
+  await page.mouse.down();
+  await page.mouse.move(stage.x + MX, stage.y + MY, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  ok("A CALL-OUT MOVES WHERE IT IS DRAGGED",
+    (await redIn(MX, MY, 120)) > 3000 && (await redIn(CX, CY, 120)) < 1000,
+    `${await redIn(CX, CY, 120)} left behind, ${await redIn(MX, MY, 120)} at the new place`);
+
+  // A held-open photograph is sized per call-out: a wide shot of the whole
+  // back garden is worth reading big and a close-up of an edging detail is
+  // not. Read as PIXELS OF PICTURE, which is the thing being changed — the
+  // stored number would be right against a build that never drew it.
+  const sizeSlider = page.locator('input[aria-label="Call-out size"]');
+  ok("the picked photograph's card offers a size", (await sizeSlider.count()) === 1);
+  await sizeSlider.fill("400");
+  await page.waitForTimeout(500);
+  const bigger = await redIn(MX, MY, 420);
+  ok("SIZING IT UP DRAWS MORE PICTURE",
+    bigger > 3000 * 2, `${bigger} pixels of picture`);
+  await sizeSlider.fill("80");
+  await page.waitForTimeout(500);
+  const smaller = await redIn(MX, MY, 420);
+  ok("and sizing it down draws less", smaller < bigger / 3,
+    `${bigger} then ${smaller} pixels`);
+  ok("the width is kept on the call-out, not on every one of them",
+    await page.evaluate(() => {
+      const cs = JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.callouts ?? [];
+      return cs.length === 1 && cs[0].w === 80;
+    }));
+  await sizeSlider.fill("132");
+  await page.waitForTimeout(500);
 
   // THE LINE. A picture with no leader is not a call-out, and a frame drawn
-  // without one looks identical in every other check here — so this one has a
-  // SIGN in it: drag the picture further from its own dot and the connector
-  // gets longer, which nothing else on screen does.
-  const nearLine = await lineBrightness(held, 132);
-  await page.mouse.move(held.x + stage.x, held.y + stage.y);
-  await page.mouse.down();
-  await page.mouse.move(held.x + stage.x + 240, held.y + stage.y + 110, { steps: 12 });
-  await page.mouse.up();
-  await page.waitForTimeout(500);
-  const movedTo = await redPixels();
-  const farLine = await lineBrightness(movedTo, 132);
-  ok("AND A LINE RUNS BACK TO ITS DOT — longer when the picture is moved away",
-    farLine > nearLine + 150, `${nearLine} then ${farLine} bright pixels off the frame`);
-  ok("the picture itself moved with the finger",
-    Math.abs(movedTo.x - held.x) > 100, `${held.x} then ${movedTo.x}`);
+  // without one looks identical in every other check here. Counted outside
+  // the frame's own box, with the picture and then without it: the leader and
+  // the collar on its dot are the only bright things that go.
+  const frameBox = [{ x: MX, y: MY }];
+  const withLine = await lineBrightness(frameBox, 132);
 
   // Put it away from the same card that brought it out.
   await page.click('button[title="Take this photograph off the plan"]');
   await page.waitForTimeout(500);
+  const withoutLine = await lineBrightness(frameBox, 132);
+  ok("AND A LINE RUNS BACK TO ITS DOT — it goes when the picture does",
+    withLine > withoutLine + 60, `${withLine} with it, ${withoutLine} without`);
   ok("and Put away takes it off the plan",
     (await storedCallouts()).length === 0 &&
       (await redPixels()).n < beforeCallout.n + 2000,
