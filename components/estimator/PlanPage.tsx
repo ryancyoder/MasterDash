@@ -1234,6 +1234,21 @@ export default function PlanPage({
   const [symbolsOpen, setSymbolsOpen] = useState(false);
   /** The assembly-colours panel, open on the BUYS row. */
   const [colorsOpen, setColorsOpen] = useState(false);
+  /*
+    WHICH SIDE BOXES ARE OPEN, and it is deliberately two pieces of state.
+
+    `settings.sideCollapsed` is the standing habit — folded or not — and it is
+    the only part persisted, because it is one boolean rather than an entry per
+    box. Individual chevrons write `sideOverrides`, which is component state
+    and goes when the page does: a shape id lives for one estimate, so keeping
+    a per-shape entry in a device settings blob would grow it without bound
+    and leave rows for beds deleted a month ago.
+
+    So the standing habit persists and the exceptions to it do not, which is
+    the right way round: nobody wants "I opened the second bed once" remembered
+    for ever, and everybody wants a column they folded to stay folded.
+  */
+  const [sideOverrides, setSideOverrides] = useState<Record<string, boolean>>({});
   const [plantRows, setPlantRows] = useState<PlantRow[] | null>(null);
 
   /*
@@ -1567,6 +1582,31 @@ export default function PlanPage({
     () => (drawing ? assembliesForShape(ASSEMBLY_MODELS, tool as ShapeKind) : []),
     [drawing, tool],
   );
+
+  /** Whether one box is open: its own answer, else the standing habit. */
+  const sideOpen = useCallback(
+    (id: string) => sideOverrides[id] ?? !settings.sideCollapsed,
+    [sideOverrides, settings.sideCollapsed],
+  );
+  const toggleSide = useCallback(
+    (id: string) => {
+      setSideOverrides((o) => ({ ...o, [id]: !(o[id] ?? !settings.sideCollapsed) }));
+    },
+    [settings.sideCollapsed],
+  );
+  /**
+   * Fold the whole column away, or open it.
+   *
+   * It CLEARS the overrides rather than adding to them: "collapse all" that
+   * left three boxes open because somebody had opened them earlier is not
+   * collapse all, and the button would be the only control on the screen that
+   * does not do what it says.
+   */
+  const toggleAllSides = useCallback(() => {
+    const next = !settings.sideCollapsed;
+    updateSettings({ sideCollapsed: next });
+    setSideOverrides({});
+  }, [settings.sideCollapsed]);
 
   const ready = anchorIsReal(anchor);
   const shared = useMemo(() => sharedNodeIds(plan.shapes), [plan.shapes]);
@@ -2485,16 +2525,39 @@ export default function PlanPage({
             </>
           ) : (
           <>
+          {/*
+            FOLD THE COLUMN, from the top of the column.
+
+            Not in the map toolbar with the other view switches: those govern
+            what is on the MAP, and this governs the reading of the cards
+            beside it. A control belongs with what it changes.
+
+            It says what it will DO rather than what the state is, unlike the
+            label cycle — the state is right there underneath in eight boxes,
+            so there is nothing to read off the button.
+          */}
+          <button
+            onClick={toggleAllSides}
+            aria-label="Fold or open every box"
+            className="shrink-0 self-start rounded-lg px-1 py-0.5 text-[0.6rem] font-bold tracking-widest text-muted"
+          >
+            {settings.sideCollapsed ? "▸ OPEN ALL" : "▾ FOLD ALL"}
+          </button>
+
           <AnchorCard
             estimate={estimate}
             picking={picking}
             onPicking={setPicking}
+            open={sideOpen("property")}
+            onToggle={() => toggleSide("property")}
           />
           <SurveyCard
             chosen={plan.survey}
             layer={survey}
             picking={pickingSurvey}
             onPicking={setPickingSurvey}
+            open={sideOpen("survey")}
+            onToggle={() => toggleSide("survey")}
           />
           {overlays.length > 0 && (
             <LayersCard
@@ -2509,6 +2572,8 @@ export default function PlanPage({
                 setOverlays((c) => c.filter((o) => o.id !== id));
                 void deleteLayer(id);
               }}
+              open={sideOpen("layers")}
+              onToggle={() => toggleSide("layers")}
             />
           )}
           {/*
@@ -2566,6 +2631,8 @@ export default function PlanPage({
                 setSelectedPlantId(null);
               }}
               glyphFor={(itemId) => getItem(itemId)?.glyph ?? "🌿"}
+              open={sideOpen("plants")}
+              onToggle={() => toggleSide("plants")}
             />
           )}
 
@@ -2598,6 +2665,8 @@ export default function PlanPage({
                 onRemove={() => removeShape(shape.id)}
                 photos={resolvePhotos(shape)}
                 onUnlinkPhoto={(photoId) => unlinkPhotoFromShape(shape.id, photoId)}
+                open={sideOpen(shape.id)}
+                onToggle={() => toggleSide(shape.id)}
               />
             ))
           )}
@@ -2759,14 +2828,102 @@ export default function PlanPage({
  * anchor was worth. A map that opens on the office and says nothing is the
  * failure mode this card exists to prevent.
  */
+/**
+ * One of the column's boxes, with its body foldable away.
+ *
+ * THE HEADER NEVER FOLDS, and that is what makes collapsing worth doing: a
+ * shape's card folds to its area and its colour, the plants' to how many are
+ * placed. A column of eight boxes folded to nothing but their titles would be
+ * a table of contents, which is not what anybody is scrolling past nine beds
+ * to find.
+ *
+ * The chevron is its own button rather than the header being one. Two of these
+ * headers already carry a control — Change on the property, ✕ on a shape — and
+ * a button inside a button is invalid and behaves like it; and the shape card
+ * selects on a click anywhere, which a header-wide toggle would fight.
+ */
+function InfoBox({
+  label,
+  title,
+  badge,
+  action,
+  open,
+  onToggle,
+  accent,
+  onClick,
+  children,
+}: {
+  /** Names the box, for the toggle's own label. */
+  label: string;
+  /** What the header shows. The label in the usual caps where not given. */
+  title?: React.ReactNode;
+  /** A word or a number that survives folding — the point of folding. */
+  badge?: React.ReactNode;
+  /** A control belonging to the header rather than the body. */
+  action?: React.ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  accent?: boolean;
+  onClick?: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      className={`shrink-0 rounded-2xl border bg-surface p-3 ${
+        accent ? "border-accent" : "border-edge"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        {title ?? (
+          <span className="text-[0.65rem] font-bold tracking-widest text-muted">
+            {label}
+          </span>
+        )}
+        {badge}
+        <div className="min-w-0 flex-1" />
+        {action}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
+          aria-expanded={open}
+          /*
+            FOLD, not show or hide, and the difference is not cosmetic.
+
+            "Show or hide" is already taken on this screen by the eyes that
+            take a trade off the MAP and by the planting's switch. Folding a
+            card changes what you are reading; hiding a trade changes what is
+            drawn on the yard. Two controls a tap apart, named the same, would
+            be the same control as far as anybody reading them is concerned —
+            and the browser suite found exactly that, counting eleven eyes
+            where there are five.
+          */
+          aria-label={`Fold or open ${label}`}
+          title={open ? `Fold ${label} away` : `Open ${label}`}
+          className="shrink-0 rounded-lg px-1.5 py-0.5 text-xs text-muted"
+        >
+          {open ? "▾" : "▸"}
+        </button>
+      </div>
+      {open && children}
+    </div>
+  );
+}
+
 function AnchorCard({
   estimate,
   picking,
   onPicking,
+  open,
+  onToggle,
 }: {
   estimate: Estimate;
   picking: boolean;
   onPicking: (v: boolean) => void;
+  open: boolean;
+  onToggle: () => void;
 }) {
   const anchor = estimate.plan.anchor;
   const [q, setQ] = useState("");
@@ -2851,20 +3008,33 @@ function AnchorCard({
   const fromJob = estimate.dealId !== null && anchor?.propertyId != null;
 
   return (
-    <div className="rounded-2xl border border-edge bg-surface p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[0.65rem] font-bold tracking-widest text-muted">
-          PROPERTY
-        </span>
-        {!fromJob && (
+    <InfoBox
+      label="PROPERTY"
+      open={open}
+      onToggle={onToggle}
+      /*
+        The address survives folding. It is the one thing on this card you
+        check rather than change, and a PROPERTY box folded to the word
+        "property" would answer nothing.
+      */
+      badge={
+        !open && (
+          <span className="min-w-0 flex-1 truncate text-[0.7rem] text-ink">
+            {anchor?.label ?? (anchor?.propertyId ? `#${anchor.propertyId}` : "Not chosen")}
+          </span>
+        )
+      }
+      action={
+        !fromJob && (
           <button
             onClick={() => onPicking(true)}
-            className="text-xs font-bold text-accent"
+            className="shrink-0 text-xs font-bold text-accent"
           >
             {anchor?.propertyId != null ? "Change" : "Choose"}
           </button>
-        )}
-      </div>
+        )
+      }
+    >
       <p className="mt-1 text-sm leading-snug text-ink">
         {anchor?.label ?? (anchor?.propertyId ? `#${anchor.propertyId}` : "Not chosen")}
       </p>
@@ -2887,7 +3057,7 @@ function AnchorCard({
           {ANCHOR_BLURB[anchor.source]}
         </p>
       )}
-    </div>
+    </InfoBox>
   );
 }
 
@@ -2908,11 +3078,15 @@ function SurveyCard({
   layer,
   picking,
   onPicking,
+  open,
+  onToggle,
 }: {
   chosen: { sessionId: string; label: string } | null;
   layer: SurveyLayer | null;
   picking: boolean;
   onPicking: (v: boolean) => void;
+  open: boolean;
+  onToggle: () => void;
 }) {
   const [rows, setRows] = useState<UprightSurveySession[] | null>(null);
 
@@ -2991,12 +3165,19 @@ function SurveyCard({
     layer?.points.filter((p) => p.elevation.state === "unplaced").length ?? 0;
 
   return (
-    <div className="rounded-2xl border border-edge bg-surface p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[0.65rem] font-bold tracking-widest text-muted">
-          SURVEY
-        </span>
-        <div className="flex items-center gap-2">
+    <InfoBox
+      label="SURVEY"
+      open={open}
+      onToggle={onToggle}
+      badge={
+        !open && (
+          <span className="min-w-0 flex-1 truncate text-[0.7rem] text-ink">
+            {chosen ? `${measured} measured` : "None"}
+          </span>
+        )
+      }
+      action={
+        <div className="flex shrink-0 items-center gap-2">
           {chosen && (
             <button
               onClick={() => setSurveySession(null)}
@@ -3012,7 +3193,8 @@ function SurveyCard({
             {chosen ? "Change" : "Show"}
           </button>
         </div>
-      </div>
+      }
+    >
       <p className="mt-1 text-sm leading-snug text-ink">
         {chosen?.label ?? "None"}
       </p>
@@ -3027,7 +3209,7 @@ function SurveyCard({
           )}
         </p>
       )}
-    </div>
+    </InfoBox>
   );
 }
 
@@ -3049,6 +3231,8 @@ function LayersCard({
   onStopAligning,
   onPatch,
   onRemove,
+  open,
+  onToggle,
 }: {
   overlays: MapOverlay[];
   onMove: (id: string, delta: 1 | -1) => void;
@@ -3058,12 +3242,25 @@ function LayersCard({
   onStopAligning: () => void;
   onPatch: (id: string, patch: Partial<MapOverlay>) => void;
   onRemove: (id: string) => void;
+  open: boolean;
+  onToggle: () => void;
 }) {
   return (
-    <div className="rounded-2xl border border-edge bg-surface p-3">
-      <span className="text-[0.65rem] font-bold tracking-widest text-muted">
-        LAYERS
-      </span>
+    <InfoBox
+      label="LAYERS"
+      open={open}
+      onToggle={onToggle}
+      badge={
+        !open && (
+          <span className="text-[0.7rem] tabular-nums text-ink">
+            {overlays.length}
+            {hidden.length > 0 && (
+              <span className="text-muted"> · {hidden.length} off</span>
+            )}
+          </span>
+        )
+      }
+    >
       {/*
         TOP OF THE LIST IS TOP OF THE STACK.
 
@@ -3208,7 +3405,7 @@ function LayersCard({
           );
         })}
       </div>
-    </div>
+    </InfoBox>
   );
 }
 
@@ -3518,6 +3715,8 @@ function PlantsCard({
   pickLabel,
   onRemoveKind,
   glyphFor,
+  open,
+  onToggle,
 }: {
   kinds: { key: string; itemId: string; variantId?: string; label: string; count: number }[];
   hidden: boolean;
@@ -3530,16 +3729,21 @@ function PlantsCard({
   pickLabel: string | null;
   onRemoveKind: (itemId: string, variantId?: string) => void;
   glyphFor: (itemId: string) => string;
+  open: boolean;
+  onToggle: () => void;
 }) {
   const total = kinds.reduce((sum, k) => sum + k.count, 0);
   return (
-    <div className="shrink-0 rounded-2xl border border-edge bg-surface p-3">
-      <div className="mb-2 flex items-baseline justify-between">
-        <span className="text-xs font-bold text-ink">Plants</span>
-        <span className="text-xs tabular-nums text-muted">
-          {total} placed
-        </span>
-      </div>
+    <InfoBox
+      label="PLANTS"
+      open={open}
+      onToggle={onToggle}
+      title={<span className="text-xs font-bold text-ink">Plants</span>}
+      // The count is the whole point of this box, so it is what survives
+      // folding — a bill of plants folded to the word "plants" says nothing.
+      badge={<span className="text-xs tabular-nums text-muted">{total} placed</span>}
+    >
+      <div className="mb-2" />
       {/*
         THE COUNT IS NOT A LIE, AND THIS IS WHAT KEEPS IT FROM READING AS ONE.
 
@@ -3616,7 +3820,7 @@ function PlantsCard({
           </div>
         </div>
       )}
-    </div>
+    </InfoBox>
   );
 }
 
@@ -3635,6 +3839,8 @@ function ShapeCard({
   onRemove,
   photos,
   onUnlinkPhoto,
+  open,
+  onToggle,
 }: {
   shape: PlanShape;
   nodes: PlanNodes;
@@ -3660,6 +3866,8 @@ function ShapeCard({
    */
   photos: { photoId: string; url: string; label: string; live: boolean }[];
   onUnlinkPhoto: (photoId: string) => void;
+  open: boolean;
+  onToggle: () => void;
 }) {
   const measurement = measurementOf(shape, nodes);
   const options = assembliesForShape(ASSEMBLY_MODELS, shape.type);
@@ -3722,20 +3930,39 @@ function ShapeCard({
   }, [shape, nodes, survey]);
 
   return (
-    <div
+    <InfoBox
+      label={`${Math.round(measurement).toLocaleString()} ${unit}`}
+      open={open}
+      onToggle={onToggle}
+      accent={selected}
       onClick={onSelect}
-      className={`rounded-2xl border bg-surface p-3 ${
-        selected ? "border-accent" : "border-edge"
-      }`}
-    >
-      <div className="flex items-center gap-2">
-        <span
-          className="h-3 w-3 shrink-0 rounded-full"
-          style={{ background: color }}
-        />
-        <span className="flex-1 text-sm font-bold tabular-nums text-ink">
-          {Math.round(measurement).toLocaleString()} {unit}
-        </span>
+      /*
+        A SHAPE FOLDS TO ITS COLOUR, ITS SIZE AND WHAT IT BUYS, which is the
+        whole reason to fold it: a column of nine beds is nine cards of loads,
+        photographs and grade, and what you scroll it for is which bed is
+        which. The assembly's name only appears folded, because open it is the
+        first thing under the header anyway.
+      */
+      title={
+        <>
+          <span
+            className="h-3 w-3 shrink-0 rounded-full"
+            style={{ background: color }}
+          />
+          <span className="shrink-0 text-sm font-bold tabular-nums text-ink">
+            {Math.round(measurement).toLocaleString()} {unit}
+          </span>
+        </>
+      }
+      badge={
+        !open &&
+        model && (
+          <span className="min-w-0 flex-1 truncate text-[0.65rem] text-muted">
+            {model.name.replace(" – Standard", "")}
+          </span>
+        )
+      }
+      action={
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -3746,8 +3973,8 @@ function ShapeCard({
         >
           ✕
         </button>
-      </div>
-
+      }
+    >
       <select
         value={shape.assemblyId ?? ""}
         onClick={(e) => e.stopPropagation()}
@@ -3925,6 +4152,6 @@ function ShapeCard({
           )}
         </p>
       )}
-    </div>
+    </InfoBox>
   );
 }

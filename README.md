@@ -800,6 +800,53 @@ being wrong rather than the thing measured:
 Mutation-tested: making a plant grabbable in Select again turns 1 check red,
 and ignoring the custom spread turns 2 here and 2 in `test:plan`.
 
+#### The column folds
+
+Nine beds is nine cards of loads, photographs, grade and photographs again, and
+what you scroll that column for is *which bed is which*. Every box in it now
+folds to its header, and **FOLD ALL** at the top of the column folds the lot.
+
+**The header never folds, and that is what makes folding worth doing.** A shape
+folds to its colour, its size and what it buys; the plants to how many are
+placed; the property to its address; the layers to how many there are and how
+many are off. A column folded to nothing but titles would be a table of
+contents, which is not what anybody is scrolling past nine beds to find.
+
+**Two pieces of state, and only one of them persists.** `settings.sideCollapsed`
+is the standing habit — folded or not — and it is one boolean, which is the
+only reason it belongs in a device preference at all. The exceptions, a box
+somebody opened against the habit, are component state and go when the page
+does: a shape id lives for one estimate, so an entry per box in a settings blob
+would grow without bound and leave rows for beds deleted a month ago. The
+standing habit persists and the exceptions do not, which is the right way
+round.
+
+**FOLD ALL clears the exceptions rather than adding to them.** A fold-all that
+left three boxes open because somebody had opened them earlier is not fold all,
+and would be the only control on the screen that does not do what it says.
+
+**The chevron is its own button, not the header.** Two of these headers already
+carry a control — Change on the property, ✕ on a shape — and a button inside a
+button is invalid and behaves like it; and a shape card selects on a click
+anywhere, which a header-wide toggle would fight.
+
+**It is named "Fold or open", not "Show or hide", and that is not cosmetic.**
+Those words are taken on this screen by the eyes that take a trade off the map
+and by the planting's switch. Folding a card changes what you are *reading*;
+hiding a trade changes what is *drawn on the yard*. Two controls a tap apart
+under one name are one control as far as anybody reading them is concerned —
+and the browser suite found exactly that, counting eleven eyes where there are
+five.
+
+**Two rulers had to be right for the checks to mean anything.** `scrollHeight`
+is not one: the column scrolls, so it never reports less than the column's own
+height, and with everything folded the cards are shorter than that — the figure
+sat pinned at 499 whatever was opened, and the check read the same number
+either side of opening a box and called it a failure. The honest ruler is the
+sum of the cards' own heights. And a stored value that is not a boolean is its
+own check: without the coercion in `loadSettings` a stored `"yes"` is truthy,
+so the whole column would open folded on a value nobody ever wrote.
+
 #### One trade at a time
 
 Each row of the assemblies panel carries an **eye**. Switch one off and every

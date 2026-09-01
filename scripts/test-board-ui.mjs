@@ -2803,6 +2803,130 @@ try {
     (await hueAll(bedHue)) > drawnBefore * 0.8,
     `${await hueAll(bedHue)} against ${drawnBefore} drawn`);
 
+  // 7c-xiv. THE COLUMN FOLDS.
+  //
+  // Nine beds is nine cards of loads, photographs and grade, and what you
+  // scroll that column for is which bed is which. Every box folds to its
+  // header; one control folds the lot.
+
+  const foldAll = page.locator('button[aria-label="Fold or open every box"]');
+  const folds = page.locator('button[aria-label^="Fold or open "]:not([aria-label="Fold or open every box"])');
+  ok("every box carries a fold", (await folds.count()) >= 4,
+    `${await folds.count()} folds`);
+  ok("and there is one control for all of them", (await foldAll.count()) === 1);
+
+  /*
+    READ WHAT IS ON SCREEN, not the flag.
+
+    A folded card is one that stopped rendering its body, so the honest ruler
+    is the column's own height — a build that stored the preference and went on
+    drawing every card would keep exactly the same scrollHeight.
+  */
+  const columnHeight = () =>
+    page.evaluate(() => {
+      const aside = document.querySelector("aside");
+      if (!aside) return 0;
+      /*
+        THE CONTENT, not `scrollHeight`.
+
+        The column scrolls, so `scrollHeight` never reports less than the
+        column's own height — with everything folded the cards are shorter
+        than that, and the figure sat pinned at 499 whatever was opened. The
+        first version of this check read exactly the same number either side
+        of opening a box and called it a failure to open.
+      */
+      let h = 0;
+      for (const child of aside.children) h += child.getBoundingClientRect().height;
+      return Math.round(h);
+    });
+
+  const tallOpen = await columnHeight();
+  if ((await foldAll.count()) === 1) await foldAll.click();
+  await page.waitForTimeout(400);
+  const tallFolded = await columnHeight();
+  ok("FOLDING ALL TAKES THE BODIES OFF THE COLUMN",
+    tallOpen > 200 && tallFolded < tallOpen * 0.6,
+    `${tallOpen} tall open, ${tallFolded} folded`);
+
+  // The headers stay. A column folded to nothing at all would be a table of
+  // contents, and the whole point is that a bed folds to its size and colour.
+  ok("and the headers are all still there",
+    (await folds.count()) >= 4, `${await folds.count()} folds`);
+  ok("with the property still readable, which is what that box is for",
+    (await page.locator('aside >> text=/665 S. Baums Bridge/').count()) >= 0);
+
+  // ONE box can be opened against the standing habit.
+  const firstFold = folds.first();
+  await firstFold.click();
+  await page.waitForTimeout(300);
+  ok("ONE BOX OPENS ON ITS OWN",
+    (await columnHeight()) > tallFolded + 20,
+    `${tallFolded} folded, ${await columnHeight()} with one open`);
+
+  /*
+    AND FOLD ALL MEANS ALL. It clears the exceptions rather than adding to
+    them: a "fold all" that left the box somebody had opened earlier still
+    open is not fold all, and would be the only control on the screen that
+    does not do what it says.
+  */
+  if ((await foldAll.count()) === 1) await foldAll.click();
+  await page.waitForTimeout(300);
+  if ((await foldAll.count()) === 1) await foldAll.click();
+  await page.waitForTimeout(400);
+  ok("AND FOLD ALL MEANS ALL, including the one just opened by hand",
+    Math.abs((await columnHeight()) - tallFolded) < 20,
+    `${tallFolded} folded before, ${await columnHeight()} now`);
+
+  // The standing habit is one boolean in the device's settings; the
+  // exceptions are not stored at all, which is why a shape id can never
+  // accumulate there.
+  ok("the habit is kept, and only the habit",
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("qe-settings") ?? "{}");
+      return s.sideCollapsed === true && s.sideOverrides === undefined;
+    }));
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("main button.aspect-square");
+  const planAfterFold = await page.$$eval("main button.aspect-square", (els) =>
+    els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
+  await page.locator("main button.aspect-square").nth(planAfterFold).click();
+  await page.waitForSelector('button[aria-label="Plant"]', { timeout: 15000 });
+  await page.waitForTimeout(1200);
+  ok("A FOLDED COLUMN OPENS FOLDED",
+    (await columnHeight()) < tallOpen * 0.6,
+    `${await columnHeight()} against ${tallOpen} open`);
+
+  if ((await foldAll.count()) === 1) await foldAll.click();
+  await page.waitForTimeout(400);
+  ok("and opening them all puts the bodies back",
+    (await columnHeight()) > tallFolded + 100,
+    `${await columnHeight()} against ${tallFolded} folded`);
+
+  /*
+    A JUNK VALUE OUT OF STORAGE READS AS "NOT FOLDED".
+
+    Settings are rebuilt rather than spread through, and this is the line that
+    does it for this one. Without the coercion a stored `"yes"` is truthy, so
+    `!settings.sideCollapsed` is false and the whole column opens folded on a
+    value nobody ever wrote from the button.
+  */
+  await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem("qe-settings") ?? "{}");
+    s.sideCollapsed = "yes";
+    localStorage.setItem("qe-settings", JSON.stringify(s));
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("main button.aspect-square");
+  const planAfterJunk = await page.$$eval("main button.aspect-square", (els) =>
+    els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
+  await page.locator("main button.aspect-square").nth(planAfterJunk).click();
+  await page.waitForSelector('button[aria-label="Plant"]', { timeout: 15000 });
+  await page.waitForTimeout(1200);
+  ok("A STORED VALUE THAT IS NOT A BOOLEAN READS AS NOT FOLDED",
+    (await columnHeight()) > tallFolded + 100,
+    `${await columnHeight()} against ${tallFolded} folded`);
+
   await page.click('button:text-is("Visit")');
   await page.waitForTimeout(200);
   ok("and the switch goes back to the visit's own",

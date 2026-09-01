@@ -352,6 +352,7 @@ function loadSettings(): EstimatorSettings {
       // nobody could ever see or tap again.
       plantSymbols: plantSymbolPrefsFrom(stored.plantSymbols),
       assemblyColors: assemblyColorsFrom(stored.assemblyColors),
+      sideCollapsed: stored.sideCollapsed === true,
     };
   } catch {
     return DEFAULT_ESTIMATOR_SETTINGS;

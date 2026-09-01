@@ -286,6 +286,16 @@ export interface EstimatorSettings {
    * shape was minted with, so nothing changes until somebody chooses.
    */
   assemblyColors: AssemblyColors;
+  /**
+   * Whether the plan's side column opens folded.
+   *
+   * ONE BOOLEAN, NOT AN ENTRY PER BOX, and that is the reason it is here at
+   * all: a device preference is the right home for a standing habit, and the
+   * wrong home for a set of shape ids that live for one estimate and would
+   * accumulate for ever. The exceptions — a box somebody opened — are
+   * component state and go when the page does.
+   */
+  sideCollapsed: boolean;
 }
 
 export const DEFAULT_ESTIMATOR_SETTINGS: EstimatorSettings = {
@@ -299,6 +309,7 @@ export const DEFAULT_ESTIMATOR_SETTINGS: EstimatorSettings = {
   tileOrder: {},
   plantSymbols: {},
   assemblyColors: {},
+  sideCollapsed: false,
 };
 
 export interface LineItem {
