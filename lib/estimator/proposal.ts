@@ -14,6 +14,7 @@
 // was entered.
 
 import { ASSEMBLY_MODELS, getAssembly, takeoff } from "./assemblies";
+import { shapeColorOf, type AssemblyColors } from "./assemblyColor";
 import type { LatLng } from "./geo";
 import {
   bucketsForMeasurement,
@@ -393,7 +394,19 @@ export interface TakeoffShape {
  * Null when there is nothing drawn, so the key is simply absent rather than
  * present and empty.
  */
-export function takeoffProjection(estimate: Estimate): {
+export function takeoffProjection(
+  estimate: Estimate,
+  /*
+    THE DESIGNATED COLOURS TRAVEL WITH IT, and they have to.
+
+    This is what Upright's take-off layer draws from. Resolving the colour on
+    the map and publishing the raw one would put the same bed on screen brown
+    at the desk and teal in the yard — which is precisely what designating a
+    colour was for. Defaulted, so a caller with no settings to hand publishes
+    exactly what it published before.
+  */
+  colors: AssemblyColors = {},
+): {
   updatedAt: string;
   shapes: TakeoffShape[];
 } | null {
@@ -408,7 +421,7 @@ export function takeoffProjection(estimate: Estimate): {
     out.push({
       id: shape.id,
       type: shape.type,
-      color: shape.color,
+      color: shapeColorOf(shape, colors),
       assembly: model ? model.name.replace(" – Standard", "") : null,
       assemblyId: shape.assemblyId,
       measurement,

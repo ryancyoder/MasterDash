@@ -10,6 +10,7 @@
 
 import type { PlanState } from "./plan";
 import type { PlantSymbolPrefs } from "./plantStamp";
+import type { AssemblyColors } from "./assemblyColor";
 import type { TileSize } from "./tileSize";
 import type { VisitState } from "./visit";
 
@@ -276,6 +277,15 @@ export interface EstimatorSettings {
    * full copy of the table would freeze the defaults.
    */
   plantSymbols: PlantSymbolPrefs;
+  /**
+   * A designated colour per assembly, by assembly id.
+   *
+   * A device preference beside `plantSymbols`, and for the same reason: it is
+   * how this crew draws a plan, not a fact about one yard. Only the assemblies
+   * actually designated are in it — an absent one keeps the palette colour its
+   * shape was minted with, so nothing changes until somebody chooses.
+   */
+  assemblyColors: AssemblyColors;
 }
 
 export const DEFAULT_ESTIMATOR_SETTINGS: EstimatorSettings = {
@@ -288,6 +298,7 @@ export const DEFAULT_ESTIMATOR_SETTINGS: EstimatorSettings = {
   showPrices: true,
   tileOrder: {},
   plantSymbols: {},
+  assemblyColors: {},
 };
 
 export interface LineItem {

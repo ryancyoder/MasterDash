@@ -483,6 +483,7 @@ export default function PlanCanvas({
   onLinkSurvey,
   onInsertVertex,
   onToggleVertexSmooth,
+  shapeColor,
   showMeasurements,
 }: {
   /** Where to open when there is nothing drawn yet. */
@@ -607,6 +608,13 @@ export default function PlanCanvas({
   onInsertVertex: (shapeId: string, index: number, at: LatLng) => string;
   /** Tapping a corner of a rounded shape holds it sharp, or lets it round. */
   onToggleVertexSmooth: (shapeId: string, nodeId: string) => void;
+  /**
+   * What one shape is drawn in — the assembly's designated colour where there
+   * is one, else the shape's own. A function rather than a resolved list
+   * because the shapes arrive whole and are read by id in half a dozen
+   * places; see `assemblyColor.ts`.
+   */
+  shapeColor: (shape: PlanShape) => string;
   showMeasurements: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1242,7 +1250,17 @@ export default function PlanCanvas({
       // The line drawn is the outline; the dots drawn are the corners.
       const edge = shapeOutline(shape).map((v) => toCanvas(toWorld(v), t));
       const selected = shape.id === selectedShapeId;
-      ctx.strokeStyle = shape.color;
+      /*
+        RESOLVED ONCE, HERE, AND USED FOR EVERY MARK THIS SHAPE MAKES.
+
+        The outline, the fill, the label, the corner handles and the midpoint
+        pips all read this — a shape drawn in two colours because one of the
+        six call sites was missed reads as two shapes overlapping. See
+        `shapeColorOf` for why the assembly's colour is resolved rather than
+        written onto the shape.
+      */
+      const color = shapeColor(shape);
+      ctx.strokeStyle = color;
       ctx.lineWidth = selected ? 4 : 2.5;
 
       let anchorPt: Pt;
@@ -1251,7 +1269,7 @@ export default function PlanCanvas({
         ctx.moveTo(edge[0].x, edge[0].y);
         edge.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
         ctx.closePath();
-        ctx.fillStyle = withAlpha(shape.color, selected ? 0.32 : 0.2);
+        ctx.fillStyle = withAlpha(color, selected ? 0.32 : 0.2);
         ctx.fill();
         ctx.stroke();
         anchorPt = centroid(pts);
@@ -1282,7 +1300,7 @@ export default function PlanCanvas({
           label,
           anchorPt.x,
           anchorPt.y + (showMeasurements && measurement > 0 ? 18 : 0),
-          shape.color,
+          color,
         );
       }
 
@@ -1296,7 +1314,7 @@ export default function PlanCanvas({
           const b = pts[(j + 1) % pts.length];
           const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
           ctx.fillStyle = "rgba(0,0,0,0.55)";
-          ctx.strokeStyle = shape.color;
+          ctx.strokeStyle = color;
           ctx.lineWidth = 2;
           ctx.beginPath();
           ctx.arc(m.x, m.y, 7, 0, Math.PI * 2);
@@ -1312,7 +1330,7 @@ export default function PlanCanvas({
         const rounded = new Set(shape.smoothVertices ?? []);
         pts.forEach((p, i) => {
           ctx.fillStyle = "#ffffff";
-          ctx.strokeStyle = shape.color;
+          ctx.strokeStyle = color;
           ctx.lineWidth = 3;
           ctx.beginPath();
           // ROUND HANDLE, ROUND CORNER. Square is a hard angle. The same
@@ -1341,7 +1359,7 @@ export default function PlanCanvas({
         });
       } else {
         pts.forEach((p, i) => {
-          ctx.fillStyle = shape.color;
+          ctx.fillStyle = color;
           ctx.beginPath();
           ctx.arc(p.x, p.y, isShared(i) ? 5 : 4, 0, Math.PI * 2);
           ctx.fill();
@@ -1872,6 +1890,7 @@ export default function PlanCanvas({
     scaling,
     scalePoints,
     selectedShapeId,
+    shapeColor,
     showMeasurements,
     labelFor,
     tool,

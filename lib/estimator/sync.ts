@@ -125,7 +125,9 @@ function writeQueue(q: QueuedWrite[]) {
 }
 
 function toRow(estimate: Estimate, proposal: Proposal) {
-  const takeoff = takeoffProjection(estimate);
+  // Settings are a device preference and are not part of the estimate, so
+  // they are read here rather than threaded through every save path.
+  const takeoff = takeoffProjection(estimate, getSnapshot().settings.assemblyColors);
   return {
     client_id: estimate.clientId,
     deal_id: estimate.dealId,

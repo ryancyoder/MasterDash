@@ -2290,6 +2290,131 @@ try {
   ok("and the corner has not moved a millimetre",
     (await nodesNow()) === beforeWobble);
 
+  // 7c-xi. A DESIGNATED COLOUR PER ASSEMBLY.
+  //
+  // A shape is minted with the next colour off a rotating palette, which is
+  // the right answer when the colour means nothing — it tells adjacent beds
+  // apart. A designated colour MEANS something, and what it usually means is
+  // the material: mulch is brown, stone is grey, and no amount of teal will
+  // say so.
+  //
+  // THE CLAIM UNDER TEST IS "RESOLVED, NOT STORED". The bed is drawn FIRST and
+  // the colour designated afterwards, because the obvious build — write the
+  // colour onto the shape when the assembly is picked — passes every check
+  // that draws in the other order and leaves every existing bed on the old
+  // colour for ever.
+
+  /*
+    Pixels within `tol` of a hex, IN THE QUARTER OF THE CANVAS THIS BED IS IN.
+
+    Both halves matter. A loose tolerance over the whole canvas counted 344
+    "brown" pixels before anything was brown — the map's own chrome and the
+    other bed's fill are somewhere near every colour — and a check whose
+    baseline is already a third of its signal cannot say much. The bed is
+    drawn in a known corner, so that is where it is read.
+  */
+  const nearColor = (hex, tol = 14) =>
+    page.evaluate(([h, t]) => {
+      const r0 = parseInt(h.slice(1, 3), 16);
+      const g0 = parseInt(h.slice(3, 5), 16);
+      const b0 = parseInt(h.slice(5, 7), 16);
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const px = (i / 4) % c.width;
+        const py = Math.floor(i / 4 / c.width);
+        if (px < c.width * 0.5 || py < c.height * 0.42) continue;
+        if (
+          Math.abs(d[i] - r0) <= t &&
+          Math.abs(d[i + 1] - g0) <= t &&
+          Math.abs(d[i + 2] - b0) <= t
+        ) n++;
+      }
+      return n;
+    }, [hex, tol]);
+
+  await page.click('button[aria-label="Area"]');
+  await page.waitForTimeout(300);
+  const buysMulch = page.locator('button:has-text("Mulch Bed Installation")').first();
+  ok("the BUYS row arms a mulch bed", (await buysMulch.count()) === 1);
+  if ((await buysMulch.count()) === 1) await buysMulch.click();
+  await page.waitForTimeout(200);
+
+  const colorCanvas = await page.locator("canvas[data-plan-canvas]").boundingBox();
+  const cAt = (fx, fy) => ({
+    x: colorCanvas.x + colorCanvas.width * fx,
+    y: colorCanvas.y + colorCanvas.height * fy,
+  });
+  for (const pt of [cAt(0.55, 0.5), cAt(0.86, 0.5), cAt(0.86, 0.82), cAt(0.55, 0.82)]) {
+    await page.mouse.click(pt.x, pt.y);
+    await page.waitForTimeout(150);
+  }
+  await page.click('button:text-is("Finish")');
+  await page.waitForTimeout(500);
+
+  const mulchBed = () =>
+    page.evaluate(() =>
+      (JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.shapes ?? []).find(
+        (sh) => sh.assemblyId === "mulch_bed_installation_standard") ?? null);
+  const bed = await mulchBed();
+  ok("a bed drawn with the mulch bed armed buys it", bed !== null,
+    JSON.stringify(bed));
+
+  const MULCH = "#92400e";
+  const own = bed?.color ?? "#14b8a6";
+  const ownBefore = await nearColor(own);
+  const brownBefore = await nearColor(MULCH);
+  ok("it is drawn in the palette colour it was minted with",
+    ownBefore > 60 && brownBefore < 40, `${ownBefore} own, ${brownBefore} brown`);
+
+  // The panel is on the row that arms the assembly, not behind a gear on
+  // another screen — the same habit as the plant symbols one row down.
+  const colorsBtn = page.locator('button[aria-label="Assembly colours"]');
+  ok("and the row that arms it carries the colours panel",
+    (await colorsBtn.count()) === 1);
+  if ((await colorsBtn.count()) === 1) await colorsBtn.click();
+  await page.waitForTimeout(300);
+  const mulchBrown = page.locator('button[aria-label="Mulch Bed Installation: Mulch"]');
+  ok("which offers this assembly a colour", (await mulchBrown.count()) === 1);
+  if ((await mulchBrown.count()) === 1) await mulchBrown.click();
+  await page.waitForTimeout(400);
+  // Shut again, so the map is the same size it was measured at: the panel is
+  // five rows tall and takes the height out of the canvas otherwise. That is
+  // the symbols panel's lesson, and it cost a whole debugging session there.
+  if ((await colorsBtn.count()) === 1) await colorsBtn.click();
+  await page.waitForTimeout(500);
+
+  const ownAfter = await nearColor(own);
+  const brownAfter = await nearColor(MULCH);
+  // READ THE CANVAS. A settings blob is exactly what would still be right
+  // against a build that stored the choice and drew the old colour anyway.
+  ok("A DESIGNATED COLOUR REACHES A BED THAT WAS ALREADY DRAWN",
+    brownAfter > 60 && ownAfter < ownBefore * 0.3,
+    `${ownBefore}->${ownAfter} own, ${brownBefore}->${brownAfter} brown`);
+
+  // The other half of "resolved, not stored", read off the record itself.
+  ok("and the shape's own colour is untouched — it is resolved, not written",
+    (await mulchBed())?.color === own, JSON.stringify(await mulchBed()));
+  ok("the setting is kept by assembly, in the device's settings",
+    await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("qe-settings") ?? "{}")?.assemblyColors
+        ?.mulch_bed_installation_standard === "#92400e"));
+
+  // None is a real choice: it hands the shape back to the palette, which is
+  // what tells adjacent beds apart when the colour is not meant to say
+  // anything.
+  if ((await colorsBtn.count()) === 1) await colorsBtn.click();
+  await page.waitForTimeout(300);
+  const mulchNone = page.locator('button[aria-label="Mulch Bed Installation: none"]');
+  if ((await mulchNone.count()) === 1) await mulchNone.click();
+  await page.waitForTimeout(300);
+  if ((await colorsBtn.count()) === 1) await colorsBtn.click();
+  await page.waitForTimeout(500);
+  ok("AND NONE PUTS THE PALETTE COLOUR BACK",
+    (await nearColor(own)) > ownBefore * 0.6 && (await nearColor(MULCH)) < 40,
+    `${await nearColor(own)} own, ${await nearColor(MULCH)} brown`);
+
   await page.click('button:text-is("Visit")');
   await page.waitForTimeout(200);
   ok("and the switch goes back to the visit's own",

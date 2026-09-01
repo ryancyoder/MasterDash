@@ -800,6 +800,63 @@ being wrong rather than the thing measured:
 Mutation-tested: making a plant grabbable in Select again turns 1 check red,
 and ignoring the custom spread turns 2 here and 2 in `test:plan`.
 
+#### A designated colour per assembly
+
+Mulch is brown, stone is grey, sod is green. **🎨** in the map toolbar gives
+each drawable assembly a colour, and every polygon that buys it is drawn that
+way — on the map, on its card, and in the take-off published for Upright.
+
+**Resolved, not stored, and that is the whole design.** The obvious build
+writes the colour onto the shape when the assembly is picked. It is wrong
+twice: a bed drawn before the setting existed keeps its old colour for ever,
+and changing your mind about what mulch looks like means walking every estimate
+on the device. So `shapeColorOf()` resolves it at draw time and the shape's own
+`color` is never touched — the same rule as Upright's `elevationOf()` and this
+app's plant spreads: the fact is stored, the appearance is derived. The check
+that pins it draws the bed FIRST and designates the colour afterwards, which is
+the order the wrong build passes in the other direction.
+
+**Nothing changes until somebody chooses one.** A shape is still minted with
+the next colour off the rotating palette, and that palette is still what an
+unlinked *Measure only* bed keeps, and what a linked one falls back to when its
+assembly has no designation. The palette's job is telling ADJACENT beds apart,
+which is the right answer when the colour means nothing; a designated colour
+means the material, and the swatches are chosen for that — brown, bark, stone,
+slate, paver alongside the bright ones.
+
+**The colour travels to Upright.** `takeoffProjection()` takes the designated
+colours and publishes the resolved value, because drawing brown at the desk and
+teal in the yard is exactly what designating a colour was meant to stop. The
+settings are a device preference and not part of the estimate, so `sync.ts`
+reads them where the row is built rather than threading them through every save
+path.
+
+**One resolution per shape inside the canvas.** The outline, the fill, the
+label, the corner handles and the midpoint pips all read one local — a shape
+drawn in two colours because one of six call sites was missed reads as two
+shapes overlapping.
+
+**It is not on the row that arms the assembly**, which is this app's usual
+habit and was the first build. That row only exists while a drawing tool is up,
+and `finish()` drops the tool the moment a bed is closed — so recolouring a
+plan you have already drawn, which is the main case, was the one case that
+could not reach it. It sits with the numbers, the planting and the satellite
+instead, which are the same question: what the map shows. The BUYS row still
+carries each assembly's designated colour as a dot, so the designation is
+visible where it is armed.
+
+**A colour out of storage is rebuilt, not cast.** A canvas `strokeStyle` set to
+something unparseable is not an error — it is a silent no-op that leaves
+whatever was set last, so one bad row would paint a bed in the colour of the
+bed drawn before it, which looks like a drawing bug and is a storage one. Six
+or three hex digits and nothing else.
+
+**And the reading is boxed.** A first pass counted colour over the whole canvas
+at a loose tolerance and found 344 "brown" pixels before anything was brown —
+the map's chrome and the other bed's fill sit near every colour. A check whose
+baseline is a third of its signal cannot say much, so the bed is drawn in a
+known corner and read there.
+
 #### The planting switches off
 
 The symbols are drawn **at the spread the plant will reach**, which is the

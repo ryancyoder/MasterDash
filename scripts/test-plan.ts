@@ -29,6 +29,7 @@ import {
 import {
   buildProposal,
   effectiveTaps,
+  takeoffProjection,
   planPlants,
   planShapeCount,
   rollupCount,
@@ -46,6 +47,12 @@ import {
   stampFor,
   stampRadius,
 } from "../lib/estimator/plantStamp.ts";
+import {
+  SHAPE_PALETTE,
+  assemblyColorsFrom,
+  normaliseHex,
+  shapeColorOf,
+} from "../lib/estimator/assemblyColor.ts";
 import {
   pendingTakeoffs,
   photoTakeoffLabel,
@@ -973,6 +980,126 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   ok("A CUSTOM SPREAD CHANGES THE SIZE DRAWN",
     stampRadius(spreadFtFor("mat:shrub", prefs), 0.1).r === 45,
     JSON.stringify(stampRadius(spreadFtFor("mat:shrub", prefs), 0.1)));
+}
+
+// --- A designated colour per assembly ---------------------------------------
+//
+// RESOLVED, NOT STORED, and every check below is really that one claim. The
+// obvious build writes the colour onto the shape when the assembly is picked,
+// which leaves every bed drawn before the setting existed on the old colour
+// for ever and makes changing your mind a walk through every estimate.
+
+{
+  console.log("\n--- assembly colours ---");
+
+  const shape = (over: Record<string, unknown> = {}) => ({
+    color: "#14b8a6",
+    assemblyId: "mulch_bed_installation_standard" as string | null,
+    ...over,
+  });
+
+  ok("nothing designated leaves a shape exactly as it was",
+    shapeColorOf(shape(), {}) === "#14b8a6");
+  ok("and so does a colour designated for a DIFFERENT assembly",
+    shapeColorOf(shape(), { patio_standard: "#92400e" }) === "#14b8a6");
+  ok("A DESIGNATED COLOUR WINS OVER THE SHAPE'S OWN",
+    shapeColorOf(shape(), { mulch_bed_installation_standard: "#92400e" }) === "#92400e");
+
+  // An unlinked shape has no assembly to take a colour from, and that is the
+  // whole reason the palette stays: "Measure only" beds still have to be told
+  // apart from each other.
+  ok("an unlinked shape keeps the palette colour it was minted with",
+    shapeColorOf(shape({ assemblyId: null }), { "": "#92400e" }) === "#14b8a6");
+
+  // THIS IS THE CHECK THAT PINS "RESOLVED". Two shapes minted different
+  // colours, both buying the same assembly, come out as one colour — which a
+  // build that wrote the colour at link time could only manage for shapes
+  // drawn after the setting was made.
+  const first = shape({ color: "#14b8a6" });
+  const second = shape({ color: "#ef4444" });
+  const colors = { mulch_bed_installation_standard: "#92400e" };
+  ok("TWO BEDS BUYING THE SAME THING ARE ONE COLOUR, whenever they were drawn",
+    shapeColorOf(first, colors) === shapeColorOf(second, colors),
+    `${shapeColorOf(first, colors)} and ${shapeColorOf(second, colors)}`);
+
+  /*
+    What comes back out of localStorage is rebuilt, not cast.
+
+    A canvas `strokeStyle` set to something unparseable is not an error, it is
+    a SILENT no-op that leaves whatever was set last — so one bad row would
+    paint a bed in the colour of the bed drawn before it, which looks like a
+    drawing bug and is a storage one.
+  */
+  ok("a six-digit hex is kept", normaliseHex("#92400E") === "#92400e");
+  ok("a three-digit one is expanded rather than refused",
+    normaliseHex("#0a0") === "#00aa00");
+  for (const bad of ["red", "#12345", "rgb(0,0,0)", "", "#gggggg", 5, null, "#92400e; }"]) {
+    ok(`and ${JSON.stringify(bad)} is refused`, normaliseHex(bad) === null);
+  }
+
+  ok("a stored blob keeps only what parses",
+    JSON.stringify(assemblyColorsFrom({ a: "#fff", b: "red", c: 7, "": "#000" })) ===
+      JSON.stringify({ a: "#ffffff" }),
+    JSON.stringify(assemblyColorsFrom({ a: "#fff", b: "red", c: 7, "": "#000" })));
+  ok("and anything that is not an object at all reads as nothing designated",
+    Object.keys(assemblyColorsFrom(null)).length === 0 &&
+      Object.keys(assemblyColorsFrom(["#fff"])).length === 0);
+
+  // The palette is what the picker offers, so a bad entry in it is a swatch
+  // that draws nothing.
+  ok("every colour on offer is a real one",
+    SHAPE_PALETTE.length > 0 &&
+      SHAPE_PALETTE.every((c) => normaliseHex(c.hex) === c.hex && c.name.length > 0));
+  ok("and none of them is offered twice",
+    new Set(SHAPE_PALETTE.map((c) => c.hex)).size === SHAPE_PALETTE.length);
+
+  /*
+    AND IT REACHES THE TAKE-OFF UPRIGHT DRAWS.
+
+    `takeoffProjection` is what `GET /takeoff` hands the iPad. Resolving the
+    colour on the map and publishing the raw one would put the same bed on
+    screen brown at the desk and teal in the yard — which is exactly what
+    designating a colour was meant to stop.
+  */
+  const bedPlan = {
+    ...emptyPlan(),
+    nodes: {
+      n1: { at: { lat: 41.31, lng: -87.15 } },
+      n2: { at: { lat: 41.3101, lng: -87.15 } },
+      n3: { at: { lat: 41.3101, lng: -87.1499 } },
+    },
+    shapes: [
+      {
+        id: "s1",
+        type: "area" as const,
+        vertices: ["n1", "n2", "n3"],
+        color: "#14b8a6",
+        assemblyId: "mulch_bed_installation_standard",
+      },
+    ],
+  };
+  const bed = {
+    clientId: "e2",
+    jobName: "",
+    dealId: null,
+    propertyId: null,
+    taps: {},
+    labels: {},
+    assemblyBuckets: {},
+    ops: [],
+    plan: bedPlan,
+    visit: { transcript: "", source: null, findings: [], extractedFrom: null },
+    updatedAt: "2026-09-01T00:00:00.000Z",
+  } as unknown as Estimate;
+
+  ok("with nothing designated, the published colour is the shape's own",
+    takeoffProjection(bed)?.shapes[0]?.color === "#14b8a6",
+    takeoffProjection(bed)?.shapes[0]?.color ?? "(nothing published)");
+  ok("THE DESIGNATED COLOUR IS WHAT UPRIGHT IS SENT",
+    takeoffProjection(bed, { mulch_bed_installation_standard: "#92400e" })
+      ?.shapes[0]?.color === "#92400e",
+    takeoffProjection(bed, { mulch_bed_installation_standard: "#92400e" })
+      ?.shapes[0]?.color ?? "(nothing published)");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

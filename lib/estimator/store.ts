@@ -23,6 +23,7 @@ import {
 } from "./photoLink";
 import { isLatLng, type LatLng } from "./geo";
 import { plantSymbolPrefsFrom } from "./plantStamp";
+import { assemblyColorsFrom } from "./assemblyColor";
 import { sharedNodeIds } from "./plan";
 import { planViewFrom, type Basemap, type MapAnchor, type PlanView } from "./mapLayers";
 import {
@@ -342,6 +343,7 @@ function loadSettings(): EstimatorSettings {
       // throw in the middle of a draw, and a spread of zero would draw a plant
       // nobody could ever see or tap again.
       plantSymbols: plantSymbolPrefsFrom(stored.plantSymbols),
+      assemblyColors: assemblyColorsFrom(stored.assemblyColors),
     };
   } catch {
     return DEFAULT_ESTIMATOR_SETTINGS;

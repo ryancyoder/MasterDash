@@ -50,6 +50,11 @@ import {
   type PlantStampKind,
 } from "@/lib/estimator/plantStamp";
 import {
+  SHAPE_PALETTE,
+  shapeColorOf,
+  type AssemblyColors,
+} from "@/lib/estimator/assemblyColor";
+import {
   FALLBACK_CENTRE,
   parseFeet,
   scaleToKnownDimension,
@@ -166,6 +171,20 @@ import type { Estimate, EstimatorSettings } from "@/lib/estimator/types";
  * yard, it takes care to get right, and it should not have to be done twice
  * because somebody started a second quote.
  */
+
+/**
+ * The assemblies a colour can be designated for: the ones you can DRAW.
+ *
+ * A colour is a property of a polygon, so an assembly with no shape of its own
+ * has none to designate. Both shape kinds, in one list, because the panel is
+ * reached from the map toolbar rather than from a tool — the row that arms a
+ * bed only exists while a drawing tool is up, and recolouring a plan already
+ * drawn is the main case.
+ */
+const COLORABLE_ASSEMBLIES = [
+  ...assembliesForShape(ASSEMBLY_MODELS, "area"),
+  ...assembliesForShape(ASSEMBLY_MODELS, "linear"),
+];
 
 const TOOLS: { key: PlanTool; label: string; glyph: string }[] = [
   { key: "select", label: "Select", glyph: "☝︎" },
@@ -1157,6 +1176,19 @@ export default function PlanPage({
   }, []);
 
   /**
+   * What a shape is drawn in, everywhere: the map, its card, and the take-off
+   * published for Upright.
+   *
+   * One function so the three cannot disagree — a swatch on a card that does
+   * not match the bed on the map beside it is worse than no swatch.
+   */
+  const assemblyColors = settings.assemblyColors;
+  const shapeColor = useCallback(
+    (shape: PlanShape) => shapeColorOf(shape, assemblyColors),
+    [assemblyColors],
+  );
+
+  /**
    * Switching tools abandons a half-drawn shape rather than carrying it into a
    * tool that cannot finish it. Done on the way in, so nothing has to watch
    * for it afterwards.
@@ -1196,6 +1228,8 @@ export default function PlanPage({
   const [namingGroup, setNamingGroup] = useState<string | null>(null);
   /** The symbols panel, open on the plant row. */
   const [symbolsOpen, setSymbolsOpen] = useState(false);
+  /** The assembly-colours panel, open on the BUYS row. */
+  const [colorsOpen, setColorsOpen] = useState(false);
   const [plantRows, setPlantRows] = useState<PlantRow[] | null>(null);
 
   /*
@@ -1617,6 +1651,32 @@ export default function PlanPage({
             {plan.plantsHidden ? "🌳 off" : "🌳"}
           </button>
         )}
+        {/*
+          THE COLOURS PANEL, IN THE ROW THAT SAYS WHAT IS DRAWN.
+
+          Beside the numbers, the planting and the satellite, because a
+          designated colour is the same kind of question — what the map shows —
+          and because it has to be reachable when nothing is armed. It first
+          sat on the BUYS row, which is where the effect is and is this app's
+          usual habit; but that row only exists while a drawing tool is up, and
+          `finish()` drops the tool the moment a bed is closed. Recolouring a
+          plan you have already drawn is the main case, and it was the one case
+          that could not reach it.
+
+          The BUYS row still shows each assembly's designated colour as a dot,
+          so the designation is visible where it is armed.
+        */}
+        <button
+          onClick={() => setColorsOpen((v) => !v)}
+          aria-pressed={colorsOpen}
+          aria-label="Assembly colours"
+          title="Set a colour for each assembly"
+          className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${
+            colorsOpen ? "bg-ink text-black" : "bg-surface2 text-muted"
+          }`}
+        >
+          🎨
+        </button>
         <button
           onClick={() => setBasemap(plan.basemap === "satellite" ? "none" : "satellite")}
           className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${
@@ -1698,12 +1758,46 @@ export default function PlanPage({
                   : "bg-surface2 text-ink"
               }`}
             >
+              {/*
+                The designated colour, on the button that arms the assembly.
+
+                A dot rather than colouring the button itself: the button
+                already says armed-or-not with its background, and a second
+                meaning on the same surface would leave neither readable.
+                Absent where nothing is designated, which is what says the
+                shape will take the next palette colour instead.
+              */}
+              {assemblyColors[m.id] && (
+                <span
+                  aria-hidden="true"
+                  className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
+                  style={{ background: assemblyColors[m.id] }}
+                />
+              )}
               {m.name.replace(" – Standard", "")}
               <span className="ml-1.5 opacity-60 tabular-nums">
                 {m.bucketSize!.toLocaleString()}/load
               </span>
             </button>
           ))}
+        </div>
+      )}
+      {colorsOpen && (
+        <div className="shrink-0 mb-2">
+          <AssemblyColorPanel
+            colors={assemblyColors}
+            assemblies={COLORABLE_ASSEMBLIES}
+            onChange={(id, hex) =>
+              updateSettings({
+                assemblyColors: hex
+                  ? { ...assemblyColors, [id]: hex }
+                  : Object.fromEntries(
+                      Object.entries(assemblyColors).filter(([k]) => k !== id),
+                    ),
+              })
+            }
+            onReset={() => updateSettings({ assemblyColors: {} })}
+          />
         </div>
       )}
 
@@ -2027,6 +2121,7 @@ export default function PlanPage({
           onLinkSurvey={linkNodeToSurvey}
           onInsertVertex={insertVertex}
           onToggleVertexSmooth={toggleVertexSmooth}
+          shapeColor={shapeColor}
           showMeasurements={showMeasurements}
           aligning={aligning}
           onAlignCommit={(georef: Georef) =>
@@ -2565,7 +2660,7 @@ export default function PlanPage({
         <div className="shrink-0 mt-2 mb-16 flex items-center gap-2 pr-2 sm:hidden">
           <span
             className="h-3 w-3 shrink-0 rounded-full"
-            style={{ background: selected.color }}
+            style={{ background: shapeColor(selected) }}
           />
           <span className="flex-1 truncate text-sm font-bold tabular-nums text-ink">
             {Math.round(measurementOf(selected, plan.nodes)).toLocaleString()}{" "}
@@ -3131,6 +3226,100 @@ function StampSwatch({
  * the way in, so a figure corrected in the code later still reaches a device
  * somebody once opened this panel on.
  */
+/**
+ * A designated colour per assembly.
+ *
+ * Only the assemblies you can DRAW are listed — the ones the row above arms —
+ * because a colour is a property of a polygon and an assembly with no shape
+ * has none. Five rows on this project, so it is a list rather than a picker
+ * with a search in it.
+ *
+ * "None" is a real choice and is first: it clears the designation and hands
+ * the shape back to the rotating palette, which is what tells adjacent beds
+ * apart when the colour is not meant to say anything.
+ */
+function AssemblyColorPanel({
+  colors,
+  assemblies,
+  onChange,
+  onReset,
+}: {
+  colors: AssemblyColors;
+  assemblies: { id: string; name: string }[];
+  onChange: (assemblyId: string, hex: string | null) => void;
+  onReset: () => void;
+}) {
+  const changed = Object.keys(colors).length > 0;
+  return (
+    <div className="rounded-xl border border-edge bg-surface p-2">
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="text-[0.65rem] font-bold tracking-widest text-muted">
+          COLOURS
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[0.65rem] text-muted">
+          every polygon that buys this, drawn this colour
+        </span>
+        <button
+          onClick={onReset}
+          disabled={!changed}
+          className="shrink-0 rounded-lg bg-surface2 px-2 py-1 text-[0.6rem] font-bold text-muted disabled:opacity-30"
+        >
+          Reset all
+        </button>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {assemblies.map((m) => {
+          const name = m.name.replace(" – Standard", "");
+          const set = colors[m.id] ?? null;
+          return (
+            <div key={m.id} className="flex items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className="h-4 w-4 shrink-0 rounded-full border border-edge"
+                style={{ background: set ?? "transparent" }}
+              />
+              <span className="w-24 shrink-0 truncate text-[0.65rem] font-bold text-ink">
+                {name}
+              </span>
+              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+                <button
+                  onClick={() => onChange(m.id, null)}
+                  aria-label={`${name}: none`}
+                  aria-pressed={set === null}
+                  title="No designated colour — the shape keeps its own"
+                  className={`shrink-0 rounded-lg px-1.5 py-1 text-[0.6rem] font-bold ${
+                    set === null ? "bg-accent text-black" : "bg-surface2 text-muted"
+                  }`}
+                >
+                  None
+                </button>
+                {SHAPE_PALETTE.map((c) => (
+                  <button
+                    key={c.hex}
+                    onClick={() => onChange(m.id, c.hex)}
+                    aria-label={`${name}: ${c.name}`}
+                    aria-pressed={set === c.hex}
+                    title={c.name}
+                    className={`shrink-0 rounded-lg p-0.5 ${
+                      set === c.hex ? "bg-accent" : "bg-surface2"
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="block h-4 w-4 rounded-full"
+                      style={{ background: c.hex }}
+                    />
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function PlantSymbolPanel({
   prefs,
   onChange,
@@ -3374,6 +3563,9 @@ function ShapeCard({
   const measurement = measurementOf(shape, nodes);
   const options = assembliesForShape(ASSEMBLY_MODELS, shape.type);
   const model = shape.assemblyId ? getAssembly(shape.assemblyId) : undefined;
+  // The same resolver the map draws with, so the dot on this card and the bed
+  // it describes are never two different colours.
+  const color = shapeColorOf(shape, settings.assemblyColors);
   const buckets = bucketsForMeasurement(measurement, model?.bucketSize ?? null);
   const bought = workBought(buckets, model?.bucketSize ?? null);
   const cost =
@@ -3438,7 +3630,7 @@ function ShapeCard({
       <div className="flex items-center gap-2">
         <span
           className="h-3 w-3 shrink-0 rounded-full"
-          style={{ background: shape.color }}
+          style={{ background: color }}
         />
         <span className="flex-1 text-sm font-bold tabular-nums text-ink">
           {Math.round(measurement).toLocaleString()} {unit}
