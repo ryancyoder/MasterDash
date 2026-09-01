@@ -1285,6 +1285,73 @@ a build with the two `lineTo` calls removed the masked count reads **1470 then
 drop target on Add plan turns 2, two call-outs on one dot turns 1, and a
 call-out with no photograph turns 1.
 
+#### A black call-out, and what it took to see it
+
+Reported from the field the day after: the held-open photograph came back
+**black**, while its own preview beside the map showed the picture perfectly.
+
+**That pairing is the whole diagnosis.** The preview is a plain `<img>` — a
+`no-cors` request, which takes an opaque response happily. The canvas asks with
+`crossOrigin` so the pixels stay readable, which makes it a `cors` request, and
+a `cors` request is refused an opaque body. Same cause as the drag error above,
+one layer down.
+
+Three things were wrong, and only the first is that cause.
+
+**The decode had no `onerror` at all.** A photograph that would not load left a
+black rectangle on the plan forever, with nothing anywhere saying why — not in
+the console, not on the canvas. It also used an `alive` flag per effect run
+that discarded a load still in flight when the effect re-ran, which a drop or a
+drag does immediately; recovery depended on a later run happening to start the
+same load again. Both are replaced by an `imageTries` map kept across runs —
+`cors` in flight, `plain` in flight, `failed` and not worth asking again — and
+a mounted ref that only goes false on unmount.
+
+**Cors first, then the picture anyway.** `public/sw.js` no longer hands an
+opaque body to a cors request, so the cause is gone — but a device runs
+whatever worker it last installed, and *a photograph nobody can see is worse
+than a canvas nobody can export*. A failed cors load now retries without it.
+State the cost plainly: that **taints the canvas** for the session. Nothing in
+the app reads it back today; an export built later has to notice and load its
+own copies.
+
+**A black rectangle is not an answer**, so the frame says which state it is in
+— `loading…` or `picture unavailable`. They are different answers and black is
+neither.
+
+**And the preview card had a fourth bug hiding behind the third.** Its image
+was `max-h-44`, so a photograph that failed to load collapsed the picture's
+place in the card to nothing — and took the call-out's drag source with it,
+since that is what you drag. A fixed `h-44` keeps the card whole and the
+gesture available.
+
+**Testing this is where the real lesson is.** The claim "the frame says so
+instead of sitting black" took **three attempts to state honestly**, and the
+first two passed against a build with the message deleted:
+
+1. Counting grey text pixels across the whole canvas. Every pin label is white
+   text with a dark outline, so the greys were already there in their hundreds.
+2. Counting inside the call-out's frame. The frame's own **border** is white,
+   and its antialiasing is grey — several hundred pixels that appear the moment
+   a call-out does, message or no message.
+3. Counting 20px inside the border, before and after. Against the real build
+   that reads 0 then 68; against the build with the `fillText` removed it reads
+   **0 then 0**.
+
+The fallback itself cannot be counted in pixels **for exactly the reason it
+works**: drawing that image taints the canvas, so `getImageData` throws
+afterwards. The taint IS the observation — readable before, refused after — and
+it can only happen because a cross-origin image without cors is really on the
+screen. That also forces the order of the two cases and a reload between them
+and everything after.
+
+One more trap on the way, and it is the same rule the Add plan drop target
+already follows: the test reused a canvas rectangle read at the top of an
+earlier section, and by the time it dropped there the canvas had changed height
+— bars above it come and go — so the drop landed off the edge, was correctly
+cancelled, and the check read zero for a reason that had nothing to do with
+what it was testing. Ask where things are now; do not remember.
+
 #### "Response served by service worker is opaque"
 
 Reported from the field the day the drop landed: dragging a photograph onto Add

@@ -875,25 +875,86 @@ export default function PlanCanvas({
     ],
     [overlays, overlaySrc, callouts],
   );
+  /*
+    WHAT HAS BEEN TRIED FOR EACH SOURCE, so nothing is loaded twice and nothing
+    is left unloaded.
+
+    This used to be an `alive` flag per effect run, and both halves of that
+    were wrong. A failed load was SILENT — no `onerror` at all — so a
+    photograph that would not decode left a black rectangle on the plan
+    forever with nothing anywhere saying why; that is how a call-out came back
+    from the field black while its own preview showed the picture perfectly.
+    And the flag discarded a load that was still in flight when the effect
+    re-ran, which a drop or a drag does immediately, so the recovery depended
+    on a later run happening to start the same load again.
+
+    Keyed by src and kept across runs: `cors` is in flight, `plain` is the
+    retry in flight, `failed` is done and not worth asking again.
+  */
+  const imageTries = useRef(new Map<string, "cors" | "plain" | "failed">());
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
+
   useEffect(() => {
-    let alive = true;
-    for (const src of srcs) {
-      if (overlayImages.current.has(src)) continue;
+    /*
+      CORS FIRST, THEN THE PICTURE ANYWAY.
+
+      `crossOrigin` keeps the canvas readable, which is what a future export of
+      the plan would need — but it makes the request cors, and a cors request
+      is refused an opaque response. A photograph cached from an <img> IS
+      opaque, which is exactly how this failed: the preview beside the map
+      showed the picture (no-cors, opaque is fine) and the same picture on the
+      canvas would not decode at all.
+
+      `public/sw.js` no longer hands an opaque body to a cors request, so the
+      cause is gone — but a device runs whatever worker it last installed, and
+      a photograph nobody can see is worse than a canvas nobody can export. So
+      a failed cors load retries WITHOUT it, which taints the canvas for the
+      rest of the session. Nothing in the app reads this canvas back today
+      (the tests do, and only ever after a load that succeeded); an export
+      built later has to notice that and re-load its own copies.
+    */
+    const load = (src: string, withCors: boolean) => {
       const img = new Image();
-      // The overlay may be a Storage URL; the canvas is never read back, so
-      // this costs nothing and keeps a future export from tainting.
-      img.crossOrigin = "anonymous";
+      if (withCors) img.crossOrigin = "anonymous";
       img.onload = () => {
-        if (!alive) return;
+        if (!mountedRef.current) return;
         overlayImages.current.set(src, img);
         bumpAssets();
       };
+      img.onerror = () => {
+        if (!mountedRef.current) return;
+        if (withCors) {
+          imageTries.current.set(src, "plain");
+          load(src, false);
+          return;
+        }
+        // Out of ideas. Recorded so the frame can say so rather than sitting
+        // there black, and so this is not asked again every render.
+        imageTries.current.set(src, "failed");
+        bumpAssets();
+      };
       img.src = src;
-    }
-    return () => {
-      alive = false;
     };
+
+    for (const src of srcs) {
+      if (overlayImages.current.has(src)) continue;
+      if (imageTries.current.has(src)) continue;
+      imageTries.current.set(src, "cors");
+      load(src, true);
+    }
   }, [srcs, bumpAssets]);
+
+  /** A source that has run out of ways to load, for the frame to say so. */
+  const imageFailed = useCallback(
+    (src: string) => imageTries.current.get(src) === "failed",
+    [],
+  );
 
   // Wheel-to-zoom, attached natively and non-passive so preventDefault
   // actually stops the browser zooming the page — the whole point.
@@ -1677,6 +1738,20 @@ export default function PlanCanvas({
       if (img && img.naturalWidth) {
         ctx.clip();
         ctx.drawImage(img, x, y, w, h);
+      } else {
+        // A BLACK RECTANGLE IS NOT AN ANSWER. It is what this drew while a
+        // photograph would not decode, and it says nothing — not that it is
+        // loading, not that it failed, not which picture it was meant to be.
+        // The two states are different and both are worth a word.
+        ctx.fillStyle = "rgba(255,255,255,0.65)";
+        ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(
+          imageFailed(callout.url) ? "picture unavailable" : "loading…",
+          c.x,
+          c.y,
+        );
       }
       ctx.restore();
 
@@ -1749,6 +1824,7 @@ export default function PlanCanvas({
   }, [
     shapes,
     callouts,
+    imageFailed,
     selectedCalloutId,
     dragCallout,
     plants,

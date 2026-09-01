@@ -222,6 +222,13 @@ try {
       ] },
       { id: "e2", name: null, type: null, startedAt: "2026-03-11T14:00:00Z", photos: [
         { id: "p3", url: "https://cover.test/yard.png", caption: null, takenAt: "2026-03-11T14:02:00Z", lat: 41.9, lng: -87.9, isVideo: false, isOutlier: true },
+        // p4 and p5 exist for the CALL-OUT's two failure modes, and both need
+        // a position, since a call-out is a line to a dot. p4's server refuses
+        // a cross-origin read and serves the picture to anything else — which
+        // is what a service worker's cached opaque copy looks like from the
+        // page. p5 is simply not there.
+        { id: "p4", url: "https://cover.test/nocors.png", caption: "No cors", takenAt: "2026-03-11T14:03:00Z", lat: 41.3105, lng: -87.1505, isVideo: false, isOutlier: false },
+        { id: "p5", url: "https://cover.test/broken.png", caption: "Broken", takenAt: "2026-03-11T14:04:00Z", lat: 41.3106, lng: -87.1506, isVideo: false, isOutlier: false },
       ] },
     ] }) });
   });
@@ -256,6 +263,20 @@ try {
   await page.route("**cover.test/yard.png", (r) =>
     r.fulfill({ contentType: "image/png", body: PNG }));
   await page.route("**cover.test/missing.png", (r) => r.fulfill({ status: 404, body: "" }));
+  // Served WITHOUT `access-control-allow-origin`, so a cors request (an <img>
+  // carrying crossOrigin, which sends an Origin header) fails the load while a
+  // plain one succeeds. That is the shape of the bug this reproduces: the
+  // preview shows the picture and the canvas cannot decode it.
+  await page.route("**cover.test/nocors.png", (r) =>
+    r.fulfill({
+      contentType: "image/png",
+      // Explicitly wrong rather than absent: a fulfilled route with no
+      // allow-origin at all still satisfies the browser here, so the header
+      // has to name somebody else for the cors check to actually fail.
+      headers: { "access-control-allow-origin": "https://nowhere.test" },
+      body: PNG,
+    }));
+  await page.route("**cover.test/broken.png", (r) => r.fulfill({ status: 404, body: "" }));
 
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("main");
@@ -950,7 +971,7 @@ try {
     /Appointment/.test(strip.groups[0].label) && !/Appointment/.test(strip.groups[1].label),
     strip.groups.map((g) => g.label).join(" | "));
   ok("each visit carries its own frames",
-    strip.groups[0].frames === 2 && strip.groups[1].frames === 1,
+    strip.groups[0].frames === 2 && strip.groups[1].frames === 3,
     JSON.stringify(strip.groups));
   ok("a video is badged, since its thumbnail is a poster and not the clip",
     /VIDEO/.test(strip.badges));
@@ -1283,6 +1304,134 @@ try {
     (await storedCallouts()).length === 0 &&
       (await redPixels()).n < beforeCallout.n + 2000,
     JSON.stringify(await storedCallouts()));
+
+  // 7c-vii-c. A CALL-OUT THAT CANNOT READ ITS PICTURE SAYS SO.
+  //
+  // Reported from the field: the call-out came back BLACK while its own
+  // preview beside the map showed the photograph perfectly. That pairing is
+  // the whole diagnosis — the preview is a plain <img> and takes an opaque
+  // response happily; the canvas asks with `crossOrigin`, which is a cors
+  // request, and a cors request is refused an opaque body. The service worker
+  // no longer hands one over (see test:sw), but a device runs whatever worker
+  // it last installed.
+  //
+  // THE ORDER OF THE TWO CASES BELOW IS FORCED, and the reason is the finding:
+  // showing a picture the cors path refused means drawing a cross-origin image
+  // without cors, which TAINTS the canvas — every pixel read after it throws.
+  // So the readable case goes first and the tainting one last, with a reload
+  // to clear it.
+  const secondVisitFrames = page.locator('div.rounded-xl.border').nth(1).locator("button");
+  /*
+    A FRESH CANVAS BOX PER DROP.
+
+    Reusing the one read at the top of the previous section put a drop 300px
+    down past the bottom edge of a canvas that had since changed height —
+    bars above it come and go — so `latLngAt` returned null, the drop was
+    cancelled as off-canvas, and the check read zero for a reason that had
+    nothing to do with what it was testing. It is the same rule the Add plan
+    drop target follows: ask where things are now, do not remember.
+  */
+  const dropOnStage = async (from, dx, dy) => {
+    const box = await page.locator("canvas").boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + dx, box.y + dy, { steps: 10 });
+    await page.mouse.up();
+    return box;
+  };
+
+  // (i) A picture that is simply not there. Both attempts fail, nothing is
+  //     drawn, and the frame has to say which of the two states it is in —
+  //     "loading…" and "picture unavailable" are different answers and a black
+  //     rectangle is neither.
+  //
+  //     Counted INSIDE the frame and nowhere else, and measured before as well
+  //     as after. Counting the whole canvas is what made the first version of
+  //     this check pass against a build with the message deleted: every pin
+  //     label on the map is white text with a dark outline, so grey pixels
+  //     were already there in their hundreds and the words added nothing that
+  //     could be told apart from them.
+  const wordsIn = (cx, cy) =>
+    page.evaluate(([x, y]) => {
+      const c = document.querySelector("canvas");
+      const rect = c.getBoundingClientRect();
+      // The drop point is in CSS pixels; the buffer is device pixels.
+      const k = c.width / rect.width;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const px = (i / 4) % c.width;
+        const py = Math.floor(i / 4 / c.width);
+        // WELL INSIDE the frame, not the frame. The border is white and its
+        // antialiasing is grey, so a box drawn to the frame's own edge counts
+        // several hundred pixels that appear the moment a call-out does —
+        // which is how this check passed against a build with the message
+        // deleted, twice. The words sit in the middle; the inset is 20px.
+        if (Math.abs(px - x * k) > 46 * k || Math.abs(py - y * k) > 30 * k) continue;
+        const [r, g, b] = [d[i], d[i + 1], d[i + 2]];
+        if (r > 90 && r < 200 && Math.abs(r - g) < 12 && Math.abs(g - b) < 12) n++;
+      }
+      return n;
+    }, [cx, cy]);
+
+  const wordsBefore = await wordsIn(200, 160);
+  await secondVisitFrames.nth(2).click();          // p5, a 404
+  await page.waitForTimeout(400);
+  const brokenPreview = await page.locator('img[data-preview="picked"]').boundingBox();
+  await dropOnStage(brokenPreview, 200, 160);
+  await page.waitForTimeout(1500);
+  const wordsAfter = await wordsIn(200, 160);
+  ok("A PICTURE THAT IS GONE SAYS SO, rather than sitting there black",
+    wordsAfter > wordsBefore + 30, `${wordsBefore} then ${wordsAfter} text pixels`);
+
+  // (ii) A picture the cors path refuses. p4's server allows another origin,
+  //      which is what a cached opaque copy looks like from the page: the
+  //      preview shows it and `crossOrigin` cannot read it.
+  //
+  //      The taint IS the observation. `getImageData` throwing can only happen
+  //      because a cross-origin image without cors has been drawn on the
+  //      canvas — so the transition from readable to refused is the receipt
+  //      that the fallback fired and the photograph is really on screen. It
+  //      cannot be counted in pixels for exactly the reason it works.
+  const canReadCanvas = () =>
+    page.evaluate(() => {
+      try {
+        const c = document.querySelector("canvas");
+        c.getContext("2d").getImageData(0, 0, 4, 4);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  ok("the canvas is readable before the refused picture is drawn",
+    (await canReadCanvas()) === true);
+
+  await secondVisitFrames.nth(1).click();          // p4, the cors refusal
+  await page.waitForTimeout(400);
+  const nocorsPreview = await page.locator('img[data-preview="picked"]').boundingBox();
+  await dropOnStage(nocorsPreview, 640, 200);
+  await page.waitForTimeout(1800);
+  ok("A PICTURE THE CANVAS CANNOT READ IS SHOWN ANYWAY, not left black",
+    (await canReadCanvas()) === false);
+
+  // Both call-outs go, and the page is reloaded — which is also what clears
+  // the taint, so every canvas check after this reads real pixels again.
+  await page.evaluate(() => {
+    const e = JSON.parse(localStorage.getItem("qe-estimate") ?? "{}");
+    e.plan.callouts = (e.plan.callouts ?? []).filter(
+      (c) => c.photoId !== "event:p4" && c.photoId !== "event:p5",
+    );
+    localStorage.setItem("qe-estimate", JSON.stringify(e));
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("main button.aspect-square");
+  const planAfter = await page.$$eval("main button.aspect-square", (els) =>
+    els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
+  await page.locator("main button.aspect-square").nth(planAfter).click();
+  await page.waitForSelector('button:text-is("Plant")', { timeout: 15000 });
+  await page.waitForTimeout(1000);
+  ok("and the canvas reads again once the page has been reloaded",
+    (await canReadCanvas()) === true);
 
   // 7c-vii. THE PLANT TAKE-OFF.
   //

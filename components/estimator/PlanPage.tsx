@@ -1938,7 +1938,17 @@ export default function PlanPage({
                     e,
                   );
                 }}
-                className={`max-h-44 w-full object-cover ${
+                /*
+                  A FIXED HEIGHT, not a maximum.
+
+                  A broken image has no intrinsic size, so `max-h` let the
+                  preview collapse to nothing — the card kept its caption and
+                  the picture's place in it simply vanished, which reads as a
+                  photograph that has no preview rather than one that failed.
+                  It also left nothing to drag: this is the drag source for a
+                  call-out, and a zero-height target cannot be picked up.
+                */
+                className={`h-44 w-full bg-surface2 object-cover ${
                   pickedHasDot ? "cursor-grab touch-none" : ""
                 }`}
               />
