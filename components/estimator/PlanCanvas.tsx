@@ -29,6 +29,12 @@ import {
   type PlanView,
 } from "@/lib/estimator/mapLayers";
 import {
+  PLANT_GRAB_MIN_PX,
+  drawPlantStamp,
+  stampRadius,
+  type PlantStampKind,
+} from "@/lib/estimator/plantStamp";
+import {
   SURVEY_COLORS,
   formatElevation,
   type ElevationResult,
@@ -422,15 +428,12 @@ export type PlanTool = "select" | "area" | "linear" | "plant";
  * perennials unreadable at working zoom, which is exactly where they are
  * placed.
  */
-const PLANT_R = 13;
-/** Comfortably bigger than the glyph, because a thumb is not a cursor. */
-const PLANT_GRAB_PX = 20;
-
-// A held-open photograph is measured in canvas pixels, for the same reason a
-// plant symbol is: it is pinned to the plan, not occupying ground. The default
-// is a shade under the filmstrip's own 172px tile — the size these have
-// already been read at — and each one can be sized from there. See
-// CALLOUT_DEFAULT_W in plan.ts for why one size cannot serve.
+// A held-open photograph is measured in canvas pixels: it is pinned to the
+// plan, not occupying ground. (A plant symbol is the other way round — it is
+// drawn at the spread the plant will reach; see plantStamp.ts.) The default is
+// a shade under the filmstrip's own 172px tile — the size these have already
+// been read at — and each one can be sized from there. See CALLOUT_DEFAULT_W
+// in plan.ts for why one size cannot serve.
 
 export default function PlanCanvas({
   anchor,
@@ -541,14 +544,18 @@ export default function PlanCanvas({
   /** Plants standing on the plan, one symbol each. */
   plants: PlacedPlant[];
   /**
-   * The glyph and colour a plant is drawn with, asked of the page.
+   * Which stamp a plant wears, its colour, and how wide it grows.
    *
    * The canvas has no catalog. Every other label on here arrives the same way
    * (`labelFor`, `overlaySrc`), which is what keeps this file about geometry —
    * and it is what lets a named cultivar draw as its own category's symbol
    * without this component knowing what a cultivar is.
    */
-  plantFace: (plant: PlacedPlant) => { glyph: string; color: string };
+  plantFace: (plant: PlacedPlant) => {
+    stamp: PlantStampKind;
+    color: string;
+    spreadFt: number;
+  };
   selectedPlantId: string | null;
   onSelectPlant: (id: string | null) => void;
   /** A tap on open ground while the plant tool is armed. */
@@ -1654,47 +1661,38 @@ export default function PlanCanvas({
     // 6. Plants, over everything drawn on the ground.
     //
     //    Over the beds on purpose: a shrub stands IN a bed, and a symbol
-    //    hidden under the fill of the bed it belongs to is a symbol nobody can
-    //    find. Over the survey too, which is a reference layer here.
+    //    hidden under the fill of the bed it belongs to is a symbol nobody
+    //    can find. Over the survey too, which is a reference layer here.
     //
-    //    A disc in the category's colour carrying the category's own glyph,
-    //    which is the same face its tile has — so a row of tiles and a row of
-    //    symbols on the map read as one product, and a named cultivar wears
-    //    its category's mark rather than inventing a second alphabet.
+    //    DRAWN AT THE SPREAD THE PLANT WILL REACH, in ground feet, so a bed
+    //    of eleven 6ft shrubs looks like what it is — a bed with three too
+    //    many in it. That is the whole reason to draw plants rather than
+    //    list them, and no quantity ever says it. See plantStamp.ts for the
+    //    figures, for the line work that tells the categories apart, and for
+    //    what the circle is and is not claiming.
+    const ftPerPxNow =
+      (metresPerWorldUnit(toLatLng(viewRef.current.centre).lat) / t.scale) *
+      FEET_PER_METRE;
     for (const plant of plants) {
       const at = dragPlant && dragPlant.id === plant.id ? dragPlant.at : plant.at;
       const p = toCanvas(toWorld(at), t);
       const face = plantFace(plant);
       const picked = plant.id === selectedPlantId;
+      const { r, toScale } = stampRadius(face.spreadFt, ftPerPxNow);
 
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, PLANT_R, 0, Math.PI * 2);
-      // Translucent, so the bed underneath still reads through a group of
-      // them. A plan with thirty perennials on it should still show its beds.
-      ctx.fillStyle = `${face.color}cc`;
-      ctx.fill();
-      // White at rest, green when picked: the RING is the only thing that
-      // changes, so selecting never moves or resizes a symbol.
-      ctx.strokeStyle = picked ? "#22c55e" : "rgba(255,255,255,0.9)";
-      ctx.lineWidth = picked ? 3 : 1.5;
-      ctx.stroke();
-      ctx.font = `${Math.round(PLANT_R * 1.25)}px system-ui`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      // +1: emoji sit high in their own box, and centring on the baseline
-      // alone leaves every symbol looking a pixel proud of its disc.
-      ctx.fillText(face.glyph, p.x, p.y + 1);
-      ctx.restore();
+      drawPlantStamp(ctx, face.stamp, p.x, p.y, r, {
+        color: face.color,
+        selected: picked,
+        toScale,
+      });
 
-      // The name only on the picked one. A yard with twelve labelled plants is
-      // unreadable — the same rule Upright's pins follow, arrived at there by
-      // trying the other way first.
+      // The name only on the picked one. A yard with twelve labelled plants
+      // is unreadable — the same rule Upright's pins follow, arrived at there
+      // by trying the other way first.
       if (picked && plant.variantLabel) {
-        drawLabel(ctx, plant.variantLabel, p.x, p.y - PLANT_R - 8, "#22c55e");
+        drawLabel(ctx, plant.variantLabel, p.x, p.y - r - 10, "#22c55e");
       }
     }
-
     // 7. Photographs held open, over everything — the line first, so it runs
     //    UNDER its own picture and under the dot it points at rather than
     //    across either.
@@ -1962,11 +1960,25 @@ export default function PlanCanvas({
    *
    * Last drawn is nearest the eye, so the array is walked backwards — the same
    * order the shape hit test uses, and for the same reason.
+   *
+   * The target is the SYMBOL'S OWN SIZE now that symbols have one: a 20ft
+   * shade tree is a large thing to hit and a ground cover is a speck. Never
+   * smaller than a thumb, though, or the smallest plants would be placeable
+   * and then unreachable.
    */
   function plantAt(cp: Pt, t: Transform): PlacedPlant | null {
+    const ftPerPx =
+      (metresPerWorldUnit(toLatLng(viewRef.current.centre).lat) / t.scale) *
+      FEET_PER_METRE;
     for (let i = plants.length - 1; i >= 0; i--) {
       const plant = plants[i];
-      if (dist(cp, toCanvas(toWorld(plant.at), t)) <= PLANT_GRAB_PX) return plant;
+      const { r } = stampRadius(plantFace(plant).spreadFt, ftPerPx);
+      if (
+        dist(cp, toCanvas(toWorld(plant.at), t)) <=
+        Math.max(PLANT_GRAB_MIN_PX, r)
+      ) {
+        return plant;
+      }
     }
     return null;
   }

@@ -1617,6 +1617,24 @@ try {
       return n;
     });
 
+  /** Plant green inside a box, for comparing one symbol against another. */
+  const greenIn = (bx, by, side) =>
+    page.evaluate(([x, y, s]) => {
+      const c = document.querySelector("canvas");
+      const rect = c.getBoundingClientRect();
+      const k = c.width / rect.width;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const px = (i / 4) % c.width;
+        const py = Math.floor(i / 4 / c.width);
+        if (Math.abs(px - x * k) > (s / 2) * k || Math.abs(py - y * k) > (s / 2) * k)
+          continue;
+        if (d[i + 1] > 120 && d[i + 1] - d[i] > 40 && d[i + 1] - d[i + 2] > 25) n++;
+      }
+      return n;
+    }, [bx, by, side]);
+
   const greenBefore = await plantGreen();
   await page.click('button:text-is("Plant")');
   await page.waitForTimeout(250);
@@ -1628,19 +1646,80 @@ try {
 
   // Two taps, two plants. No pending state, no Finish — a plant is one point
   // and it is complete the moment it exists, which is the whole difference
-  // from drawing a bed.
+  // from drawing a bed. Far enough apart that two 6ft canopies do not touch,
+  // since a symbol is drawn at the spread the plant will reach.
   const canvasNow = await page.locator("canvas").boundingBox();
-  await page.mouse.click(canvasNow.x + 300, canvasNow.y + 150);
+  const SHRUB_X = 200;
+  const SHRUB_Y = 120;
+  await page.mouse.click(canvasNow.x + SHRUB_X, canvasNow.y + SHRUB_Y);
   await page.waitForTimeout(200);
-  await page.mouse.click(canvasNow.x + 360, canvasNow.y + 190);
+  await page.mouse.click(canvasNow.x + 380, canvasNow.y + 300);
   await page.waitForTimeout(400);
 
   // READ THE CANVAS. A count in a card is exactly what would still be right
   // against a build that never drew the symbol, which is the failure this
   // screen has already had once with a layer.
   const greenAfter = await plantGreen();
+  // A LINE-WORK stamp, not a filled disc: far fewer green pixels than the old
+  // symbol put down, and the threshold is what the drawing actually makes.
   ok("A TAP PLANTS ONE, AND IT IS DRAWN ON THE MAP",
-    greenAfter > greenBefore + 200, `${greenBefore} then ${greenAfter}`);
+    greenAfter > greenBefore + 100, `${greenBefore} then ${greenAfter}`);
+
+  /*
+    7c-vii-2. AND IT IS DRAWN AT THE SPREAD THE PLANT WILL REACH.
+
+    A symbol used to be a fixed 13px disc with an emoji on it whatever the
+    map was doing. A planting plan draws the canopy, because the whole reason
+    to draw plants rather than list them is to see whether they FIT — eleven
+    shrubs at 6ft across a 20ft bed is a bed with three too many in it, and no
+    quantity ever says so.
+
+    Two claims, both read off the canvas: a 20ft tree is drawn bigger than a
+    6ft shrub, and the same shrub grows when the map zooms in. The old symbol
+    fails both by construction.
+  */
+  await page.click('button:has-text("Shade Tree")');
+  await page.waitForTimeout(200);
+  const TREE_X = 640;
+  const TREE_Y = 150;
+  await page.mouse.click(canvasNow.x + TREE_X, canvasNow.y + TREE_Y);
+  await page.waitForTimeout(500);
+  const shrubInk = await greenIn(SHRUB_X, SHRUB_Y, 190);
+  const treeInk = await greenIn(TREE_X, TREE_Y, 190);
+  ok("A SHADE TREE IS DRAWN BIGGER THAN A SHRUB, because it grows bigger",
+    treeInk > shrubInk * 1.6, `${shrubInk} of shrub, ${treeInk} of tree`);
+
+  /*
+    Zoom, and count ALL the plant line work rather than a box.
+
+    Predicting where one symbol lands after a zoom is arithmetic — the view
+    scales about the canvas centre — but it is arithmetic against a canvas
+    rectangle read at another moment, and this row changes height as tool bars
+    come and go. The claim does not need a position anyway: if symbols are
+    ground-scaled then every one of them grows together, and if they are the
+    old fixed disc the number does not move at all.
+  */
+  const inkBefore = await plantGreen();
+  await page.click('button[aria-label="Zoom in"]');
+  await page.waitForTimeout(700);
+  const inkZoomed = await plantGreen();
+  ok("AND THEY GROW WHEN THE MAP ZOOMS IN, because they are ground-scaled",
+    inkZoomed > inkBefore * 1.25, `${inkBefore} then ${inkZoomed}`);
+  await page.click('button[aria-label="Zoom out"]');
+  await page.waitForTimeout(700);
+  const inkBack = await plantGreen();
+  ok("and shrink again on the way back out",
+    inkBack < inkZoomed * 0.85, `${inkZoomed} then ${inkBack}`);
+
+  // The tree was placed to be measured, not to stay. Undo takes it back off,
+  // which leaves the two shrubs the rest of this section counts.
+  await page.locator('button[aria-label="Undo the last change to the plan"]').click();
+  await page.waitForTimeout(500);
+
+  // Back to shrubs, so the counts the rest of this section makes are of the
+  // two it started with plus nothing surprising.
+  await page.click('button:has-text("Shrub")');
+  await page.waitForTimeout(200);
 
   const columnText = async () => (await page.textContent("aside")) ?? "";
   ok("and the column keeps a schedule rather than a list of symbols",

@@ -35,6 +35,14 @@ import {
 } from "../lib/estimator/proposal.ts";
 import { DEFAULT_ESTIMATOR_SETTINGS, type Estimate } from "../lib/estimator/types.ts";
 import {
+  DEFAULT_SPREAD_FT,
+  MIN_STAMP_R,
+  PLANT_SPREAD_FT,
+  spreadFtFor,
+  stampFor,
+  stampRadius,
+} from "../lib/estimator/plantStamp.ts";
+import {
   pendingTakeoffs,
   photoTakeoffLabel,
 } from "../lib/estimator/pendingTakeoff.ts";
@@ -819,6 +827,65 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   ok("the default is not written down", plain[0]?.w === undefined);
   const bad = calloutsFrom({ callouts: [{ id: "c1", photoId: "event:p1", at, w: 9999 }] });
   ok("and one out of range comes back inside it", bad[0]?.w === CALLOUT_MAX_W);
+}
+
+// --- How big a plant is drawn ----------------------------------------------
+//
+// A planting plan draws a plant at the spread it will reach, because the whole
+// reason to draw plants rather than list them is to see whether they FIT.
+// Ryan's figures, by category.
+
+{
+  ok("a shade tree is 20 feet across", spreadFtFor("mat:shade_tree") === 20);
+  ok("an ornamental 12", spreadFtFor("mat:ornamental_tree") === 12);
+  ok("an evergreen 8", spreadFtFor("mat:evergreen_tree") === 8);
+  ok("a shrub 6", spreadFtFor("mat:shrub") === 6);
+  ok("a grass 3", spreadFtFor("mat:grasses") === 3);
+  ok("a perennial a foot and a half", spreadFtFor("mat:perennial") === 1.5);
+  ok("and a ground cover one foot", spreadFtFor("mat:ground_cover") === 1);
+  // An item with no figure is drawn as a shrub rather than as nothing: a plan
+  // with an invisible plant on it is worse than one drawn at a sane default.
+  ok("anything else falls back to a shrub",
+    spreadFtFor("mat:something_new") === DEFAULT_SPREAD_FT);
+
+  // The radius is half the spread over the ground scale, and nothing else.
+  // At 0.1 ft per pixel a 20ft tree is 100px of radius.
+  ok("the radius is half the spread at the map's own scale",
+    stampRadius(20, 0.1).r === 100, JSON.stringify(stampRadius(20, 0.1)));
+  ok("and it is to scale, and says so", stampRadius(20, 0.1).toScale === true);
+  ok("a shrub at the same zoom is 30px", stampRadius(6, 0.1).r === 30);
+
+  // ZOOM CHANGES IT. This is the whole difference from the old symbol, which
+  // was a fixed 13px whatever the map was doing.
+  ok("zooming in doubles it", stampRadius(20, 0.05).r === 200);
+  ok("and zooming out halves it", stampRadius(20, 0.2).r === 50);
+
+  // A ground cover is a foot across. Over a whole yard that is a third of a
+  // pixel: invisible, and worse, untappable — so a bed of them could be
+  // planted and then never selected or removed again.
+  const tiny = stampRadius(1, 0.5);
+  ok("a symbol too small to see is floored", tiny.r === MIN_STAMP_R);
+  ok("AND SAYS IT IS NO LONGER TO SCALE, rather than claiming a canopy",
+    tiny.toScale === false);
+
+  // Nonsense in, a mark out. A zero scale divides by nothing and a plant with
+  // no spread would be a hit target of radius zero.
+  ok("a zero ground scale still draws something",
+    stampRadius(6, 0).r === MIN_STAMP_R && stampRadius(6, 0).toScale === false);
+  ok("and so does a plant with no spread",
+    stampRadius(0, 0.1).r === MIN_STAMP_R && stampRadius(0, 0.1).toScale === false);
+  ok("nor is a NaN scale a size",
+    stampRadius(6, Number.NaN).r === MIN_STAMP_R);
+
+  // Each category has its own line work, which is what tells them apart when
+  // every plant on the plan is the same green.
+  const kinds = new Set(
+    Object.keys(PLANT_SPREAD_FT).map((id) => stampFor(id)),
+  );
+  ok("every category has a stamp of its own",
+    kinds.size === Object.keys(PLANT_SPREAD_FT).length, JSON.stringify([...kinds]));
+  ok("and an unknown item wears the shrub's",
+    stampFor("mat:something_new") === "shrub");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

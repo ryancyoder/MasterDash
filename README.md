@@ -680,6 +680,73 @@ planting another. Mutation-tested: cutting the projection turns 5 checks red,
 folding cultivars into the generic turns 3, keeping duplicate ids turns 1, and
 never drawing the symbol turns 4.
 
+#### The symbols are planting-plan stamps, drawn at their spread
+
+**A reversal, and worth stating as one.** A plant symbol was a coloured disc
+with the tile's emoji on it, sized in SCREEN pixels — a notation that said "one
+shrub here" and deliberately made no claim about the plant. That is the right
+answer for a pin and the wrong one for a planting plan. A plan is drawn at the
+spread the plant will reach, because the whole reason to draw plants rather
+than list them is to see whether they **fit**: eleven shrubs at 6ft across a
+20ft bed is a bed with three too many in it, and no list of quantities will
+ever say so.
+
+**The spreads, by category** — the figures Ryan gave, and they are the
+CATEGORY's default rather than any one cultivar's:
+
+| | spread |
+| --- | --- |
+| Shade tree | 20 ft |
+| Ornamental tree | 12 ft |
+| Evergreen | 8 ft |
+| Shrub | 6 ft |
+| Grasses | 3 ft |
+| Perennial | 1.5 ft |
+| Ground cover | 1 ft |
+
+**There is no grasses category in this app yet**, and the 3ft figure is in the
+table anyway. The plant list's 962 rows fall into six groups — ornamental
+grasses sit inside `perennial` — so adding one means a new priced item in
+Supabase, which is a decision rather than a line of code. The figure is written
+down so that the day the category exists it draws at 3ft instead of at a
+default nobody chose.
+
+**The honesty problem moves rather than disappearing.** The circle is now a
+claim about a canopy — specifically about the *specified* spread for the
+category, not about the plant that arrives on the truck and not about what it
+is today. That is exactly the claim a planting plan on paper makes, which is
+why it is the right one to make here; a per-plant spread is the obvious next
+step, and `upright_objects` already stores a measured one for a plant somebody
+actually shot in a yard.
+
+**Line work, not colour.** Every plant category is the same green, so the
+texture is what tells them apart — a mono-line plan is how this has always been
+drawn. A lobed cloud with a second ring inside for a shade tree; a lighter
+crown with the branching showing through for an ornamental; the conifer
+sawtooth, which is the one plan convention everybody already reads; many
+shallow lobes for a shrub, dense and unmistakably not a tree at a glance, which
+is the pair that has to be told apart most often; blades out of a clump inside
+a dashed extent for grasses, because a grass has no edge and should not be
+drawn one; a small rosette for a perennial; and the lightest mark on the plan,
+a dashed ring, for a ground cover. An emoji at 6px is a smudge. A sawtooth at
+6px still reads as spiky.
+
+**A floor, and it says so.** A ground cover is a foot across; over a whole yard
+that is a third of a pixel — invisible, and worse, untappable, so a bed of them
+could be planted and then never selected or removed again. Below `MIN_STAMP_R`
+the symbol is drawn as a plain dot rather than as line work, because at that
+size there is no canopy being claimed and `toScale` is false. The hit target
+follows the drawn size but never goes below a thumb.
+
+**Checked at both ends.** `test:plan` pins the figures and the arithmetic — half
+the spread over the ground scale, zooming in doubles it, a nonsense scale still
+draws a mark, every category has a stamp of its own. `test:board-ui` reads the
+canvas: a shade tree draws more line work than a shrub beside it, and every
+symbol grows when the map zooms in and shrinks on the way back out. That last
+pair is what the old fixed-size disc cannot do — against a build with the
+radius pinned at 13px it reports **1001 then 1012**, flat. A shade tree shrunk
+to a shrub's 6ft turns 3 checks red.
+
 #### Corners are shared, not copied
 
 A mulch bed and the lawn beside it meet along an edge. Those are not two

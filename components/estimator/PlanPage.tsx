@@ -38,6 +38,7 @@ import {
 import { formatMoney, getItem, sellFor } from "@/lib/estimator/catalog";
 import { PLANT_GROUPS } from "@/lib/estimator/tree";
 import { loadPlants, plantsInGroup, type PlantRow } from "@/lib/estimator/plants";
+import { spreadFtFor, stampFor } from "@/lib/estimator/plantStamp";
 import {
   FALLBACK_CENTRE,
   parseFeet,
@@ -1178,16 +1179,21 @@ export default function PlanPage({
   );
 
   /**
-   * The face a symbol is drawn with: its CATEGORY's glyph and colour.
+   * The face a symbol is drawn with: its CATEGORY's stamp, colour and spread.
    *
    * Not the cultivar's own anything. A named boxwood is still a shrub, and a
    * plan that gave every cultivar its own mark would need a legend before it
-   * could be read at all. The colour is the catalog item's, so the map and the
+   * could be read at all — so the line work is the category's, and so is the
+   * 6ft it is drawn at. The colour is the catalog item's, so the map and the
    * tile agree without either being told to.
    */
   const plantFace = useCallback((plant: PlacedPlant) => {
     const item = getItem(plant.itemId);
-    return { glyph: item?.glyph ?? "🌿", color: item?.color ?? "#22c55e" };
+    return {
+      stamp: stampFor(plant.itemId),
+      color: item?.color ?? "#22c55e",
+      spreadFt: spreadFtFor(plant.itemId),
+    };
   }, []);
 
   /** How a placed plant reads: the cultivar where there is one, else its kind. */
@@ -1626,6 +1632,15 @@ export default function PlanPage({
                     {item?.glyph ?? "🌿"}
                   </span>
                   {g.label}
+                  {/*
+                    The spread it will be drawn at, on the button that arms it.
+                    A symbol on this plan is a canopy rather than a pin, so the
+                    size is part of what you are choosing — and it is the one
+                    number that decides whether eleven of them fit in the bed.
+                  */}
+                  <span className="ml-1 opacity-60 tabular-nums">
+                    {spreadFtFor(g.itemId)}&#8242;
+                  </span>
                 </button>
               );
             })}
