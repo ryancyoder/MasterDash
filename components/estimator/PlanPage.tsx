@@ -1249,6 +1249,17 @@ export default function PlanPage({
     for ever, and everybody wants a column they folded to stay folded.
   */
   const [sideOverrides, setSideOverrides] = useState<Record<string, boolean>>({});
+  /*
+    FULLSCREEN, and it is deliberately NOT a persisted preference.
+
+    Every other view switch on this screen is remembered — the planting, the
+    labels, the trades. This one is not, because opening the app to a screen
+    with no header, no column and no strip is a screen nobody can get out of
+    if they have forgotten the button is there. It is a mode you step into for
+    a minute and step back out of, like a lock on a door rather than a wall.
+  */
+  const [fullscreen, setFullscreen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const [plantRows, setPlantRows] = useState<PlantRow[] | null>(null);
 
   /*
@@ -1608,11 +1619,126 @@ export default function PlanPage({
     setSideOverrides({});
   }, [settings.sideCollapsed]);
 
+  /*
+    TWO FULLSCREENS, AND THE APP'S ONE IS THE ONE THAT ALWAYS WORKS.
+
+    The browser's Fullscreen API takes the browser's own chrome with it, which
+    is the bigger prize — but `requestFullscreen` on an ELEMENT is refused on
+    iPhone Safari outright and its support on iPad has changed more than once,
+    and this app is used on an iPad in a driveway. So the substance is the app's
+    own: the page goes `fixed inset-0` and covers everything, which needs no
+    API and no permission. The real thing is asked for on top, and a refusal is
+    swallowed rather than reported — there is nothing for a person to do about
+    it and the map is already filling the window.
+  */
+  /*
+    ONE WAY OUT, AND EVERY EXIT GOES THROUGH IT.
+
+    The two fullscreens have to leave together. An earlier version had the
+    Escape key clear the app's state and leave the browser's alone, so the page
+    came back to its ordinary layout while the document was still the
+    fullscreen element — the map measured 56px taller than it had before going
+    in, and nothing on screen said why. The browser's own chrome would have
+    been missing on a real machine.
+  */
+  const leaveFullscreen = useCallback(() => {
+    setFullscreen(false);
+    const doc = document as Document & {
+      webkitExitFullscreen?: () => Promise<void>;
+      webkitFullscreenElement?: Element | null;
+    };
+    try {
+      if (document.fullscreenElement ?? doc.webkitFullscreenElement) {
+        void (document.exitFullscreen?.() ?? doc.webkitExitFullscreen?.())?.catch(
+          () => {},
+        );
+      }
+    } catch {
+      // Already out, or never in. The app's own layout is what matters.
+    }
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    if (fullscreen) {
+      leaveFullscreen();
+      return;
+    }
+    setFullscreen(true);
+    const el = rootRef.current as
+      | (HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> })
+      | null;
+    try {
+      void (el?.requestFullscreen?.() ?? el?.webkitRequestFullscreen?.())?.catch(
+        () => {},
+      );
+    } catch {
+      // Refused, or not implemented. The app's own fullscreen stands.
+    }
+  }, [fullscreen, leaveFullscreen]);
+
+  /*
+    THE WAYS OUT THAT ARE NOT THE BUTTON.
+
+    Escape, because every fullscreen anybody has ever used answers to it — and
+    the browser's own fullscreen answers to it whether or not we listen, so
+    without this the chrome would come back while the app stayed covered.
+    `fullscreenchange` catches that from the other side: leaving by the
+    browser's control, or by a gesture we never see.
+  */
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") leaveFullscreen();
+    };
+    const onChange = () => {
+      const doc = document as Document & { webkitFullscreenElement?: Element | null };
+      if (!(document.fullscreenElement ?? doc.webkitFullscreenElement)) {
+        setFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("fullscreenchange", onChange);
+    document.addEventListener("webkitfullscreenchange", onChange);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("fullscreenchange", onChange);
+      document.removeEventListener("webkitfullscreenchange", onChange);
+    };
+    /*
+      Only while it is on. A `fullscreenchange` listener running the rest of
+      the time would fire on somebody putting a VIDEO fullscreen — the review
+      clip, on this very screen — and drop them out of a mode they were not in,
+      which is harmless, and would also run on every page that mounts this one.
+    */
+  }, [fullscreen, leaveFullscreen]);
+
   const ready = anchorIsReal(anchor);
   const shared = useMemo(() => sharedNodeIds(plan.shapes), [plan.shapes]);
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col">
+    <div
+      ref={rootRef}
+      /*
+        A name for the page's own root, so a test can read the box it occupies.
+        Whether fullscreen COVERS the app — the header above it, the padding
+        around it — is a question about this element's rectangle and nothing
+        else; measuring the canvas instead cannot tell "the shell was escaped"
+        apart from "the column and the strip stood down", which the same tap
+        also does.
+      */
+      data-plan-root="true"
+      /*
+        `fixed inset-0` rather than anything cleverer: the page's own chrome —
+        the header, the padding, the scroll container — all sit above this in
+        the tree, and covering them is both simpler and more complete than
+        trying to persuade each of them to stand down.
+      */
+      className={
+        fullscreen
+          ? "fixed inset-0 z-50 flex flex-col bg-bg p-2"
+          : "flex flex-1 min-h-0 flex-col"
+      }
+    >
       {/* Tools */}
       <div className="shrink-0 flex items-center gap-1.5 overflow-x-auto pb-2">
         {TOOLS.map((t) => (
@@ -1760,6 +1886,29 @@ export default function PlanPage({
           The BUYS row still shows each assembly's designated colour as a dot,
           so the designation is visible where it is armed.
         */}
+        {/*
+          THE MAP, AND NOTHING ELSE — in the row that already says what the map
+          shows, because that is exactly what this changes.
+
+          It reads the STATE, as the eyes do: ⛶ to go in, ✕ to come out. The
+          tools come with it; a map you cannot draw on is not a viewer you can
+          work in, and everything else on the screen is one tap away.
+        */}
+        <button
+          onClick={toggleFullscreen}
+          aria-label="Fullscreen map"
+          aria-pressed={fullscreen}
+          title={
+            fullscreen
+              ? "Leave fullscreen — or press Escape"
+              : "Give the whole screen to the map"
+          }
+          className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${
+            fullscreen ? "bg-ink text-black" : "bg-surface2 text-muted"
+          }`}
+        >
+          {fullscreen ? "✕" : "⛶"}
+        </button>
         <button
           onClick={() => setColorsOpen((v) => !v)}
           aria-pressed={colorsOpen}
@@ -2312,23 +2461,26 @@ export default function PlanPage({
           be off screen exactly when it is needed. Ringed while there is no
           property, because then it is the only thing worth pressing.
         */}
-        <button
-          onClick={() => setPanelOpen(true)}
-          className={`absolute right-3 top-3 z-30 flex h-11 items-center gap-2 rounded-2xl px-4 text-sm font-bold backdrop-blur sm:hidden ${
-            ready ? "bg-bg/90 text-ink" : "bg-accent text-black"
-          }`}
-        >
-          <span aria-hidden="true">☰</span>
-          {ready ? "Panel" : "Choose property"}
-        </button>
+        {!fullscreen && (
+          <button
+            onClick={() => setPanelOpen(true)}
+            className={`absolute right-3 top-3 z-30 flex h-11 items-center gap-2 rounded-2xl px-4 text-sm font-bold backdrop-blur sm:hidden ${
+              ready ? "bg-bg/90 text-ink" : "bg-accent text-black"
+            }`}
+          >
+            <span aria-hidden="true">☰</span>
+            {ready ? "Panel" : "Choose property"}
+          </button>
+        )}
 
-        {panelOpen && (
+        {panelOpen && !fullscreen && (
           <div
             className="fixed inset-0 z-30 bg-black/60 sm:hidden"
             onPointerDown={() => setPanelOpen(false)}
           />
         )}
 
+        {!fullscreen && (
         <aside
           className={`shrink-0 flex-col gap-2 overflow-y-auto md-scroll sm:static sm:z-auto sm:flex sm:w-64 sm:max-w-none sm:border-0 sm:bg-transparent sm:p-0 ${
             panelOpen
@@ -2673,6 +2825,7 @@ export default function PlanPage({
           </>
           )}
         </aside>
+        )}
       </div>
 
       {/*
@@ -2712,6 +2865,21 @@ export default function PlanPage({
         </div>
       )}
 
+      {/*
+        THE COLUMN, THE STRIP AND THE TRANSPORT ALL STAND DOWN IN FULLSCREEN.
+
+        Not because they are in the way of the pixels — though they are, and
+        between them they take about a third of the screen — but because they
+        are OTHER PANES: a bill of what is drawn, a source of pictures to bring
+        in, a playhead through a recording. Fullscreen is for reading and
+        drawing on the yard, and each of them is one tap away.
+
+        The <audio> below is NOT in here. It carries the recording for the
+        whole life of the screen and unmounting it would stop playback and lose
+        the position — the transport is the control, the element is the thing.
+      */}
+      {!fullscreen && (
+      <>
       <ReviewFilmstrip
         session={visit}
         frames={gradeFrames}
@@ -2739,6 +2907,8 @@ export default function PlanPage({
         videoOnStage={videoOnStage}
         onToggleStage={() => setVideoOnStage((v) => !v)}
       />
+      </>
+      )}
       <audio ref={audioRef} preload="metadata" className="hidden" />
 
       {/*

@@ -2927,6 +2927,146 @@ try {
     (await columnHeight()) > tallFolded + 100,
     `${await columnHeight()} against ${tallFolded} folded`);
 
+  // 7c-xv. FULLSCREEN.
+  //
+  // The map is the point of this screen and it is boxed in on four sides: an
+  // app header above, a column of cards beside, a filmstrip and a transport
+  // below. Fullscreen gives it the lot, keeping the tools — a map you cannot
+  // draw on is not a viewer you can work in.
+
+  /*
+    THE BROWSER'S OWN FULLSCREEN IS REFUSED FOR THESE CHECKS, and that is the
+    point of them rather than a convenience.
+
+    Headless Chromium grants `requestFullscreen` on an element, which makes the
+    canvas fill the screen whatever this app does — so with it granted, a build
+    that wired up the button and applied no layout of its own passed every
+    check here. The device this is used on is an iPad, where element
+    fullscreen has been refused outright at times, and the app's own fullscreen
+    is the half that has to work there. So it is refused, and what is left is
+    ours.
+
+    The stub counts, too: the real thing is still asked for, and a build that
+    stopped asking would leave the browser's chrome up on every desk machine.
+  */
+  await page.evaluate(() => {
+    window.__fsAsks = 0;
+    Element.prototype.requestFullscreen = function () {
+      window.__fsAsks++;
+      return Promise.reject(new Error("refused, as an iPad would"));
+    };
+  });
+
+  const fsBtn = page.locator('button[aria-label="Fullscreen map"]');
+  ok("the map toolbar carries a fullscreen control", (await fsBtn.count()) === 1);
+
+  /*
+    READ THE CANVAS'S OWN BOX, which is the only thing that says whether the
+    map actually got the screen. A flag in component state, or a class on a
+    div, is exactly what a build that added the button and wired nothing would
+    also have.
+  */
+  const fsCanvasBox = async () =>
+    (await page.locator("canvas[data-plan-canvas]").boundingBox()) ?? { width: 0, height: 0 };
+  const fsBefore = await fsCanvasBox();
+  const fsViewport = page.viewportSize();
+
+  if ((await fsBtn.count()) === 1) await fsBtn.click();
+  await page.waitForTimeout(600);
+  const fsAfter = await fsCanvasBox();
+  /*
+    Measured with the browser's fullscreen refused: 988x411 becomes 1256x507.
+    The width is the side column and the page's padding; the height is the app
+    header, the padding, the filmstrip and the transport.
+  */
+  ok("FULLSCREEN GIVES THE MAP THE WHOLE WINDOW",
+    fsAfter.width > fsBefore.width + 200 && fsAfter.height > fsBefore.height + 60,
+    `${Math.round(fsBefore.width)}x${Math.round(fsBefore.height)} then ` +
+      `${Math.round(fsAfter.width)}x${Math.round(fsAfter.height)}`);
+  // The tools keep their rows, deliberately — so the height is most of the
+  // viewport rather than all of it, and the width really is all of it.
+  ok("and it really is the window, not merely bigger",
+    fsAfter.width > fsViewport.width * 0.95 && fsAfter.height > fsViewport.height * 0.6,
+    `${Math.round(fsAfter.width)}x${Math.round(fsAfter.height)} in ` +
+      `${fsViewport.width}x${fsViewport.height}`);
+
+  ok("and the browser's own fullscreen is still asked for",
+    (await page.evaluate(() => window.__fsAsks ?? 0)) === 1,
+    `${await page.evaluate(() => window.__fsAsks ?? 0)} asks`);
+
+  /*
+    AND THE PAGE ITSELF COVERS THE APP, which is the half the canvas cannot
+    report: standing the column and the strip down grows the map too, so a
+    build that did only that passed every size check here. The root's own
+    rectangle is the question — top-left of the viewport, the whole of it.
+  */
+  const rootBox = async () =>
+    (await page.locator('[data-plan-root]').boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+  const fsRoot = await rootBox();
+  ok("THE PAGE COVERS THE APP'S OWN CHROME",
+    fsRoot.y < 2 &&
+      fsRoot.x < 2 &&
+      fsRoot.height > fsViewport.height - 2 &&
+      fsRoot.width > fsViewport.width - 2,
+    `root at ${Math.round(fsRoot.x)},${Math.round(fsRoot.y)} ` +
+      `${Math.round(fsRoot.width)}x${Math.round(fsRoot.height)} in ` +
+      `${fsViewport.width}x${fsViewport.height}`);
+
+  // The other panes are gone — they are other panes, not furniture.
+  ok("the side column stands down",
+    (await page.locator("aside").count()) === 0);
+  ok("and so does the filmstrip",
+    (await page.locator('button:text-is("Property")').count()) === 0);
+
+  // The tools do NOT. This is the half that makes it a viewer rather than a
+  // picture: everything that draws on the yard is still here.
+  ok("BUT THE TOOLS COME WITH IT",
+    (await page.locator('button[aria-label="Area"]').count()) === 1 &&
+      (await page.locator('button[aria-label="Plant"]').count()) === 1 &&
+      (await page.locator('button[aria-label="Assembly colours and visibility"]').count()) === 1);
+
+  // Escape, because every fullscreen anybody has used answers to it — and the
+  // browser's own answers to it whether or not we listen, so without this the
+  // chrome would come back while the app stayed covered.
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(500);
+  /*
+    BACK TO THE SIZE IT WAS, to the pixel, and that tolerance is the check.
+
+    Both fullscreens have to leave together. The first version had Escape
+    clear the app's state and leave the BROWSER's alone, so the page came back
+    to its ordinary layout while the document was still the fullscreen element
+    — the map measured 467 where it had been 411, and nothing on screen said
+    why. A looser check would have called that coming out.
+  */
+  ok("ESCAPE COMES BACK OUT, ALL THE WAY OUT",
+    Math.abs((await fsCanvasBox()).height - fsBefore.height) < 4 &&
+      (await page.locator("aside").count()) === 1 &&
+      (await page.locator('button:text-is("Property")').count()) === 1,
+    `${Math.round(fsBefore.height)} tall before, ${Math.round((await fsCanvasBox()).height)} after`);
+
+  // And the button both ways round.
+  if ((await fsBtn.count()) === 1) await fsBtn.click();
+  await page.waitForTimeout(500);
+  ok("the control says it is in", (await fsBtn.getAttribute("aria-pressed")) === "true");
+  if ((await fsBtn.count()) === 1) await fsBtn.click();
+  await page.waitForTimeout(500);
+  ok("AND THE CONTROL COMES BACK OUT TOO",
+    (await fsBtn.getAttribute("aria-pressed")) === "false" &&
+      Math.abs((await fsCanvasBox()).height - fsBefore.height) < 4,
+    `${Math.round((await fsCanvasBox()).height)} against ${Math.round(fsBefore.height)}`);
+
+  /*
+    IT IS NOT REMEMBERED, and that is deliberate rather than an omission.
+
+    Every other view switch on this screen persists. Opening the app to a
+    screen with no header, no column and no strip is a screen nobody can get
+    out of if they have forgotten where the button was.
+  */
+  ok("and it is not written to the settings",
+    await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("qe-settings") ?? "{}").fullscreen === undefined));
+
   await page.click('button:text-is("Visit")');
   await page.waitForTimeout(200);
   ok("and the switch goes back to the visit's own",

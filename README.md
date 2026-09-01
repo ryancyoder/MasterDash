@@ -800,6 +800,56 @@ being wrong rather than the thing measured:
 Mutation-tested: making a plant grabbable in Select again turns 1 check red,
 and ignoring the custom spread turns 2 here and 2 in `test:plan`.
 
+#### Fullscreen
+
+**⛶** in the map toolbar gives the whole screen to the map. Tap it again, or
+press Escape, to come back.
+
+**Two fullscreens, and the app's own is the one that always works.** The
+browser's Fullscreen API takes the browser's chrome with it, which is the
+bigger prize — but `requestFullscreen` on an *element* is refused outright on
+iPhone Safari and its support on iPad has changed more than once, and this app
+is used on an iPad in a driveway. So the substance is the app's own: the page
+goes `fixed inset-0` and covers everything above it in the tree, which needs no
+API and no permission. The real thing is asked for on top, and a refusal is
+swallowed — there is nothing a person can do about it and the map is already
+filling the window.
+
+**The tools come with it; the other panes do not.** The side column, the
+filmstrip and the transport stand down — not because they are in the way of the
+pixels, though between them they are a third of the screen, but because they
+are *other panes*: a bill of what is drawn, a source of pictures to bring in, a
+playhead through a recording. Fullscreen is for reading and drawing on the
+yard, and each of them is one tap away. The `<audio>` element is **not** among
+them: it carries the recording for the whole life of the screen, and the
+transport is the control rather than the thing.
+
+**It is deliberately not remembered.** Every other view switch here persists —
+the planting, the labels, the trades, the folded column. Opening the app to a
+screen with no header, no column and no strip is a screen nobody can get out of
+if they have forgotten where the button was.
+
+**Every exit goes through one function**, and that took a bug to establish. The
+first version had Escape clear the app's state and leave the browser's
+fullscreen alone, so the page came back to its ordinary layout while the
+document was still the fullscreen element: the map measured **467px** where it
+had been **411**, and nothing on screen said why. On a real machine the
+browser's chrome would have been missing too. The check's tolerance is 4px for
+that reason.
+
+**And the browser's own fullscreen is refused for the checks**, which is the
+point of them rather than a convenience. Headless Chromium grants element
+fullscreen, so with it granted a build that wired up the button and applied no
+layout of its own passed every size check here. Refused, what is left is ours —
+which is exactly the iPad's case. The stub counts the asks too, so a build that
+stopped asking would be caught leaving the chrome up on every desk machine.
+
+**One more thing the canvas cannot report.** Standing the column and the strip
+down grows the map by itself, so a build that did only that still measured
+988×411 → 1256×507. Whether the page COVERS the app is a question about the
+root's own rectangle — top-left of the viewport, the whole of it — which is why
+it carries `data-plan-root`.
+
 #### The column folds
 
 Nine beds is nine cards of loads, photographs, grade and photographs again, and
