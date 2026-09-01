@@ -91,6 +91,9 @@ export interface EstimatorSnapshot {
   estimate: Estimate;
   settings: EstimatorSettings;
   hydrated: boolean;
+  /** How many plan edits can be stepped back, and forward again. */
+  undoDepth: number;
+  redoDepth: number;
 }
 
 function newId(): string {
@@ -137,6 +140,8 @@ const SERVER_SNAPSHOT: EstimatorSnapshot = Object.freeze({
   }) as Estimate,
   settings: DEFAULT_ESTIMATOR_SETTINGS,
   hydrated: false,
+  undoDepth: 0,
+  redoDepth: 0,
 });
 
 export function getSnapshot(): EstimatorSnapshot {
@@ -145,6 +150,8 @@ export function getSnapshot(): EstimatorSnapshot {
       estimate: loadEstimate(),
       settings: loadSettings(),
       hydrated: true,
+      undoDepth: undoStack.length,
+      redoDepth: redoStack.length,
     };
   }
   return snapshot;
@@ -432,10 +439,101 @@ export function setAssemblyBuckets(assemblyId: string, buckets: number) {
 // Every reducer here replaces the shape array rather than editing it, so a
 // render that is holding an old snapshot can never see a half-applied drag.
 
-function mutatePlan(fn: (plan: PlanState) => PlanState) {
+/*
+  UNDO, FOR THE PLAN.
+
+  Every edit to the take-off goes through `mutatePlan`, so one place holds the
+  whole of it: the plan before the edit is pushed here, and undo puts it back.
+  That works because the plan is already treated as a DOCUMENT everywhere else
+  — it merges newest-wins as a scalar, it is projected rather than logged, and
+  nothing downstream holds a pointer into it. A per-edit inverse for twenty-odd
+  reducers would be twenty-odd chances to write the inverse wrong.
+
+  It is deliberately NOT persisted. An undo stack restored from a week ago,
+  stepping back through edits somebody has since built on, is not undo; and it
+  would put a copy of the plan in localStorage for every edit made.
+
+  It does NOT cover the taps: those are an op log where a long press already
+  takes one back, and it does not cover the property's layers, which are
+  shared with other estimates and with Upright — undoing somebody else's
+  arrangement of a yard because you pressed a button on this estimate would be
+  wrong. Both are stated on the button.
+*/
+interface UndoEntry {
+  plan: PlanState;
+  label: string;
+  at: number;
+}
+
+const undoStack: UndoEntry[] = [];
+const redoStack: UndoEntry[] = [];
+/** Deep enough to get out of any run of taps; a plan document is small. */
+const UNDO_DEPTH = 40;
+/**
+  * How long a run of the same edit stays one undo.
+  *
+  * A slider fires on every pixel of a drag. Without this, sizing a call-out
+  * would fill the stack with forty steps of one gesture and undo would spend
+  * them one pixel at a time — which is not what anybody means by undoing a
+  * resize. Only the FIRST state of a run is kept, so one press goes back to
+  * before the whole drag.
+  */
+const COALESCE_MS = 700;
+
+function mutatePlan(fn: (plan: PlanState) => PlanState, label = "") {
+  const before = getSnapshot().estimate.plan;
+  const top = undoStack[undoStack.length - 1];
+  if (label && top && top.label === label && Date.now() - top.at < COALESCE_MS) {
+    // Same gesture still going: keep the state it started from, and hold the
+    // window open for as long as the finger is down.
+    top.at = Date.now();
+  } else {
+    undoStack.push({ plan: before, label, at: Date.now() });
+    if (undoStack.length > UNDO_DEPTH) undoStack.shift();
+  }
+  // A new edit ends the redo path, which is the contract everybody already
+  // knows from every other tool.
+  redoStack.length = 0;
   mutate((d) => {
     d.plan = fn(d.plan);
   });
+}
+
+/** Step one plan edit back. False when there was nothing to step back to. */
+export function undoPlan(): boolean {
+  const entry = undoStack.pop();
+  if (!entry) return false;
+  const current = getSnapshot().estimate.plan;
+  redoStack.push({ plan: current, label: entry.label, at: Date.now() });
+  mutate((d) => {
+    d.plan = entry.plan;
+  });
+  return true;
+}
+
+/** And forward again. */
+export function redoPlan(): boolean {
+  const entry = redoStack.pop();
+  if (!entry) return false;
+  const current = getSnapshot().estimate.plan;
+  undoStack.push({ plan: current, label: entry.label, at: Date.now() });
+  mutate((d) => {
+    d.plan = entry.plan;
+  });
+  return true;
+}
+
+/**
+ * Forget the history.
+ *
+ * Called when the plan is replaced by something this device did not do — a
+ * pull from another device, or a different estimate being opened. Stepping
+ * back past that would resurrect work somebody else has since deleted, which
+ * is the one thing an undo stack must never be able to do.
+ */
+export function clearPlanHistory() {
+  undoStack.length = 0;
+  redoStack.length = 0;
 }
 
 /**
@@ -708,16 +806,22 @@ export function moveCallout(id: string, at: LatLng) {
  * rather than which call-out row that made.
  */
 export function setCalloutWidth(photoId: string, w: number) {
-  mutatePlan((plan) => ({
-    ...plan,
-    callouts: plan.callouts.map((c) =>
-      c.photoId === photoId
-        ? calloutWidth(w) === CALLOUT_DEFAULT_W
-          ? { id: c.id, photoId: c.photoId, at: c.at }
-          : { ...c, w: calloutWidth(w) }
-        : c,
-    ),
-  }));
+  mutatePlan(
+    (plan) => ({
+      ...plan,
+      callouts: plan.callouts.map((c) =>
+        c.photoId === photoId
+          ? calloutWidth(w) === CALLOUT_DEFAULT_W
+            ? { id: c.id, photoId: c.photoId, at: c.at }
+            : { ...c, w: calloutWidth(w) }
+          : c,
+      ),
+    }),
+    // A slider fires on every pixel of the drag, so the whole drag is ONE
+    // undo. Keyed by the photograph, so sizing this call-out and then that one
+    // are two — a label of "resize" alone would fold two decisions into one.
+    `callout-size:${photoId}`,
+  );
 }
 
 /** Put a photograph away, by the picture rather than by the call-out's id. */
@@ -1131,6 +1235,10 @@ export function mergeRemote(
     baseUpdatedAt: remote?.updatedAt ?? current.baseUpdatedAt ?? null,
     updatedAt: current.updatedAt,
   };
+  // A plan that arrived from somewhere else is not something this device did,
+  // so there is nothing here to step back through — and stepping back past it
+  // would resurrect work another device has since deleted.
+  if (draft.plan !== current.plan) clearPlanHistory();
   persist(draft);
   return { added };
 }

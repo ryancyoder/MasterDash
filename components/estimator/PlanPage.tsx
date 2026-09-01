@@ -116,6 +116,8 @@ import {
   removePlantsOfKind,
   removeShape,
   setPlantVariant,
+  redoPlan,
+  undoPlan,
   setBasemap,
   setOverlayHidden,
   setPlanAnchor,
@@ -127,6 +129,7 @@ import {
   unlinkPhotoFromShape,
   updateShape,
 } from "@/lib/estimator/store";
+import { useEstimate } from "@/lib/estimator/useEstimate";
 import type { Estimate, EstimatorSettings } from "@/lib/estimator/types";
 
 /**
@@ -198,6 +201,15 @@ export default function PlanPage({
   onIntentDone?: () => void;
 }) {
   const { plan } = estimate;
+  /*
+    The undo depths come from the store rather than from the estimate prop.
+
+    They are not part of the document — a stack of past plans is this session's
+    memory of what it did, not something the estimate carries — so they live on
+    the snapshot beside it. Subscribing again here is free: it is the same
+    external store the caller reads, so both see the same object.
+  */
+  const { undoDepth, redoDepth } = useEstimate();
   const [tool, setTool] = useState<PlanTool>("area");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showMeasurements, setShowMeasurements] = useState(true);
@@ -1430,6 +1442,36 @@ export default function PlanPage({
             {t.label}
           </button>
         ))}
+        {/*
+          UNDO, beside the tools rather than off at the end of the row.
+
+          That row scrolls sideways on a phone, and the one control you reach
+          for after a mistake must not be the one that has scrolled off. It
+          sits next to what makes the mistakes.
+
+          Two buttons, because an undo you cannot come back from is its own
+          trap: pressed once too often it takes work with it and there is
+          nothing to do about it. Redo is cleared by the next edit, which is
+          the contract every other tool has taught everybody already.
+        */}
+        <button
+          onClick={() => undoPlan()}
+          disabled={undoDepth === 0}
+          aria-label="Undo the last change to the plan"
+          title="Undo the last change to the plan"
+          className="shrink-0 rounded-xl bg-surface2 px-3 py-2 text-sm font-bold text-ink disabled:opacity-25"
+        >
+          ↶
+        </button>
+        <button
+          onClick={() => redoPlan()}
+          disabled={redoDepth === 0}
+          aria-label="Redo the change just undone"
+          title="Redo the change just undone"
+          className="shrink-0 rounded-xl bg-surface2 px-3 py-2 text-sm font-bold text-ink disabled:opacity-25"
+        >
+          ↷
+        </button>
         <div className="flex-1" />
         <button
           onClick={() => setSmoothNew((v) => !v)}
@@ -2321,7 +2363,14 @@ export default function PlanPage({
             disabled={pending.length === 0}
             className="shrink-0 rounded-xl bg-surface2 px-4 py-2.5 text-sm font-bold text-ink disabled:opacity-30"
           >
-            Undo<span className="hidden sm:inline"> point</span>
+            {/*
+              Always "Undo point", never bare "Undo": the tool row now carries
+              an undo for the whole plan, and two buttons reading the same word
+              on one screen doing different things is a trap. This one takes
+              back a corner of the shape being drawn; that one takes back the
+              last thing that happened to the take-off.
+            */}
+            Undo point
           </button>
           <button
             onClick={finish}

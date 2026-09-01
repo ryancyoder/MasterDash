@@ -924,6 +924,58 @@ unused since the table was created — the map anchor carried a property id and
 the column never did, so every estimate on the project read `property_id: null`
 and nothing looking for "the take-off for this yard" could find one.
 
+#### Undo
+
+**The plan is a document, so undo is the document as it was.** Every edit to
+the take-off goes through one reducer, `mutatePlan`, so one place holds the
+whole of it: the plan before the edit is pushed onto a stack, and undo puts it
+back. That works because the plan is already treated as a whole everywhere else
+— it merges newest-wins as a scalar, its loads and plant counts are *projected*
+from it rather than logged, and nothing downstream holds a pointer into it. A
+per-edit inverse for twenty-odd reducers would be twenty-odd chances to write
+the inverse wrong.
+
+**↶ and ↷ sit beside the tools, not at the end of the row.** That row scrolls
+sideways on a phone, and the one control you reach for after a mistake must not
+be the one that has scrolled off; it belongs next to what makes the mistakes.
+Redo is there because an undo you cannot come back from is its own trap —
+pressed once too often it takes work with it — and a new edit ends the redo
+path, which is the contract every other tool has already taught everybody.
+
+**A slider's whole drag is one undo.** `setCalloutWidth` fires on every pixel,
+and without coalescing sizing a call-out would fill the stack with forty steps
+of one gesture and undo would spend them a pixel at a time. Only the FIRST state
+of a run within 700ms is kept, and the run is keyed by its subject — sizing this
+call-out and then that one are two undos, not one.
+
+**What it does not cover, and why.** Not the taps: those are an op log where a
+long press already takes one back. Not the property's map layers: they are
+shared with other estimates and with Upright, so undoing somebody else's
+arrangement of a yard because you pressed a button on this estimate would be
+wrong. And the stack is **not persisted** — an undo stack restored from a week
+ago, stepping back through edits since built upon, is not undo, and it would
+put a copy of the plan in localStorage for every edit made.
+
+**It is cleared when a plan arrives from somewhere else.** A pull that replaces
+the plan is not something this device did, and stepping back past it would
+resurrect work another device has since deleted — the one thing an undo stack
+must never be able to do.
+
+**One ambiguity this created and closed:** the drawing bar's own button read
+"Undo" on a narrow screen, so two buttons on one screen would have said the
+same word and done different things. It says **Undo point** at every width now
+— it takes back a corner of the shape being drawn; the tool row's takes back
+the last thing that happened to the take-off.
+
+`test:board-ui` drives it on the three edits before it — a bed drawn, a corner
+rounded, that corner squared — stepping back through all three, forward again,
+and then making a new edit to check the redo path ends. The presses are guarded
+on the button being live, because a disabled button does not fail a click, it
+HANGS it: against a build that remembers nothing, an unguarded press throws and
+takes every check after it out of existence instead of turning one red. Guarded,
+that build reports 5 clean failures; a build where a new edit leaves the redo
+path alone reports 1.
+
 #### One corner at a time
 
 Reported: *some shapes have a combination of hard angles and curves.* They do —

@@ -1818,6 +1818,69 @@ try {
     ((await shapes())[0]?.smoothVertices ?? []).length === 0,
     JSON.stringify((await shapes())[0]?.smoothVertices ?? []));
 
+  // 7c-ix. UNDO.
+  //
+  // The plan is a DOCUMENT — it merges newest-wins, nothing downstream holds
+  // a pointer into it, and every edit goes through one reducer — so undo is
+  // the plan as it was before that edit, put back. A per-edit inverse for
+  // twenty-odd reducers would be twenty-odd chances to write the inverse
+  // wrong.
+  //
+  // The three edits just made are the fixture: a bed drawn, a corner rounded,
+  // that corner squared again.
+  const undoBtn = page.locator('button[aria-label="Undo the last change to the plan"]');
+  const redoBtn = page.locator('button[aria-label="Redo the change just undone"]');
+  /*
+    Pressed only when it is live.
+
+    A disabled button does not fail a click, it HANGS it — Playwright waits for
+    it to become enabled and then throws, which takes every check after it out
+    of existence instead of turning one red. Against a build that remembers
+    nothing, undo is disabled from the first press, and that has to read as a
+    failing check rather than as a shorter suite.
+  */
+  const press = async (btn) => {
+    if (!(await btn.isEnabled())) return false;
+    await btn.click();
+    await page.waitForTimeout(400);
+    return true;
+  };
+  ok("the plan offers an undo", (await undoBtn.count()) === 1);
+  ok("and nothing to redo until something is undone",
+    !(await redoBtn.isEnabled()));
+
+  const rounded = async () => ((await shapes())[0]?.smoothVertices ?? []).length;
+  await press(undoBtn);
+  ok("UNDO TAKES BACK THE LAST CHANGE TO THE PLAN", (await rounded()) === 1,
+    `${await rounded()} corners rounded`);
+
+  await press(undoBtn);
+  ok("and again takes back the one before it", (await rounded()) === 0);
+
+  await press(undoBtn);
+  ok("AND AGAIN TAKES THE WHOLE BED BACK OFF THE PLAN",
+    (await shapes()).length === 0, JSON.stringify(await shapes()));
+
+  // An undo you cannot come back from is its own trap: pressed once too
+  // often it takes work with it and there is nothing to do about it.
+  ok("having undone something, there is something to redo",
+    await redoBtn.isEnabled());
+  await press(redoBtn);
+  ok("REDO PUTS IT BACK", (await shapes()).length === 1 && (await rounded()) === 0,
+    JSON.stringify(await shapes()));
+  await press(redoBtn);
+  ok("and forward again through the corner", (await rounded()) === 1);
+
+  // A new edit ends the redo path, which is the contract every other tool has
+  // taught everybody already.
+  await page.mouse.click(at(0.24, 0.66).x, at(0.24, 0.66).y);
+  await page.waitForTimeout(200);
+  await page.mouse.click(corner1.x, corner1.y);
+  await page.waitForTimeout(400);
+  ok("A NEW EDIT ENDS THE REDO PATH", !(await redoBtn.isEnabled()));
+  ok("and it is a real edit, not a no-op", (await rounded()) === 0,
+    `${await rounded()} corners rounded`);
+
   await page.click('button:text-is("Visit")');
   await page.waitForTimeout(200);
   ok("and the switch goes back to the visit's own",
