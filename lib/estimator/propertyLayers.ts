@@ -199,7 +199,18 @@ export async function addOverlayFromUrl(
   label: string,
   z: number,
 ): Promise<MapOverlay> {
-  const res = await fetch(url);
+  // The fetch's own failure is caught and renamed. A rejected cross-origin
+  // fetch throws a TypeError whose message is about the transport — the one
+  // that sent this back from the field said "Response served by service worker
+  // is opaque" — and putting that in front of somebody standing in a yard
+  // tells them nothing they can act on. The cause of that particular one is
+  // fixed in `public/sw.js`; this is here because there will be others.
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch {
+    throw new Error("That photograph could not be reached. Check the connection.");
+  }
   if (!res.ok) throw new Error("That photograph could not be read.");
   const blob = await res.blob();
   const name = `${label.slice(0, 60) || "Photograph"}.${

@@ -11,6 +11,7 @@
     "test:plan": "node --experimental-strip-types --import ./scripts/ts-resolve.mjs scripts/test-plan.ts",
     "test:board": "node --experimental-strip-types scripts/test-board.ts",
     "test:visit": "node --experimental-strip-types scripts/test-visit.ts",
+    "test:sw": "node scripts/test-sw.mjs",
     "test:board-ui": "next build && node scripts/test-board-ui.mjs"
   },
   "dependencies": {

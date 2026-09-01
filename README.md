@@ -1285,6 +1285,49 @@ a build with the two `lineTo` calls removed the masked count reads **1470 then
 drop target on Add plan turns 2, two call-outs on one dot turns 1, and a
 call-out with no photograph turns 1.
 
+#### "Response served by service worker is opaque"
+
+Reported from the field the day the drop landed: dragging a photograph onto Add
+plan failed with that message and nothing else.
+
+**The service worker had a comment saying this could not happen.** It caches
+anything under `/storage/v1/object/public/` so a photographed tile survives a
+dead zone, and it noted that the cached response is opaque — *"which is fine:
+it is only ever handed back to another `<img>`"*. That was true when it was
+written. Reading a photograph's **bytes** made it false, and the failure is not
+a blank picture: the browser refuses the response outright with a `TypeError`
+the caller can do nothing about.
+
+The cache is keyed by URL and knows nothing about request mode, so the check
+belongs in the worker: **an opaque body only goes back to a request that asked
+`no-cors`.** Anything else goes to the network, and what comes back is readable
+— which serves an `<img>` perfectly well too, so the entry it replaces is
+strictly better than the one it had. No cache version bump, so the photographs
+already held for offline are kept; they are simply no longer offered to a
+reader that cannot use them.
+
+Two things fall out of the shape of that bug:
+
+- **It could only ever have shown up in the field.** An opaque entry exists
+  only after the picture has been *looked at* on that device, so the very first
+  drag works and the second fails. Nothing at a desk with a warm cache and a
+  fast network reproduces it.
+- **`addOverlayFromUrl` renames its own transport failure.** A rejected fetch
+  throws a `TypeError` about the transport, and "Response served by service
+  worker is opaque" in front of somebody standing in a yard tells them nothing
+  they can act on. It now says the photograph could not be reached and to check
+  the connection. The specific cause is fixed; there will be others.
+
+**`test:sw` is new, and the worker had no tests at all before this.** It is
+plain JavaScript against three globals — `self`, `caches` and `fetch` — so the
+whole file runs in a `vm` context against fakes and can be asked what it would
+hand back. That matters more than it sounds: a service worker is the one piece
+of this app that *cannot* be checked by opening the page, because its whole job
+is to change what a later load sees. 14 checks, covering both directions —
+an opaque entry is never handed to a cors fetch, and an `<img>` in a dead zone
+still gets its cached copy with no round trip. Restoring the old rule turns 4
+red; refusing an `<img>` its opaque copy turns 2 more.
+
 #### The stage as a photo viewer
 
 A filmstrip thumbnail and the column's 44px preview are enough to *find* a
