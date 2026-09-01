@@ -253,6 +253,9 @@ function planFrom(value: unknown): PlanState {
     // Shown unless the estimate says otherwise, so every plan saved before
     // this existed opens with its planting drawn.
     plantsHidden: v.plantsHidden === true,
+    hiddenAssemblyIds: Array.isArray(v.hiddenAssemblyIds)
+      ? v.hiddenAssemblyIds.filter((id): id is string => typeof id === "string")
+      : [],
     // "all" unless the estimate says one of the other two, so a plan saved
     // before this existed opens writing everything it used to.
     labelMode:
@@ -681,6 +684,23 @@ export function moveShapeLabel(id: string, offset: { dx: number; dy: number } | 
     }),
     `label:${id}`,
   );
+}
+
+/**
+ * Draw the shapes that buy this assembly, or don't.
+ *
+ * The per-trade twin of `setPlantsHidden`, and the same rules apply: it is a
+ * preference about this estimate's plan, it lives in the plan document, it
+ * steps back with Undo, and it changes no count anywhere.
+ */
+export function setAssemblyHidden(assemblyId: string, hidden: boolean) {
+  mutatePlan((plan) => {
+    const without = plan.hiddenAssemblyIds.filter((id) => id !== assemblyId);
+    return {
+      ...plan,
+      hiddenAssemblyIds: hidden ? [...without, assemblyId] : without,
+    };
+  });
 }
 
 export function setPlantsHidden(hidden: boolean) {

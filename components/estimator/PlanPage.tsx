@@ -74,6 +74,7 @@ import {
 import {
   assembliesForShape,
   nextLabelMode,
+  shapeIsHidden,
   bucketsForMeasurement,
   measurementOf,
   sharedNodeIds,
@@ -139,6 +140,7 @@ import {
   updateSettings,
   setBasemap,
   setOverlayHidden,
+  setAssemblyHidden,
   setLabelMode,
   setPlantsHidden,
   moveShapeLabel,
@@ -1341,6 +1343,35 @@ export default function PlanPage({
     [plan.plants, selectedPlantId],
   );
 
+  /**
+   * What the map draws. A shape whose assembly is switched off is not in it.
+   *
+   * Filtered here rather than checked inside the canvas, the same way
+   * `drawnOverlays` and `drawnPlants` are, so one line covers drawing,
+   * selecting, grabbing and the bounds the view fits itself to. A bed nobody
+   * can see that still takes a press is worse than one that is simply drawn.
+   */
+  const drawnShapes = useMemo(
+    () => plan.shapes.filter((s) => !shapeIsHidden(s, plan.hiddenAssemblyIds)),
+    [plan.shapes, plan.hiddenAssemblyIds],
+  );
+
+  /**
+   * Switch one assembly's shapes off, or back on.
+   *
+   * The selection goes with them, for the reason the planting's does: the
+   * card's Delete and Detach would otherwise be acting on a bed nobody can
+   * point at, and the shape bar at the foot of the screen would be describing
+   * an empty patch of yard.
+   */
+  const toggleAssembly = useCallback(
+    (assemblyId: string, hidden: boolean) => {
+      setAssemblyHidden(assemblyId, hidden);
+      if (hidden) setSelectedId(null);
+    },
+    [],
+  );
+
   /** What the map draws. Empty while the layer is switched off. */
   const drawnPlants = useMemo(
     () => (plan.plantsHidden ? [] : plan.plants),
@@ -1692,8 +1723,8 @@ export default function PlanPage({
         <button
           onClick={() => setColorsOpen((v) => !v)}
           aria-pressed={colorsOpen}
-          aria-label="Assembly colours"
-          title="Set a colour for each assembly"
+          aria-label="Assembly colours and visibility"
+          title="Whether each assembly is drawn, and in what colour"
           className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${
             colorsOpen ? "bg-ink text-black" : "bg-surface2 text-muted"
           }`}
@@ -1810,6 +1841,9 @@ export default function PlanPage({
           <AssemblyColorPanel
             colors={assemblyColors}
             assemblies={COLORABLE_ASSEMBLIES}
+            hidden={plan.hiddenAssemblyIds}
+            onToggleHidden={toggleAssembly}
+            drawn={plan.shapes}
             onChange={(id, hex) =>
               updateSettings({
                 assemblyColors: hex
@@ -2073,7 +2107,7 @@ export default function PlanPage({
           overlays={drawnOverlays}
           overlaySrc={overlaySrc}
           nodes={plan.nodes}
-          shapes={plan.shapes}
+          shapes={drawnShapes}
           survey={survey}
           surveySessionId={surveySessionId}
           apiRef={canvasApi}
@@ -2553,6 +2587,7 @@ export default function PlanPage({
                 }
                 onDetach={() => detachShape(shape.id)}
                 onCentreLabel={() => moveShapeLabel(shape.id, null)}
+                assemblyHidden={shapeIsHidden(shape, plan.hiddenAssemblyIds)}
                 settings={settings}
                 selected={shape.id === selectedId}
                 onSelect={() => {
@@ -3266,11 +3301,18 @@ function StampSwatch({
 function AssemblyColorPanel({
   colors,
   assemblies,
+  hidden,
+  onToggleHidden,
+  drawn,
   onChange,
   onReset,
 }: {
   colors: AssemblyColors;
   assemblies: { id: string; name: string }[];
+  hidden: string[];
+  onToggleHidden: (assemblyId: string, hidden: boolean) => void;
+  /** The plan's shapes, only to say how many each assembly has drawn. */
+  drawn: PlanShape[];
   onChange: (assemblyId: string, hex: string | null) => void;
   onReset: () => void;
 }) {
@@ -3279,25 +3321,54 @@ function AssemblyColorPanel({
     <div className="rounded-xl border border-edge bg-surface p-2">
       <div className="mb-1.5 flex items-center gap-2">
         <span className="text-[0.65rem] font-bold tracking-widest text-muted">
-          COLOURS
+          ASSEMBLIES
         </span>
         <span className="min-w-0 flex-1 truncate text-[0.65rem] text-muted">
-          every polygon that buys this, drawn this colour
+          whether each trade is drawn, and in what colour
         </span>
         <button
           onClick={onReset}
           disabled={!changed}
           className="shrink-0 rounded-lg bg-surface2 px-2 py-1 text-[0.6rem] font-bold text-muted disabled:opacity-30"
         >
-          Reset all
+          Reset colours
         </button>
       </div>
       <div className="flex flex-col gap-1.5">
         {assemblies.map((m) => {
           const name = m.name.replace(" – Standard", "");
           const set = colors[m.id] ?? null;
+          const off = hidden.includes(m.id);
+          const count = drawn.filter((s) => s.assemblyId === m.id).length;
           return (
-            <div key={m.id} className="flex items-center gap-1.5">
+            <div key={m.id} className={`flex items-center gap-1.5 ${off ? "opacity-45" : ""}`}>
+              {/*
+                THE EYE, first on the row, because it is the coarser question:
+                whether this trade is on the plan at all comes before what
+                colour it is drawn in. It reads the STATE — open eye, drawn —
+                rather than what the tap will do, which is the rule the label
+                cycle in the toolbar follows.
+
+                Disabled where nothing buys this assembly. Switching off a
+                trade that is not on the plan changes nothing and says there
+                was something there to switch off.
+              */}
+              <button
+                onClick={() => onToggleHidden(m.id, !off)}
+                disabled={count === 0}
+                aria-label={`Show or hide ${name}`}
+                aria-pressed={!off}
+                title={
+                  count === 0
+                    ? `Nothing on the plan buys ${name} yet`
+                    : off
+                      ? `Show the ${count} drawn — they are on the take-off either way`
+                      : `Hide the ${count} drawn — they stay on the take-off`
+                }
+                className="shrink-0 rounded-lg px-1 py-0.5 text-xs disabled:opacity-30"
+              >
+                {off ? "🚫" : "👁"}
+              </button>
               <span
                 aria-hidden="true"
                 className="h-4 w-4 shrink-0 rounded-full border border-edge"
@@ -3556,6 +3627,7 @@ function ShapeCard({
   sharedCount,
   onDetach,
   onCentreLabel,
+  assemblyHidden,
   settings,
   selected,
   onSelect,
@@ -3571,6 +3643,8 @@ function ShapeCard({
   sharedCount: number;
   onDetach: () => void;
   onCentreLabel: () => void;
+  /** Its assembly's layer is switched off, so the map is not drawing it. */
+  assemblyHidden: boolean;
   settings: EstimatorSettings;
   selected: boolean;
   onSelect: () => void;
@@ -3768,6 +3842,21 @@ function ShapeCard({
             ))}
           </ul>
         </div>
+      )}
+
+      {/*
+        A HIDDEN SHAPE KEEPS ITS CARD, and says why it is not on the map.
+
+        The card is the take-off record: its area, its loads and its price are
+        all still true and still counted. Without this line the plan simply has
+        a bed missing, which reads as a bug rather than as a switch somebody
+        threw — the same rule the Plants card follows when the planting is off.
+      */}
+      {assemblyHidden && (
+        <p className="mt-1.5 flex items-center gap-1.5 text-[0.7rem] text-muted">
+          <span aria-hidden="true">🚫</span>
+          <span className="min-w-0 flex-1">Not drawn on the map · counted here</span>
+        </p>
       )}
 
       {/*

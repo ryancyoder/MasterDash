@@ -2475,7 +2475,7 @@ try {
 
   // The panel is on the row that arms the assembly, not behind a gear on
   // another screen — the same habit as the plant symbols one row down.
-  const colorsBtn = page.locator('button[aria-label="Assembly colours"]');
+  const colorsBtn = page.locator('button[aria-label="Assembly colours and visibility"]');
   ok("and the row that arms it carries the colours panel",
     (await colorsBtn.count()) === 1);
   if ((await colorsBtn.count()) === 1) await colorsBtn.click();
@@ -2698,6 +2698,110 @@ try {
   await page.waitForTimeout(1200);
   ok("IT SURVIVES THE PAGE BEING RELOADED", (await labelMode()) === "name",
     await labelMode());
+
+  // 7c-xiii. ONE TRADE AT A TIME.
+  //
+  // A plan carrying five trades at once is unreadable; read one trade at a
+  // time and it is a plan. An eye on each assembly's row switches its shapes
+  // off — a VIEW preference, never a count, which is the half the checks below
+  // spend most of their effort on.
+
+  /** The whole canvas, not a corner of it: the bed's hue is its own. */
+  const hueAll = (hex) =>
+    page.evaluate(([h]) => {
+      const r0 = parseInt(h.slice(1, 3), 16);
+      const g0 = parseInt(h.slice(3, 5), 16);
+      const b0 = parseInt(h.slice(5, 7), 16);
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (
+          Math.abs(d[i] - r0) <= 16 &&
+          Math.abs(d[i + 1] - g0) <= 16 &&
+          Math.abs(d[i + 2] - b0) <= 16
+        ) n++;
+      }
+      return n;
+    }, [hex]);
+
+  // A reload just reset the tool to Area; every tap would draw a corner.
+  await page.click('button[aria-label="Select"]');
+  await page.waitForTimeout(300);
+
+  const eye = page.locator('button[aria-label="Show or hide Mulch Bed Installation"]');
+  if ((await colorsBtn.count()) === 1) await colorsBtn.click();
+  await page.waitForTimeout(300);
+  /*
+    The planting's own switch is named the same way and is on screen too, so a
+    plain prefix match counts six. Excluded by name rather than by loosening
+    the number, which would have made this check pass on five of anything.
+  */
+  const assemblyEyes = page.locator(
+    'button[aria-label^="Show or hide "]:not([aria-label="Show or hide the planting"])',
+  );
+  ok("every assembly row carries an eye",
+    (await assemblyEyes.count()) === 5,
+    `${await assemblyEyes.count()} eyes`);
+  ok("and the mulch bed's is open, because it is drawn",
+    (await eye.getAttribute("aria-pressed")) === "true");
+
+  // MEASURED WITH THE PANEL SHUT, both times. It is five rows tall and takes
+  // the height out of the map, which is the symbols panel's lesson.
+  if ((await colorsBtn.count()) === 1) await colorsBtn.click();
+  await page.waitForTimeout(500);
+  const drawnBefore = await hueAll(bedHue);
+
+  if ((await colorsBtn.count()) === 1) await colorsBtn.click();
+  await page.waitForTimeout(300);
+  if ((await eye.count()) === 1) await eye.click();
+  await page.waitForTimeout(300);
+  if ((await colorsBtn.count()) === 1) await colorsBtn.click();
+  await page.waitForTimeout(500);
+  const drawnAfter = await hueAll(bedHue);
+
+  // READ THE CANVAS. A list in localStorage is exactly what would still be
+  // right against a build that stored the choice and drew the bed anyway.
+  ok("THE EYE TAKES THAT TRADE OFF THE MAP",
+    drawnBefore > 200 && drawnAfter < 20,
+    `${drawnBefore} drawn, ${drawnAfter} hidden`);
+  ok("and the choice is kept on the plan, by assembly",
+    await page.evaluate(() =>
+      JSON.stringify(
+        JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.hiddenAssemblyIds ?? [],
+      ) === JSON.stringify(["mulch_bed_installation_standard"])),
+    await page.evaluate(() =>
+      JSON.stringify(
+        JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.hiddenAssemblyIds ?? [])));
+
+  // THE HALF THAT MAKES IT A VIEW PREFERENCE.
+  ok("the bed is still on the take-off",
+    (await mulchBed()) !== null,
+    JSON.stringify(await mulchBed()));
+  ok("and its card says why it is not on the map, rather than going missing",
+    (await page.locator('text=/Not drawn on the map/').count()) >= 1);
+
+  // A shape nobody can see must not take a press: selecting draws white
+  // handles, so a press that selected something would show up as white.
+  const whiteBeforePress = await whiteInk();
+  await page.mouse.click(labelHome.x, labelHome.y);
+  await page.waitForTimeout(400);
+  ok("AND A HIDDEN BED CANNOT BE PICKED UP",
+    Math.abs((await whiteInk()) - whiteBeforePress) < 40,
+    `${whiteBeforePress} white then ${await whiteInk()}`);
+
+  // And back.
+  if ((await colorsBtn.count()) === 1) await colorsBtn.click();
+  await page.waitForTimeout(300);
+  ok("the eye says the trade is off",
+    (await eye.getAttribute("aria-pressed")) === "false");
+  if ((await eye.count()) === 1) await eye.click();
+  await page.waitForTimeout(300);
+  if ((await colorsBtn.count()) === 1) await colorsBtn.click();
+  await page.waitForTimeout(500);
+  ok("AND TAPPING IT AGAIN PUTS THE TRADE BACK",
+    (await hueAll(bedHue)) > drawnBefore * 0.8,
+    `${await hueAll(bedHue)} against ${drawnBefore} drawn`);
 
   await page.click('button:text-is("Visit")');
   await page.waitForTimeout(200);

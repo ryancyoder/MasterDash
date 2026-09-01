@@ -800,6 +800,56 @@ being wrong rather than the thing measured:
 Mutation-tested: making a plant grabbable in Select again turns 1 check red,
 and ignoring the custom spread turns 2 here and 2 in `test:plan`.
 
+#### One trade at a time
+
+Each row of the assemblies panel carries an **eye**. Switch one off and every
+polygon buying that assembly comes off the map. A plan carrying five trades at
+once is unreadable; read one trade at a time and it is a plan.
+
+**A view preference, never a count**, which is the planting layer's rule and
+where most of the checking went. The shapes keep their cards, their areas,
+their loads and their prices; the proposal never learns this field exists, and
+the take-off published for Upright still carries them. The three obvious wrong
+builds — filtering the shapes where the proposal reads them, where the take-off
+reads them, or where the merge guard counts them — each turn a node check red.
+A bed quietly missing from a price is worth a great deal more than one left on
+a map.
+
+**A list rather than a flag, because these ARE separate layers.** A mulch bed
+and a patio are different work and choosing between them is the whole
+operation. The planting is one layer, which is why that one is a single switch.
+
+**Hidden means not there, for every purpose.** Filtered once where the canvas
+is handed its shapes, as `visibleOverlays()` and the planting are, so drawing,
+selecting, grabbing and the bounds the view fits itself to all follow. A bed
+nobody can see that still takes a press is worse than one that is simply drawn
+— so the selection is dropped with it, or the card's Delete would be acting on
+a bed nobody can point at.
+
+**An unlinked shape is never hidden by this**, and that is a stated limit
+rather than a case that happens to work. A *Measure only* bed buys no assembly,
+so there is no layer for it to be on; reading a null id out of the list would
+hide every unlinked shape the moment anything at all was switched off. Both
+halves are pinned, including a list holding the string `"null"`.
+
+**The card says why**, exactly as the Plants card does when the planting is
+off: *Not drawn on the map · counted here*. Without it the plan simply has a
+bed missing, which reads as a bug rather than as a switch somebody threw.
+
+The eye reads the **state** — open, drawn — rather than what the tap will do,
+and it is first on the row because it is the coarser question: whether this
+trade is on the plan at all comes before what colour it is in. It is disabled
+where nothing on the plan buys that assembly, since switching off a trade that
+is not there changes nothing and says there was something to switch off. The
+panel is headed ASSEMBLIES now rather than COLOURS, and its reset button says
+**Reset colours**, because a button that does two things under one name is a
+button nobody presses twice.
+
+One thing the test caught: the planting's own switch is named *Show or hide the
+planting*, so a plain prefix match on the eyes counted six. It is excluded by
+name rather than by loosening the number, which would have made the check pass
+on five of anything.
+
 #### What is written on a shape, and where
 
 The button that dropped the numbers has a third state. **123 → Aa → ···**:

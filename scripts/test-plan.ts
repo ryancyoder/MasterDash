@@ -24,6 +24,7 @@ import {
   plantsFrom,
   labelOffsetFrom,
   nextLabelMode,
+  shapeIsHidden,
   topologyFrom,
   type PlacedPlant,
   type PlanShape,
@@ -1176,6 +1177,87 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
       ...stored,
       shapes: [{ ...stored.shapes[0], labelOffset: { dx: "over there", dy: 1 } }],
     }).shapes[0]?.labelOffset === undefined);
+}
+
+// --- One assembly's shapes, switched off --------------------------------------
+//
+// A plan of five trades is unreadable all at once; read one trade at a time and
+// it is a plan. The rule is the planting's rule: a VIEW preference, never a
+// count.
+
+{
+  console.log("\n--- hiding one assembly ---");
+
+  const bed = { assemblyId: "mulch_bed_installation_standard" };
+  const patio = { assemblyId: "patio_standard" };
+  const loose = { assemblyId: null };
+
+  ok("a plan starts with every trade drawn", emptyPlan().hiddenAssemblyIds.length === 0);
+  ok("nothing hidden leaves everything drawn", !shapeIsHidden(bed, []));
+  ok("HIDING ONE TAKES ITS SHAPES OFF",
+    shapeIsHidden(bed, ["mulch_bed_installation_standard"]));
+  ok("and leaves the others exactly where they were",
+    !shapeIsHidden(patio, ["mulch_bed_installation_standard"]));
+  ok("two can be off at once",
+    shapeIsHidden(bed, ["patio_standard", "mulch_bed_installation_standard"]) &&
+      shapeIsHidden(patio, ["patio_standard", "mulch_bed_installation_standard"]));
+
+  /*
+    AN UNLINKED SHAPE IS NEVER HIDDEN, and that is a limit worth stating rather
+    than a case that happens to work. A "Measure only" bed buys no assembly, so
+    there is no layer for it to be on — reading a null id out of the list would
+    hide every unlinked shape the moment anything at all was switched off.
+  */
+  ok("an unlinked shape is never hidden by this",
+    !shapeIsHidden(loose, ["mulch_bed_installation_standard", ""]));
+  ok("not even by a list holding a null-ish id",
+    !shapeIsHidden(loose, [String(null), "undefined"]));
+
+  /*
+    AND IT CHANGES NO COUNT. The obvious wrong build filters the shapes where
+    they are READ, so the map is easy — and takes the bed off the proposal with
+    it. A bed quietly missing from a price is worth a great deal more than one
+    left on a map.
+  */
+  const nodes = {
+    n1: { at: { lat: 41.31, lng: -87.15 } },
+    n2: { at: { lat: 41.3105, lng: -87.15 } },
+    n3: { at: { lat: 41.3105, lng: -87.1494 } },
+    n4: { at: { lat: 41.31, lng: -87.1494 } },
+  };
+  const drawn = {
+    id: "s1",
+    type: "area" as const,
+    vertices: ["n1", "n2", "n3", "n4"],
+    color: "#14b8a6",
+    assemblyId: "mulch_bed_installation_standard",
+  };
+  const asEstimate = (hiddenAssemblyIds: string[]) =>
+    ({
+      clientId: "e3",
+      jobName: "",
+      dealId: null,
+      propertyId: null,
+      taps: {},
+      labels: {},
+      assemblyBuckets: {},
+      ops: [],
+      plan: { ...emptyPlan(), nodes, shapes: [drawn], hiddenAssemblyIds },
+      visit: { transcript: "", source: null, findings: [], extractedFrom: null },
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    }) as unknown as Estimate;
+
+  const shown = asEstimate([]);
+  const off = asEstimate(["mulch_bed_installation_standard"]);
+  ok("a hidden bed still weighs on the merge guard",
+    planShapeCount(off) === 1 && planShapeCount(off) === planShapeCount(shown));
+  ok("HIDING A TRADE CHANGES NO PROPOSAL LINE",
+    JSON.stringify(buildProposal(off, DEFAULT_ESTIMATOR_SETTINGS).lines) ===
+      JSON.stringify(buildProposal(shown, DEFAULT_ESTIMATOR_SETTINGS).lines),
+    JSON.stringify(buildProposal(off, DEFAULT_ESTIMATOR_SETTINGS).lines.map((l) => l.key)));
+  ok("and it still reaches the take-off Upright draws",
+    (takeoffProjection(off)?.shapes.length ?? 0) === 1,
+    JSON.stringify(takeoffProjection(off)?.shapes.length ?? 0));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

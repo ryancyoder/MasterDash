@@ -143,6 +143,20 @@ export interface PlanShape {
  *          rather than checked
  * `none` — the shapes bare, which is what a plan is for showing a client
  */
+/**
+ * Whether this shape is drawn at all.
+ *
+ * One answer, used by the map and by its card, so a bed cannot be missing from
+ * the plan while its card says nothing about why. An unlinked shape is never
+ * hidden — see `hiddenAssemblyIds`.
+ */
+export function shapeIsHidden(
+  shape: { assemblyId: string | null },
+  hiddenAssemblyIds: string[],
+): boolean {
+  return shape.assemblyId !== null && hiddenAssemblyIds.includes(shape.assemblyId);
+}
+
 export type LabelMode = "all" | "name" | "none";
 
 export const LABEL_MODES: LabelMode[] = ["all", "name", "none"];
@@ -332,6 +346,23 @@ export interface PlanState {
   /** Overlay ids switched off for this estimate. Absence means shown. */
   hiddenOverlayIds: string[];
   /**
+   * Assembly ids whose shapes are switched off for this estimate.
+   *
+   * A VIEW PREFERENCE, NOT A DELETION, exactly as `plantsHidden` is: the
+   * shapes stay on the take-off, they keep their cards and their loads, and
+   * the proposal never learns this field exists. What is switched off is the
+   * drawing — which is what makes a plan of five overlapping trades readable
+   * one trade at a time.
+   *
+   * A list rather than one flag because these ARE separate layers: a mulch bed
+   * and a patio are different work, and choosing between them is the whole
+   * operation. The planting is one layer, which is why that one is a flag.
+   *
+   * Nothing here can hide an UNLINKED shape. A "Measure only" bed buys no
+   * assembly, so there is no layer for it to be on; it is always drawn.
+   */
+  hiddenAssemblyIds: string[];
+  /**
    * How much is written on a shape. See `LabelMode`.
    *
    * In the plan document beside `plantsHidden` rather than in component state,
@@ -370,6 +401,7 @@ export function emptyPlan(): PlanState {
     callouts: [],
     hiddenOverlayIds: [],
     plantsHidden: false,
+    hiddenAssemblyIds: [],
     labelMode: "all",
   };
 }
