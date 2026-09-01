@@ -767,10 +767,30 @@ export default function PlanCanvas({
     );
   }, [transformFor, canvasSize]);
 
+  /*
+    THE VIEW LOCK, AS A REF.
+
+    Read inside `zoomToPoint`, which is a `useCallback` the wheel listener is
+    bound to — putting `savedView` in its deps would rebind that listener on
+    every save, and the value is only ever read at the moment of a gesture.
+    Same reason `zoomMaxRef` is one.
+  */
+  const viewLocked = savedView?.locked === true;
+  const lockedRef = useRef(viewLocked);
+  // In an effect rather than in the render body: a ref written during render
+  // is what `react-hooks/immutability` refuses, and a gesture cannot land
+  // before the effect that follows the render it was drawn in.
+  useEffect(() => {
+    lockedRef.current = viewLocked;
+  }, [viewLocked]);
+
   const zoomToPoint = useCallback(
     (factor: number, focalX: number, focalY: number) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
+      // Locked in: the one choke point every zoom goes through — the wheel,
+      // the pinch, and anything added later.
+      if (lockedRef.current) return;
       const v = viewRef.current;
       const before = fromCanvas({ x: focalX, y: focalY }, transformNow());
       v.pxPerWorld = Math.max(
@@ -2480,8 +2500,16 @@ export default function PlanCanvas({
       }
     }
 
-    // Nothing grabbed: one finger pans, at any zoom and in every tool. A press
-    // that never moves is still a tap, so panning costs no gesture.
+    /*
+      Nothing grabbed: one finger pans, at any zoom and in every tool. A press
+      that never moves is still a tap, so panning costs no gesture.
+
+      Unless the view is locked in, when no pan starts at all — and note what
+      that does NOT stop: the press still becomes a tap, so shapes are still
+      selected, corners still swapped and plants still placed. It is the VIEW
+      that is pinned, not the plan.
+    */
+    if (viewLocked) return;
     dragRef.current = {
       kind: "pan",
       startX: e.clientX,
@@ -2539,12 +2567,15 @@ export default function PlanCanvas({
 
       if (g.lastDist > 0) zoomToPoint(distNow / g.lastDist, fx, fy);
       // Two-finger drag pans as well as pinching, which is how a map is
-      // expected to behave and costs nothing here.
+      // expected to behave and costs nothing here. `zoomToPoint` refuses
+      // itself when locked; this half has to be told separately.
       const v = viewRef.current;
-      v.centre = {
-        x: v.centre.x - (mid.x - g.lastMid.x) / v.pxPerWorld,
-        y: v.centre.y - (mid.y - g.lastMid.y) / v.pxPerWorld,
-      };
+      if (!viewLocked) {
+        v.centre = {
+          x: v.centre.x - (mid.x - g.lastMid.x) / v.pxPerWorld,
+          y: v.centre.y - (mid.y - g.lastMid.y) / v.pxPerWorld,
+        };
+      }
       g.lastDist = distNow;
       g.lastMid = mid;
       bumpView();
@@ -2812,80 +2843,96 @@ export default function PlanCanvas({
         </span>
       )}
 
-      {/* Bottom-left, not bottom-right: the running-total pill lives in the
-          opposite corner on every estimator screen, and two controls fighting
-          for one thumb position is how the wrong one gets pressed. */}
-      <div className="absolute bottom-6 left-3 flex items-center gap-1 rounded-2xl bg-bg/85 p-1.5 backdrop-blur">
+      {/*
+        THE VIEW CONTROLS, in the bottom-left corner.
+
+        Not bottom-right: the running-total pill lives in the opposite corner
+        on every estimator screen, and two controls fighting for one thumb
+        position is how the wrong one gets pressed. The Esri credit is over
+        there too.
+
+        THE + AND − ARE GONE. A pinch does it on the iPad and a scroll wheel
+        does it at a desk, and two 40px buttons sitting permanently over the
+        yard to duplicate a gesture everybody already has is two buttons of
+        map given away for nothing.
+      */}
+      <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded-2xl bg-bg/85 p-1 backdrop-blur">
         <button
           type="button"
-          aria-label="Zoom out"
+          /*
+            ONE CONTROL, THREE STATES, IN THE VERY CORNER.
+
+            🔓 unlocked — no home. The map fits everything drawn each time it
+               opens, which is right for a yard nobody has seen and wrong for
+               the corner somebody is halfway through: each new bed re-frames
+               it a little further from the work.
+            🏠 home set — it opens HERE, and Home beside it comes back here.
+               Pan and zoom are free; a home is a place to return to, not a
+               cage.
+            🔒 home locked in — the same home, and the map will not move off
+               it. That is for a plan framed to be looked at rather than
+               worked on: handed to a client, or an iPad with a thumb resting
+               on it while the other hand points at a bed.
+
+            Locking in RETURNS TO THE HOME FIRST. Pinning the map wherever it
+            happens to be sitting and calling that "home locked in" would make
+            the name a lie the first time somebody panned away before pressing
+            it.
+
+            Moving does not quietly rewrite the home in either of the last two
+            states — come back round to unlocked and set it again, which is two
+            taps and no guessing about when a stray pinch became a decision.
+          */
+          aria-label="Map view lock"
+          title={
+            !savedView
+              ? "No home — tap to open here every time"
+              : savedView.locked
+                ? "Locked in place — tap to clear the home"
+                : "Opens here — tap to pin the map to it"
+          }
           onClick={() => {
-            const c = canvasRef.current;
-            zoomToPoint(1 / 1.4, (c?.width ?? 0) / 2, (c?.height ?? 0) / 2);
+            if (!savedView) {
+              const v = viewRef.current;
+              const centre = toLatLng(v.centre);
+              onSaveView({ centre, metresPerPixel: metresPerPixel(centre, v.pxPerWorld) });
+              return;
+            }
+            if (!savedView.locked) {
+              // Back to the home, then pinned to it.
+              viewRef.current.centre = toWorld(savedView.centre);
+              viewRef.current.pxPerWorld = pxPerWorldFor(savedView);
+              bumpView();
+              onSaveView({ ...savedView, locked: true });
+              return;
+            }
+            onSaveView(null);
           }}
-          className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface2 text-lg font-bold text-ink"
+          className={`flex h-10 w-10 items-center justify-center rounded-xl text-base ${
+            !savedView
+              ? "bg-surface2 text-ink"
+              : savedView.locked
+                ? "bg-ink text-black"
+                : "bg-accent text-black"
+          }`}
         >
-          −
+          <span aria-hidden="true">
+            {!savedView ? "\u{1F513}" : savedView.locked ? "\u{1F512}" : "\u{1F3E0}"}
+          </span>
         </button>
         <button
           type="button"
           /* One button, one meaning: put the map back where it belongs.
-             WHERE that is depends on whether a view is locked, which is also
-             what makes a locked view reachable again after panning away —
-             without it the lock would be a home with no way back to it. */
-          title={savedView ? "Back to the locked view" : "Fit the take-off"}
+             WHERE that is depends on whether a home is set, which is also what
+             makes a home reachable again after panning away — without it the
+             home would be a place with no way back to it. It still works while
+             the view is locked in, which is the way back from anything that
+             moved the map before it was pinned. */
+          title={savedView ? "Back to the home view" : "Fit the take-off"}
           onClick={fitToContent}
           className="rounded-xl px-3 py-2 text-center text-xs font-bold text-muted"
         >
           {savedView ? "Home" : "Fit"}
-        </button>
-        <button
-          type="button"
-          /*
-            LOCK THIS VIEW.
-
-            The map fits to everything drawn every time it opens, which is
-            right for a yard nobody has seen and wrong for the corner somebody
-            is halfway through — each new bed re-frames it a little further
-            from the work. Locking says "open here".
-
-            Panning and zooming still work while locked: a map you cannot move
-            is not a map. The lock is a HOME, not a cage, and the button beside
-            it is how you get back to it. Moving does not quietly rewrite it
-            either — unlock and lock again to move the home, which is two taps
-            and no guessing about when a stray pinch became a decision.
-          */
-          aria-pressed={savedView !== null}
-          title={
-            savedView
-              ? "Unlock — the map goes back to fitting the take-off"
-              : "Lock this view, so the map opens here"
-          }
-          onClick={() => {
-            if (savedView) {
-              onSaveView(null);
-              return;
-            }
-            const v = viewRef.current;
-            const centre = toLatLng(v.centre);
-            onSaveView({ centre, metresPerPixel: metresPerPixel(centre, v.pxPerWorld) });
-          }}
-          className={`flex h-10 w-10 items-center justify-center rounded-xl text-base ${
-            savedView ? "bg-accent text-black" : "bg-surface2 text-ink"
-          }`}
-        >
-          <span aria-hidden="true">{savedView ? "\u{1F512}" : "\u{1F513}"}</span>
-        </button>
-        <button
-          type="button"
-          aria-label="Zoom in"
-          onClick={() => {
-            const c = canvasRef.current;
-            zoomToPoint(1.4, (c?.width ?? 0) / 2, (c?.height ?? 0) / 2);
-          }}
-          className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface2 text-lg font-bold text-ink"
-        >
-          +
         </button>
       </div>
     </div>

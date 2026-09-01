@@ -861,33 +861,61 @@ try {
     Math.abs(raised - drawn) < drawn * 0.05, `${drawn} then ${raised}`);
   ok("which is a real write, not just a redraw", layerSaves > 0, `${layerSaves} saves`);
 
+  /*
+    ZOOMING, NOW THAT THE + AND − BUTTONS HAVE GONE.
+
+    They duplicated a gesture every device already has — a pinch on the iPad,
+    a wheel at a desk — and sat permanently over the yard to do it. So the
+    tests zoom the way a person does. Each wheel notch is x1.15 against the
+    buttons' x1.4, which is why the step counts below are larger.
+  */
+  const wheelZoom = async (steps, into = true) => {
+    const box = await page.locator("canvas[data-plan-canvas]").boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    for (let i = 0; i < steps; i++) await page.mouse.wheel(0, into ? -120 : 120);
+    await page.waitForTimeout(50);
+  };
+
+  const viewLock = page.locator('button[aria-label="Map view lock"]');
+  const storedView = () =>
+    page.evaluate(() =>
+      JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.view ?? null);
+  /** Round the cycle until there is no home again. */
+  const clearHome = async () => {
+    for (let i = 0; i < 3 && (await storedView()) !== null; i++) {
+      await viewLock.click();
+      await page.waitForTimeout(250);
+    }
+  };
+
   // 7c-iii. THE VIEW CAN BE LOCKED, AND IT COMES BACK.
   //
   // The map fits everything drawn on every open, which walks further from the
   // corner being worked on with each bed added. Locking says "open here".
   // Zoom OUT, so the layer stays wholly on screen and its area shrinks by a
   // measurable amount — the fit's own framing is what it must not come back to.
-  const zoomOut = page.locator('button[aria-label="Zoom out"]');
-  await zoomOut.click();
-  await zoomOut.click();
+  await wheelZoom(5, false);
   await page.waitForTimeout(300);
   const zoomed = await magentaCount(page);
+  ok("THE WHEEL IS THE ZOOM NOW, and the + and − buttons are gone",
+    (await page.locator('button[aria-label="Zoom in"]').count()) === 0 &&
+      (await page.locator('button[aria-label="Zoom out"]').count()) === 0);
   ok("zooming out really changes what is on the canvas",
     zoomed > 100 && zoomed < drawn * 0.5, `${drawn} then ${zoomed}`);
-  const before = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.view ?? null);
-  ok("nothing is locked until it is asked for", before === null, JSON.stringify(before));
+  const before = await storedView();
+  ok("nothing is set until it is asked for", before === null, JSON.stringify(before));
 
-  await page.click('button[aria-pressed][title*="Lock this view"]');
+  await viewLock.click();
   await page.waitForTimeout(300);
-  const locked = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.view ?? null);
-  ok("locking keeps a centre and a GROUND scale, not a canvas number",
+  const locked = await storedView();
+  ok("SETTING A HOME KEEPS A CENTRE AND A GROUND SCALE, not a canvas number",
     locked !== null && typeof locked.metresPerPixel === "number" &&
     locked.metresPerPixel > 0 && typeof locked.centre?.lat === "number",
     JSON.stringify(locked));
+  ok("and a home is not yet a pin", locked?.locked === undefined,
+    JSON.stringify(locked));
   ok("and Fit becomes the way back to it",
-    (await page.textContent('button[title="Back to the locked view"]')) === "Home");
+    (await page.textContent('button[title="Back to the home view"]')) === "Home");
 
   // Leaving and coming back is a fresh mount, which is where the fit used to
   // take over. Read the RENDERED scale bar rather than the stored numbers:
@@ -898,21 +926,85 @@ try {
   const planIndex3 = await page.$$eval("main button.aspect-square", (els) =>
     els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
   await page.locator("main button.aspect-square").nth(planIndex3).click();
-  await page.waitForSelector('button[title="Back to the locked view"]', { timeout: 15000 });
+  await page.waitForSelector('button[title="Back to the home view"]', { timeout: 15000 });
   await page.waitForTimeout(900);
   const reopened = await magentaCount(page);
-  ok("THE PLAN REOPENS AT THE LOCKED VIEW, not at a fresh fit",
+  ok("THE PLAN REOPENS AT THE HOME VIEW, not at a fresh fit",
     Math.abs(reopened - zoomed) < zoomed * 0.02, `${zoomed} locked, ${reopened} on return`);
   ok("and that is not simply the fit by coincidence",
     Math.abs(reopened - drawn) > drawn * 0.1, `${drawn} fitted, ${reopened} on return`);
 
-  await page.click('button[aria-pressed][title*="Unlock"]');
+  /*
+    7c-iii-a. THE THIRD STATE: PINNED.
+
+    A home says "open here" and lets you go anywhere. Locked in says "stay
+    here" — for a plan framed to be looked at rather than worked on, handed to
+    a client or resting under a thumb while the other hand points at a bed.
+  */
+  /*
+    PANNED AWAY FIRST, DELIBERATELY.
+
+    Pinning the map wherever it happens to be sitting and calling that "home
+    locked in" would make the name a lie the first time somebody moved before
+    pressing it. So it returns to the home and then pins, and the only way to
+    check that is to be somewhere else when it happens.
+  */
+  const awayBox = await page.locator("canvas[data-plan-canvas]").boundingBox();
+  await page.mouse.move(awayBox.x + awayBox.width * 0.7, awayBox.y + awayBox.height * 0.7);
+  await page.mouse.down();
+  await page.mouse.move(awayBox.x + awayBox.width * 0.25, awayBox.y + awayBox.height * 0.25,
+    { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  const away = await magentaCount(page);
+  ok("panning off the home really moves the map",
+    Math.abs(away - reopened) > reopened * 0.05, `${reopened} home, ${away} away`);
+
+  await viewLock.click();
+  await page.waitForTimeout(400);
+  const pinned = await storedView();
+  ok("A SECOND TAP PINS THE MAP TO THE HOME", pinned?.locked === true,
+    JSON.stringify(pinned));
+  ok("AND IT COMES BACK TO THE HOME TO DO IT",
+    Math.abs((await magentaCount(page)) - reopened) < reopened * 0.02,
+    `${away} away, ${await magentaCount(page)} after pinning, ${reopened} at home`);
+
+  // READ THE CANVAS. A flag is exactly what a build that stored the state and
+  // went on panning would also have.
+  const pinnedInk = await magentaCount(page);
+  const panBox = await page.locator("canvas[data-plan-canvas]").boundingBox();
+  await page.mouse.move(panBox.x + panBox.width * 0.6, panBox.y + panBox.height * 0.6);
+  await page.mouse.down();
+  await page.mouse.move(panBox.x + panBox.width * 0.2, panBox.y + panBox.height * 0.2,
+    { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  ok("AND A DRAG NO LONGER MOVES THE MAP",
+    Math.abs((await magentaCount(page)) - pinnedInk) < pinnedInk * 0.02,
+    `${pinnedInk} then ${await magentaCount(page)}`);
+
+  await wheelZoom(5, true);
+  await page.waitForTimeout(400);
+  ok("NOR DOES THE WHEEL",
+    Math.abs((await magentaCount(page)) - pinnedInk) < pinnedInk * 0.02,
+    `${pinnedInk} then ${await magentaCount(page)}`);
+
+  // The plan is not pinned, only the view: a shape can still be picked up.
+  ok("but the plan is still workable — it is the VIEW that is pinned",
+    (await page.locator('button[aria-label="Area"]').count()) === 1);
+
+  await viewLock.click();
   await page.waitForTimeout(300);
-  const unlocked = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.view ?? null);
-  ok("unlocking puts the fit back", unlocked === null, JSON.stringify(unlocked));
+  const unlocked = await storedView();
+  ok("and a third tap clears the home altogether", unlocked === null,
+    JSON.stringify(unlocked));
   ok("and the button says so again",
     (await page.textContent('button[title="Fit the take-off"]')) === "Fit");
+  await wheelZoom(2, false);
+  await page.waitForTimeout(400);
+  ok("AND THE MAP MOVES AGAIN",
+    Math.abs((await magentaCount(page)) - pinnedInk) > pinnedInk * 0.05,
+    `${pinnedInk} pinned, ${await magentaCount(page)} free`);
 
   // 7c-iii-b. A PLAN LETS THE MAP GO FURTHER IN THAN THE SATELLITE DOES.
   //
@@ -970,15 +1062,13 @@ try {
   const deepestMpp = async () => {
     await page.click('button[title="Fit the take-off"]');
     await page.waitForTimeout(250);
-    const zoomIn = page.locator('button[aria-label="Zoom in"]');
-    for (let i = 0; i < 32; i++) await zoomIn.click();
+    // 100 notches of x1.15 is 1e6, which overshoots any ceiling here by orders.
+    await wheelZoom(100, true);
     await page.waitForTimeout(350);
-    await page.click('button[aria-pressed][title*="Lock this view"]');
+    await viewLock.click();
     await page.waitForTimeout(250);
-    const v = await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.view ?? null);
-    await page.click('button[aria-pressed][title*="Unlock"]');
-    await page.waitForTimeout(250);
+    const v = await storedView();
+    await clearHome();
     return v?.metresPerPixel ?? null;
   };
 
@@ -1300,7 +1390,7 @@ try {
   // other — which is the point of them being here rather than in a gallery.
   // Framed first: whether a pin is on screen depends on where the map happens
   // to be looking, which by this point is wherever the last section left it.
-  await page.click('button[title="Fit the take-off"], button[title="Back to the locked view"]');
+  await page.click('button[title="Fit the take-off"], button[title="Back to the home view"]');
   await page.waitForTimeout(700);
   const refPins = await page.evaluate(() => {
     const c = document.querySelector("canvas[data-plan-canvas]");
@@ -1769,12 +1859,12 @@ try {
     old fixed disc the number does not move at all.
   */
   const inkBefore = await plantGreen();
-  await page.click('button[aria-label="Zoom in"]');
+  await wheelZoom(3, true);
   await page.waitForTimeout(700);
   const inkZoomed = await plantGreen();
   ok("AND THEY GROW WHEN THE MAP ZOOMS IN, because they are ground-scaled",
     inkZoomed > inkBefore * 1.25, `${inkBefore} then ${inkZoomed}`);
-  await page.click('button[aria-label="Zoom out"]');
+  await wheelZoom(3, false);
   await page.waitForTimeout(700);
   const inkBack = await plantGreen();
   ok("and shrink again on the way back out",

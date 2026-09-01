@@ -800,6 +800,52 @@ being wrong rather than the thing measured:
 Mutation-tested: making a plant grabbable in Select again turns 1 check red,
 and ignoring the custom spread turns 2 here and 2 in `test:plan`.
 
+#### One control in the corner: unlocked, home, pinned
+
+**The + and − buttons are gone.** A pinch does it on the iPad and a wheel does
+it at a desk, and two 40px buttons sitting permanently over the yard to
+duplicate a gesture everybody already has is two buttons of map given away for
+nothing.
+
+What is left is one three-state control in the **very corner**, and a Fit/Home
+button beside it:
+
+- **🔓 unlocked** — no home. The map fits everything drawn each time it opens,
+  which is right for a yard nobody has seen and wrong for the corner somebody
+  is halfway through: each new bed re-frames it a little further from the work.
+- **🏠 home set** — it opens *here*, and Home beside it comes back here. Pan and
+  zoom are free; a home is a place to return to, not a cage.
+- **🔒 home locked in** — the same home, and the map will not move off it. That
+  is for a plan framed to be *looked at* rather than worked on: handed to a
+  client, or an iPad with a thumb resting on it while the other hand points at
+  a bed.
+
+**Locking in returns to the home first.** Pinning the map wherever it happens
+to be sitting and calling that "home locked in" would make the name a lie the
+first time somebody panned away before pressing it. The check pans away
+deliberately, because that is the only way to see the difference.
+
+**It is the VIEW that is pinned, not the plan.** A press still becomes a tap,
+so shapes are still selected, corners still swapped and plants still placed —
+what is refused is the pan and the zoom. `zoomToPoint` is the one choke point
+every zoom goes through (the wheel, the pinch, and anything added later); the
+two-finger *pan* rides in the same handler and had to be told separately.
+
+Moving does not quietly rewrite the home in either of the last two states —
+come round to unlocked and set it again, which is two taps and no guessing
+about when a stray pinch became a decision.
+
+**The lock has to be read back out of storage**, and the mutation that proves
+it is not the one you would guess. `planViewFrom` runs on every read of the
+plan, not only on a reload — dropping `locked` there means the pin never takes
+effect at all, so the drag and wheel checks go red alongside the stored-state
+one.
+
+**A slip worth recording: `git checkout <file>` reverts the whole file, not the
+mutation.** Undoing a mutation that way took the feature's own edits with it,
+silently, and the file went back to green because it went back to *before*.
+Mutations get a scratchpad copy restored over them from here on.
+
 #### Fullscreen
 
 **⛶** in the map toolbar gives the whole screen to the map. Tap it again, or

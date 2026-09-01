@@ -121,6 +121,19 @@ export function anchorIsReal(anchor: MapAnchor | null): boolean {
 export interface PlanView {
   centre: LatLng;
   metresPerPixel: number;
+  /**
+   * The view is pinned here: no pan, no zoom.
+   *
+   * The third state of one control, and the difference from a plain home is
+   * what the map DOES rather than where it opens. A home says "open here" and
+   * lets you go anywhere; locked in says "stay here" — which is what you want
+   * with a plan framed for a client to look at, or a thumb resting on an iPad
+   * while the other hand points at a bed.
+   *
+   * Optional, so every view saved before this reads as a home that is not
+   * pinned, which is what it was.
+   */
+  locked?: boolean;
 }
 
 /** The canvas's scale, as a ground scale. */
@@ -149,7 +162,10 @@ export function planViewFrom(value: unknown): PlanView | null {
   const mpp = v.metresPerPixel;
   if (!centre) return null;
   if (typeof mpp !== "number" || !Number.isFinite(mpp) || mpp <= 0) return null;
-  return { centre, metresPerPixel: mpp };
+  // Read back explicitly: `topologyFrom`'s lesson applies to every rebuilt
+  // record, and a pin silently dropped on reload is a map that will not stay
+  // put for reasons nobody can see.
+  return { centre, metresPerPixel: mpp, ...(v.locked === true ? { locked: true } : {}) };
 }
 
 /**
