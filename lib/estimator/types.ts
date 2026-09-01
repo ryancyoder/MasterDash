@@ -9,6 +9,7 @@
 //    tile is never a dead end and drilling down is never required.
 
 import type { PlanState } from "./plan";
+import type { PlantSymbolPrefs } from "./plantStamp";
 import type { TileSize } from "./tileSize";
 import type { VisitState } from "./visit";
 
@@ -266,6 +267,15 @@ export interface EstimatorSettings {
    * node's id). Holds only levels that have actually been rearranged.
    */
   tileOrder: Record<string, string[]>;
+  /**
+   * What has been changed about a plant category's symbol, by catalog item.
+   *
+   * A device preference like `showPrices` rather than something the estimate
+   * carries: it is how this crew draws a plan, not a fact about one yard. Only
+   * what was actually changed is stored — see `PlantSymbolPrefs` for why a
+   * full copy of the table would freeze the defaults.
+   */
+  plantSymbols: PlantSymbolPrefs;
 }
 
 export const DEFAULT_ESTIMATOR_SETTINGS: EstimatorSettings = {
@@ -277,6 +287,7 @@ export const DEFAULT_ESTIMATOR_SETTINGS: EstimatorSettings = {
   markupPercent: 0,
   showPrices: true,
   tileOrder: {},
+  plantSymbols: {},
 };
 
 export interface LineItem {

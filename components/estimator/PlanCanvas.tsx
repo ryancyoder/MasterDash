@@ -2222,6 +2222,34 @@ export default function PlanCanvas({
       return;
     }
 
+    /*
+      A PLANT MOVES ONLY IN THE PLANT TOOL.
+
+      It used to be grabbable in Select, alongside the corners and the pins,
+      and that is the wrong home for it: Select is where beds are drawn and
+      reshaped, so laying out a bed means dragging corners through a yard that
+      may have thirty shrubs standing in it, and every one of them was a thing
+      a thumb could pick up by mistake. A planting plan is worked on in
+      passes — the beds, then what goes in them — and the tool already says
+      which pass you are in.
+
+      It stays SELECTABLE in Select, because tapping one to read its card or
+      take it off the plan is not a change to where anything is.
+    */
+    if (tool === "plant") {
+      const t = transformNow();
+      const grabbed = plantAt(cp, t);
+      if (grabbed) {
+        dragRef.current = { kind: "plant", id: grabbed.id };
+        // Selected on the way down rather than on release, so the symbol under
+        // the finger lights up the moment it is picked up and the card in the
+        // column is already the right one when the drag ends.
+        onSelectPlant(grabbed.id);
+        onSelectShape(null);
+        return;
+      }
+    }
+
     if (tool === "select") {
       const t = transformNow();
 
@@ -2233,21 +2261,6 @@ export default function PlanCanvas({
       if (heldOpen) {
         dragRef.current = { kind: "callout", id: heldOpen.id };
         onSelectCallout(heldOpen.id);
-        return;
-      }
-
-      // 0a. Move a plant. Before the pins and before the corners, because a
-      //     plant is drawn over both — the thing on top has to be the thing
-      //     you grab, or a shrub standing on a bed corner could never be
-      //     picked up at all.
-      const grabbed = plantAt(cp, t);
-      if (grabbed) {
-        dragRef.current = { kind: "plant", id: grabbed.id };
-        // Selected on the way down rather than on release, so the symbol under
-        // the finger lights up the moment it is picked up and the card in the
-        // column is already the right one when the drag ends.
-        onSelectPlant(grabbed.id);
-        onSelectShape(null);
         return;
       }
 
@@ -2607,6 +2620,17 @@ export default function PlanCanvas({
     >
       <canvas
         ref={canvasRef}
+        /*
+          A name for the one canvas that is the map.
+
+          The symbols panel draws its swatches into little canvases of their
+          own, and they sit ABOVE the stage in the DOM — so anything reaching
+          for `document.querySelector("canvas")` starts getting a 22px picture
+          of a shrub instead of the plan. Nothing in the app does that; the
+          browser tests do, constantly, and every pixel check they make is
+          worthless if it is reading the wrong surface.
+        */
+        data-plan-canvas="true"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}

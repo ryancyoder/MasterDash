@@ -36,8 +36,12 @@ import {
 import { DEFAULT_ESTIMATOR_SETTINGS, type Estimate } from "../lib/estimator/types.ts";
 import {
   DEFAULT_SPREAD_FT,
+  MAX_SPREAD_FT,
+  MIN_SPREAD_FT,
   MIN_STAMP_R,
   PLANT_SPREAD_FT,
+  plantSymbolPrefsFrom,
+  safeSpreadFt,
   spreadFtFor,
   stampFor,
   stampRadius,
@@ -886,6 +890,62 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     kinds.size === Object.keys(PLANT_SPREAD_FT).length, JSON.stringify([...kinds]));
   ok("and an unknown item wears the shrub's",
     stampFor("mat:something_new") === "shrub");
+}
+
+// --- Customising the symbols -----------------------------------------------
+//
+// The figures above are defaults for a category, and a crew that draws its
+// ornamentals at 15ft should be able to say so. Overrides rather than a copy
+// of the table, which is the part with teeth: a preferences blob holding all
+// seven would freeze the defaults on the day it was written, so a figure
+// corrected in the code later would never reach a device that had once opened
+// the panel.
+
+{
+  ok("with nothing customised the defaults stand",
+    spreadFtFor("mat:shrub", {}) === 6 && stampFor("mat:shrub", {}) === "shrub");
+
+  const prefs = { "mat:shrub": { spreadFt: 9, stamp: "grasses" as const } };
+  ok("a changed spread is used", spreadFtFor("mat:shrub", prefs) === 9);
+  ok("and a changed stamp", stampFor("mat:shrub", prefs) === "grasses");
+  ok("while everything else is untouched",
+    spreadFtFor("mat:shade_tree", prefs) === 20 &&
+      stampFor("mat:shade_tree", prefs) === "shade_tree");
+
+  // A field somebody is halfway through typing is briefly not a number, a zero
+  // draws a plant nobody can see OR TAP AGAIN, and a negative one is a radius
+  // running the wrong way.
+  ok("a blank is the figure it had", safeSpreadFt("", 6) === 6);
+  ok("so is a word", safeSpreadFt("wide", 6) === 6);
+  ok("and a zero", safeSpreadFt(0, 6) === 6);
+  ok("and a negative", safeSpreadFt(-4, 6) === 6);
+  ok("something tiny is clamped up", safeSpreadFt(0.01, 6) === MIN_SPREAD_FT);
+  ok("something absurd is clamped down", safeSpreadFt(500, 6) === MAX_SPREAD_FT);
+  ok("a real figure is kept", safeSpreadFt("15", 6) === 15);
+
+  // Read back from storage, where an older build or a hand edit could have
+  // left anything. A stamp name that is not a stamp would throw in the middle
+  // of a draw.
+  ok("a stored preference round-trips",
+    plantSymbolPrefsFrom({ "mat:shrub": { spreadFt: 9 } })["mat:shrub"]?.spreadFt === 9);
+  ok("a stamp that is not a stamp is dropped",
+    plantSymbolPrefsFrom({ "mat:shrub": { stamp: "triangle" } })["mat:shrub"] ===
+      undefined);
+  ok("a spread that is not a number is dropped",
+    plantSymbolPrefsFrom({ "mat:shrub": { spreadFt: "wide" } })["mat:shrub"] ===
+      undefined);
+  ok("an override equal to the default is not an override",
+    plantSymbolPrefsFrom({ "mat:shrub": { spreadFt: 6 } })["mat:shrub"] === undefined,
+    JSON.stringify(plantSymbolPrefsFrom({ "mat:shrub": { spreadFt: 6 } })));
+  ok("and nothing at all reads as nothing",
+    Object.keys(plantSymbolPrefsFrom(null)).length === 0 &&
+      Object.keys(plantSymbolPrefsFrom("wide")).length === 0);
+
+  // A customised spread has to reach the drawing, or the panel is a form that
+  // writes to nowhere.
+  ok("A CUSTOM SPREAD CHANGES THE SIZE DRAWN",
+    stampRadius(spreadFtFor("mat:shrub", prefs), 0.1).r === 45,
+    JSON.stringify(stampRadius(spreadFtFor("mat:shrub", prefs), 0.1)));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

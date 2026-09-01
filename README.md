@@ -747,6 +747,59 @@ pair is what the old fixed-size disc cannot do — against a build with the
 radius pinned at 13px it reports **1001 then 1012**, flat. A shade tree shrunk
 to a shrub's 6ft turns 3 checks red.
 
+#### A plant moves only in the Plant tool, and the symbols are yours to set
+
+**A plant used to be grabbable in Select**, alongside the corners and the pins.
+That is the wrong home for it. Select is where beds are drawn and reshaped, so
+laying out a bed means dragging corners through a yard that may have thirty
+shrubs standing in it — and every one of them was a thing a thumb could pick up
+by mistake. A planting plan is worked on in passes, the beds and then what goes
+in them, and the tool already says which pass you are in.
+
+It stays **selectable** in Select, because tapping one to read its card or take
+it off the plan is not a change to where anything is.
+
+**Symbols** on the plant row opens the panel: for each category, the line work
+it is drawn with — chosen from the seven stamps, shown as pictures rather than
+as words, because "Mound" versus "Crown" means nothing until you have seen both
+— and the diameter it is drawn at. The panel sits on the row that arms a plant,
+not behind a gear three screens away: this app puts a setting **where its effect
+is**, which is why the markup lives on the proposal and the tile size on the
+grid.
+
+**Overrides, never a copy of the table.** An override equal to the default is
+deleted on the way in, so a figure corrected in the code later still reaches a
+device somebody once opened the panel on. A preferences blob holding all seven
+categories would freeze the defaults on the day it was written.
+
+**A typed number needs guarding more than a slider does.** A zero draws a plant
+nobody can see *or ever tap again*; a negative one is a radius running the wrong
+way; and a field halfway through being typed is briefly not a number. Out of
+range is clamped rather than refused — a thumb on a number pad must not be able
+to leave a plan full of invisible plants. Read back from storage the same
+discipline applies: a stamp name that is not a stamp would throw in the middle
+of a draw.
+
+**Three things the tests found, all the same mistake.** Every one was the ruler
+being wrong rather than the thing measured:
+
+1. The panel draws its swatches into little canvases of their own, and they sit
+   above the stage in the DOM — so `document.querySelector("canvas")` started
+   returning a 22px picture of a shrub. The plan's canvas carries
+   `data-plan-canvas` now and every pixel check names it.
+2. Switching to the Plant tool brings its category row back above the map, so
+   the canvas top edge moves down by that row's height. Pressing at a box read
+   before the switch landed 40px above the plant — outside an 18px grab — and
+   the drag became a map pan, which looks exactly like a plant that refuses to
+   move.
+3. The panel is seven rows tall, so measuring with it open put a 20ft stamp
+   mostly off a short map: the ink count went **down** when the plant got
+   bigger, 85 against 33. Nothing about the drawing was wrong; the ruler was
+   inside the thing being measured.
+
+Mutation-tested: making a plant grabbable in Select again turns 1 check red,
+and ignoring the custom spread turns 2 here and 2 in `test:plan`.
+
 #### Corners are shared, not copied
 
 A mulch bed and the lawn beside it meet along an edge. Those are not two

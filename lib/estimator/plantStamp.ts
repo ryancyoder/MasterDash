@@ -59,8 +59,92 @@ export const PLANT_SPREAD_FT: Record<string, number> = {
 /** A shrub, which is the commonest thing on a plan and a safe middle. */
 export const DEFAULT_SPREAD_FT = 6;
 
-export function spreadFtFor(itemId: string): number {
-  return PLANT_SPREAD_FT[itemId] ?? DEFAULT_SPREAD_FT;
+/**
+ * What somebody has changed about a category, if anything.
+ *
+ * Overrides rather than a copy of the table: a preferences blob holding all
+ * seven categories would freeze the defaults on the day it was written, so a
+ * figure corrected here later would never reach a device that had once opened
+ * the panel. Only what was actually changed is kept.
+ */
+export interface PlantSymbolPref {
+  stamp?: PlantStampKind;
+  spreadFt?: number;
+}
+
+export type PlantSymbolPrefs = Record<string, PlantSymbolPref>;
+
+/** The range a spread can be set to. */
+export const MIN_SPREAD_FT = 0.25;
+export const MAX_SPREAD_FT = 80;
+
+/**
+ * A typed spread, made safe.
+ *
+ * A zero draws nothing and can never be tapped again; a negative one is a
+ * radius that runs the wrong way; and a field somebody is halfway through
+ * typing is briefly not a number at all. Out of range is clamped rather than
+ * refused, so a thumb on a number pad cannot leave a plan full of invisible
+ * plants.
+ */
+export function safeSpreadFt(value: unknown, fallback: number): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(MAX_SPREAD_FT, Math.max(MIN_SPREAD_FT, n));
+}
+
+export function spreadFtFor(itemId: string, prefs?: PlantSymbolPrefs): number {
+  const base = PLANT_SPREAD_FT[itemId] ?? DEFAULT_SPREAD_FT;
+  const set = prefs?.[itemId]?.spreadFt;
+  return set === undefined ? base : safeSpreadFt(set, base);
+}
+
+/** Every stamp there is, in the order the picker offers them. */
+export const PLANT_STAMPS: PlantStampKind[] = [
+  "shade_tree",
+  "ornamental_tree",
+  "evergreen_tree",
+  "shrub",
+  "grasses",
+  "perennial",
+  "ground_cover",
+];
+
+export const STAMP_LABEL: Record<PlantStampKind, string> = {
+  shade_tree: "Canopy",
+  ornamental_tree: "Crown",
+  evergreen_tree: "Conifer",
+  shrub: "Mound",
+  grasses: "Blades",
+  perennial: "Rosette",
+  ground_cover: "Mat",
+};
+
+/**
+ * Preferences read back from storage, rebuilt rather than cast.
+ *
+ * Same discipline as the plan's own readers: this comes out of localStorage,
+ * where an older build or a hand edit could have left anything, and a stamp
+ * name that is not a stamp would throw in the middle of a draw.
+ */
+export function plantSymbolPrefsFrom(value: unknown): PlantSymbolPrefs {
+  if (!value || typeof value !== "object") return {};
+  const out: PlantSymbolPrefs = {};
+  for (const [id, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!id || !raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    const pref: PlantSymbolPref = {};
+    if (typeof r.stamp === "string" && PLANT_STAMPS.includes(r.stamp as PlantStampKind)) {
+      pref.stamp = r.stamp as PlantStampKind;
+    }
+    if (r.spreadFt !== undefined) {
+      const base = PLANT_SPREAD_FT[id] ?? DEFAULT_SPREAD_FT;
+      const safe = safeSpreadFt(r.spreadFt, Number.NaN);
+      if (Number.isFinite(safe) && safe !== base) pref.spreadFt = safe;
+    }
+    if (pref.stamp !== undefined || pref.spreadFt !== undefined) out[id] = pref;
+  }
+  return out;
 }
 
 const STAMP_BY_ITEM: Record<string, PlantStampKind> = {
@@ -73,8 +157,8 @@ const STAMP_BY_ITEM: Record<string, PlantStampKind> = {
   "mat:ground_cover": "ground_cover",
 };
 
-export function stampFor(itemId: string): PlantStampKind {
-  return STAMP_BY_ITEM[itemId] ?? "shrub";
+export function stampFor(itemId: string, prefs?: PlantSymbolPrefs): PlantStampKind {
+  return prefs?.[itemId]?.stamp ?? STAMP_BY_ITEM[itemId] ?? "shrub";
 }
 
 /**

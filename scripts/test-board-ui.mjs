@@ -143,7 +143,7 @@ async function waitForServer() {
  */
 const magentaCount = (page) =>
   page.evaluate(() => {
-    const c = document.querySelector("canvas");
+    const c = document.querySelector("canvas[data-plan-canvas]");
     if (!c) return -1;
     try {
       const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
@@ -1083,7 +1083,7 @@ try {
   // camera's EXIF and 194 do not. Dragging a frame out of the strip is what
   // gives one to the rest — and what corrects a fix that landed in the wrong
   // yard, which is what the off-site flag marks.
-  const canvasBox = await page.locator("canvas").boundingBox();
+  const canvasBox = await page.locator("canvas[data-plan-canvas]").boundingBox();
 
   const frame = await page.locator('div.rounded-xl.border button').first().boundingBox();
   await page.mouse.move(frame.x + frame.width / 2, frame.y + frame.height / 2);
@@ -1114,7 +1114,7 @@ try {
   // event pins are drawn in their own colour, so counting those pixels says
   // whether the photograph reached the map at all.
   const pinPixels = await page.evaluate(() => {
-    const c = document.querySelector("canvas");
+    const c = document.querySelector("canvas[data-plan-canvas]");
     const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
     let n = 0;
     for (let i = 0; i < d.length; i += 4) {
@@ -1147,7 +1147,7 @@ try {
   // the screen, and while you are reading a photograph you are not drawing.
   const PHOTO_BTN = 'button[title="Show the picked photograph over the map"]';
   const MAP_BTN = 'button[title="Back to the map"]';
-  const stageBox = await page.locator("canvas").boundingBox();
+  const stageBox = await page.locator("canvas[data-plan-canvas]").boundingBox();
 
   // READ WHAT IS ON THE STAGE, not what is in the DOM. An overlay that
   // rendered behind the canvas would list in the tree and show nothing, which
@@ -1305,7 +1305,7 @@ try {
   // to go looking for.
   const redPixels = () =>
     page.evaluate(() => {
-      const c = document.querySelector("canvas");
+      const c = document.querySelector("canvas[data-plan-canvas]");
       const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
       let n = 0;
       let sx = 0;
@@ -1349,7 +1349,7 @@ try {
   */
   const redIn = (bx, by, side) =>
     page.evaluate(([x, y, s]) => {
-      const c = document.querySelector("canvas");
+      const c = document.querySelector("canvas[data-plan-canvas]");
       const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
       let n = 0;
       for (let i = 0; i < d.length; i += 4) {
@@ -1363,7 +1363,7 @@ try {
 
   const lineBrightness = (boxes, side) =>
     page.evaluate(([bs, s]) => {
-      const c = document.querySelector("canvas");
+      const c = document.querySelector("canvas[data-plan-canvas]");
       const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
       let n = 0;
       for (let i = 0; i < d.length; i += 4) {
@@ -1382,7 +1382,7 @@ try {
       return n;
     }, [boxes, side]);
 
-  const stage = await page.locator("canvas").boundingBox();
+  const stage = await page.locator("canvas[data-plan-canvas]").boundingBox();
   // Where the picture is dropped, and where it is dragged to. Known rather
   // than measured, so every box below is over the frame and not over the
   // average of everything red on the map.
@@ -1493,7 +1493,7 @@ try {
     drop target follows: ask where things are now, do not remember.
   */
   const dropOnStage = async (from, dx, dy) => {
-    const box = await page.locator("canvas").boundingBox();
+    const box = await page.locator("canvas[data-plan-canvas]").boundingBox();
     await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
     await page.mouse.down();
     await page.mouse.move(box.x + dx, box.y + dy, { steps: 10 });
@@ -1514,7 +1514,7 @@ try {
   //     could be told apart from them.
   const wordsIn = (cx, cy) =>
     page.evaluate(([x, y]) => {
-      const c = document.querySelector("canvas");
+      const c = document.querySelector("canvas[data-plan-canvas]");
       const rect = c.getBoundingClientRect();
       // The drop point is in CSS pixels; the buffer is device pixels.
       const k = c.width / rect.width;
@@ -1557,7 +1557,7 @@ try {
   const canReadCanvas = () =>
     page.evaluate(() => {
       try {
-        const c = document.querySelector("canvas");
+        const c = document.querySelector("canvas[data-plan-canvas]");
         c.getContext("2d").getImageData(0, 0, 4, 4);
         return true;
       } catch {
@@ -1589,7 +1589,7 @@ try {
   const planAfter = await page.$$eval("main button.aspect-square", (els) =>
     els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
   await page.locator("main button.aspect-square").nth(planAfter).click();
-  await page.waitForSelector('button:text-is("Plant")', { timeout: 15000 });
+  await page.waitForSelector('button[aria-label="Plant"]', { timeout: 15000 });
   await page.waitForTimeout(1000);
   ok("and the canvas reads again once the page has been reloaded",
     (await canReadCanvas()) === true);
@@ -1603,7 +1603,7 @@ try {
   // rather than a second estimate that has to be reconciled with it.
   const plantGreen = () =>
     page.evaluate(() => {
-      const c = document.querySelector("canvas");
+      const c = document.querySelector("canvas[data-plan-canvas]");
       const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
       let n = 0;
       for (let i = 0; i < d.length; i += 4) {
@@ -1620,7 +1620,7 @@ try {
   /** Plant green inside a box, for comparing one symbol against another. */
   const greenIn = (bx, by, side) =>
     page.evaluate(([x, y, s]) => {
-      const c = document.querySelector("canvas");
+      const c = document.querySelector("canvas[data-plan-canvas]");
       const rect = c.getBoundingClientRect();
       const k = c.width / rect.width;
       const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
@@ -1636,10 +1636,10 @@ try {
     }, [bx, by, side]);
 
   const greenBefore = await plantGreen();
-  await page.click('button:text-is("Plant")');
+  await page.click('button[aria-label="Plant"]');
   await page.waitForTimeout(250);
   ok("the plan has a Plant tool beside Area and Linear",
-    (await page.locator('button:text-is("Plant")').count()) === 1);
+    (await page.locator('button[aria-label="Plant"]').count()) === 1);
   ok("and it arms with the same six categories the grid holds",
     (await page.locator('button:has-text("Shade Tree")').count()) >= 1 &&
       (await page.locator('button:has-text("Perennial")').count()) >= 1);
@@ -1648,7 +1648,7 @@ try {
   // and it is complete the moment it exists, which is the whole difference
   // from drawing a bed. Far enough apart that two 6ft canopies do not touch,
   // since a symbol is drawn at the spread the plant will reach.
-  const canvasNow = await page.locator("canvas").boundingBox();
+  const canvasNow = await page.locator("canvas[data-plan-canvas]").boundingBox();
   const SHRUB_X = 200;
   const SHRUB_Y = 120;
   await page.mouse.click(canvasNow.x + SHRUB_X, canvasNow.y + SHRUB_Y);
@@ -1756,10 +1756,10 @@ try {
   const planAgain = await page.$$eval("main button.aspect-square", (els) =>
     els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
   await page.locator("main button.aspect-square").nth(planAgain).click();
-  await page.waitForSelector('button:text-is("Plant")', { timeout: 15000 });
+  await page.waitForSelector('button[aria-label="Plant"]', { timeout: 15000 });
   await page.waitForTimeout(900);
 
-  await page.click('button:text-is("Select")');
+  await page.click('button[aria-label="Select"]');
   await page.waitForTimeout(200);
 
   // Coming back is a fresh mount, and a fresh mount FITS the map to what is
@@ -1768,9 +1768,9 @@ try {
   // the rim of a disc, and a 13px disc's rim is well inside the 20px grab
   // radius a thumb is given. Assuming the old coordinates is how this check
   // passed for the wrong reason the first time it was written.
-  const canvasBack = await page.locator("canvas").boundingBox();
+  const canvasBack = await page.locator("canvas[data-plan-canvas]").boundingBox();
   const onAPlant = await page.evaluate(() => {
-    const c = document.querySelector("canvas");
+    const c = document.querySelector("canvas[data-plan-canvas]");
     const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
     for (let i = 0; i < d.length; i += 4) {
       if (d[i + 1] > 120 && d[i + 1] - d[i] > 40 && d[i + 1] - d[i + 2] > 25) {
@@ -1801,6 +1801,140 @@ try {
     (await planted()).plants.length === 1,
     JSON.stringify((await planted()).plants));
 
+  // 7c-vii-3. A PLANT MOVES ONLY IN THE PLANT TOOL.
+  //
+  // It used to be grabbable in Select, alongside the corners and the pins.
+  // That is the wrong home for it: Select is where beds are drawn and
+  // reshaped, so laying out a bed means dragging corners through a yard that
+  // may have thirty shrubs standing in it, and every one of them was a thing
+  // a thumb could pick up by mistake.
+  const plantAt0 = () =>
+    page.evaluate(() => {
+      const e = JSON.parse(localStorage.getItem("qe-estimate") ?? "{}");
+      const p = (e?.plan?.plants ?? [])[0];
+      return p ? `${p.at.lat},${p.at.lng}` : null;
+    });
+  /*
+    Where a plant is on screen: the CENTRE of its line work.
+
+    The first green pixel is on the stamp's outer rim, and the grab radius is
+    the stamp's own radius — so a rim pixel sits exactly on the boundary and
+    antialiasing decides whether the press lands. There is one plant left by
+    this point, so the centroid of the plant green is its middle.
+  */
+  const findPlant = () =>
+    page.evaluate(() => {
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      const rect = c.getBoundingClientRect();
+      const k = c.width / rect.width;
+      let n = 0;
+      let sx = 0;
+      let sy = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 1] > 120 && d[i + 1] - d[i] > 40 && d[i + 1] - d[i + 2] > 25) {
+          n++;
+          sx += (i / 4) % c.width;
+          sy += Math.floor(i / 4 / c.width);
+        }
+      }
+      return n ? { x: sx / n / k, y: sy / n / k } : null;
+    });
+
+  const plantBox = await page.locator("canvas[data-plan-canvas]").boundingBox();
+  const plantWas = await plantAt0();
+  const spot = await findPlant();
+  ok("the last plant is findable on the map", spot !== null && plantWas !== null);
+  await page.mouse.move(plantBox.x + (spot?.x ?? 0), plantBox.y + (spot?.y ?? 0));
+  await page.mouse.down();
+  await page.mouse.move(plantBox.x + (spot?.x ?? 0) + 70, plantBox.y + (spot?.y ?? 0) + 50,
+    { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  ok("A DRAG IN SELECT DOES NOT MOVE A PLANT", (await plantAt0()) === plantWas,
+    `${plantWas} then ${await plantAt0()}`);
+
+  /*
+    In the Plant tool it moves, which is the other half of the same rule.
+
+    The canvas box is read AGAIN here, and that is not defensive tidiness:
+    switching to the Plant tool brings its category row back above the map, so
+    the canvas top edge moves down by the height of that row. Pressing at a box
+    read before the switch lands 40px above the plant — well outside an 18px
+    grab — and the drag becomes a map pan, which looks exactly like a plant
+    that refuses to move.
+  */
+  await page.click('button[aria-label="Plant"]');
+  await page.waitForTimeout(400);
+  const plantBox2 = await page.locator("canvas[data-plan-canvas]").boundingBox();
+  const spot2 = await findPlant();
+  await page.mouse.move(plantBox2.x + (spot2?.x ?? 0), plantBox2.y + (spot2?.y ?? 0));
+  await page.mouse.down();
+  await page.mouse.move(plantBox2.x + (spot2?.x ?? 0) + 70, plantBox2.y + (spot2?.y ?? 0) + 50,
+    { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  ok("AND A DRAG IN THE PLANT TOOL DOES", (await plantAt0()) !== plantWas,
+    `${plantWas} then ${await plantAt0()}`);
+  ok("and it did not plant a second one on the way",
+    (await planted()).plants.length === 1,
+    JSON.stringify((await planted()).plants));
+
+  // 7c-vii-4. THE SYMBOLS AND THEIR SIZES CAN BE CHANGED.
+  //
+  // The figures are defaults for a category, and a crew that draws its
+  // ornamentals at 15ft should be able to say so. The panel sits on the plant
+  // row rather than behind a gear three screens away, which is this app's
+  // habit everywhere: the setting lives where its effect is.
+  const symbolsBtn = page.locator('button[aria-label="Plant symbols and sizes"]');
+  await symbolsBtn.click();
+  await page.waitForTimeout(300);
+  const spreadField = page.locator('input[aria-label="Shrub spread in feet"]');
+  ok("the panel offers every category a size", (await spreadField.count()) === 1);
+  ok("and a row of stamps to choose from",
+    (await page.locator('button[aria-label^="Shrub: "]').count()) === 7);
+
+  /*
+    MEASURED WITH THE PANEL SHUT, both times.
+
+    It is seven rows tall, so having it open takes most of the map's height —
+    and a 20ft stamp on a short map is mostly off the edge, so the count went
+    DOWN when the plant got bigger: 85 at 6ft against 33 at 20ft. Nothing about
+    the drawing was wrong. The ruler was inside the thing being measured.
+  */
+  await symbolsBtn.click();
+  await page.waitForTimeout(500);
+  const inkAtSix = await plantGreen();
+  await symbolsBtn.click();
+  await page.waitForTimeout(300);
+  await spreadField.fill("20");
+  await page.waitForTimeout(400);
+  await symbolsBtn.click();
+  await page.waitForTimeout(500);
+  const inkAtTwenty = await plantGreen();
+  ok("A CUSTOM SPREAD REACHES THE DRAWING",
+    inkAtTwenty > inkAtSix * 1.4, `${inkAtSix} at 6ft, ${inkAtTwenty} at 20ft`);
+  ok("and it is kept as an override, not as a copy of the table",
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("qe-settings") ?? "{}");
+      const p = s?.plantSymbols ?? {};
+      return Object.keys(p).length === 1 && p["mat:shrub"]?.spreadFt === 20;
+    }));
+
+  await symbolsBtn.click();
+  await page.waitForTimeout(300);
+  await page.click('button:text-is("Reset all")');
+  await page.waitForTimeout(400);
+  await symbolsBtn.click();
+  await page.waitForTimeout(500);
+  ok("RESET PUTS THE DEFAULTS BACK",
+    (await plantGreen()) < inkAtTwenty * 0.8 &&
+      (await page.evaluate(() =>
+        Object.keys(JSON.parse(localStorage.getItem("qe-settings") ?? "{}")?.plantSymbols ?? {})
+          .length)) === 0,
+    `${inkAtTwenty} then ${await plantGreen()}`);
+
+
   // 7c-viii. A CORNER CAN BE SWAPPED BETWEEN AN ANGLE AND A CURVE.
   //
   // Storing the rounding PER CORNER is what a real bed needs — one that runs
@@ -1813,9 +1947,9 @@ try {
   //
   // This also draws the suite's first shape, which is worth having on its own:
   // the take-off's central gesture had no end-to-end check at all.
-  await page.click('button:text-is("Area")');
+  await page.click('button[aria-label="Area"]');
   await page.waitForTimeout(200);
-  const canvasForShape = await page.locator("canvas").boundingBox();
+  const canvasForShape = await page.locator("canvas[data-plan-canvas]").boundingBox();
   const at = (fx, fy) => ({
     x: canvasForShape.x + canvasForShape.width * fx,
     y: canvasForShape.y + canvasForShape.height * fy,
@@ -1862,7 +1996,7 @@ try {
   */
   const handleWhite = (pt) =>
     page.evaluate(([x, y]) => {
-      const c = document.querySelector("canvas");
+      const c = document.querySelector("canvas[data-plan-canvas]");
       const rect = c.getBoundingClientRect();
       const k = c.width / rect.width;
       const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;

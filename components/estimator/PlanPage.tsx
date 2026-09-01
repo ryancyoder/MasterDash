@@ -38,7 +38,17 @@ import {
 import { formatMoney, getItem, sellFor } from "@/lib/estimator/catalog";
 import { PLANT_GROUPS } from "@/lib/estimator/tree";
 import { loadPlants, plantsInGroup, type PlantRow } from "@/lib/estimator/plants";
-import { spreadFtFor, stampFor } from "@/lib/estimator/plantStamp";
+import {
+  MAX_SPREAD_FT,
+  MIN_SPREAD_FT,
+  PLANT_STAMPS,
+  STAMP_LABEL,
+  drawPlantStamp,
+  safeSpreadFt,
+  spreadFtFor,
+  stampFor,
+  type PlantStampKind,
+} from "@/lib/estimator/plantStamp";
 import {
   FALLBACK_CENTRE,
   parseFeet,
@@ -119,6 +129,7 @@ import {
   setPlantVariant,
   redoPlan,
   undoPlan,
+  updateSettings,
   setBasemap,
   setOverlayHidden,
   setPlanAnchor,
@@ -1152,6 +1163,8 @@ export default function PlanPage({
   const [selectedPlantId, setSelectedPlantId] = useState<string | null>(null);
   /** The cultivar list, open on a category. Null is the categories alone. */
   const [namingGroup, setNamingGroup] = useState<string | null>(null);
+  /** The symbols panel, open on the plant row. */
+  const [symbolsOpen, setSymbolsOpen] = useState(false);
   const [plantRows, setPlantRows] = useState<PlantRow[] | null>(null);
 
   /*
@@ -1187,14 +1200,18 @@ export default function PlanPage({
    * 6ft it is drawn at. The colour is the catalog item's, so the map and the
    * tile agree without either being told to.
    */
-  const plantFace = useCallback((plant: PlacedPlant) => {
-    const item = getItem(plant.itemId);
-    return {
-      stamp: stampFor(plant.itemId),
-      color: item?.color ?? "#22c55e",
-      spreadFt: spreadFtFor(plant.itemId),
-    };
-  }, []);
+  const symbolPrefs = settings.plantSymbols;
+  const plantFace = useCallback(
+    (plant: PlacedPlant) => {
+      const item = getItem(plant.itemId);
+      return {
+        stamp: stampFor(plant.itemId, symbolPrefs),
+        color: item?.color ?? "#22c55e",
+        spreadFt: spreadFtFor(plant.itemId, symbolPrefs),
+      };
+    },
+    [symbolPrefs],
+  );
 
   /** How a placed plant reads: the cultivar where there is one, else its kind. */
   const plantName = useCallback(
@@ -1440,6 +1457,16 @@ export default function PlanPage({
             key={t.key}
             onClick={() => chooseTool(t.key)}
             disabled={!ready || aligning !== null}
+            /*
+              Named, and it says which one is live.
+              
+              The label sits beside an aria-hidden glyph, so the button's text
+              is "🌳Plant" — addressable, but only if whoever is addressing it
+              knows about the glyph. An explicit name and an explicit pressed
+              state are what a control this important should carry anyway.
+            */
+            aria-label={t.label}
+            aria-pressed={tool === t.key}
             className={`shrink-0 flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-bold transition-colors disabled:opacity-30 ${
               tool === t.key ? "bg-accent text-black" : "bg-surface2 text-ink"
             }`}
@@ -1639,17 +1666,18 @@ export default function PlanPage({
                     number that decides whether eleven of them fit in the bed.
                   */}
                   <span className="ml-1 opacity-60 tabular-nums">
-                    {spreadFtFor(g.itemId)}&#8242;
+                    {spreadFtFor(g.itemId, symbolPrefs)}&#8242;
                   </span>
                 </button>
               );
             })}
             <button
-              onClick={() =>
+              onClick={() => {
+                setSymbolsOpen(false);
                 setNamingGroup((open) =>
                   open === null ? (plantGroupOf(plantPick.itemId)?.group ?? null) : null,
-                )
-              }
+                );
+              }}
               aria-pressed={namingGroup !== null}
               className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-bold ${
                 namingGroup !== null ? "bg-ink text-black" : "bg-surface2 text-muted"
@@ -1657,7 +1685,47 @@ export default function PlanPage({
             >
               {plantPick.variantLabel ?? "Name it"}
             </button>
+            {/*
+              The settings live WHERE THEIR EFFECT IS, which is this app's
+              habit everywhere — the markup sits on the proposal, the tile size
+              on the grid. What a shrub looks like and how wide it is drawn
+              belongs on the row that arms a shrub, not behind a gear three
+              screens away.
+            */}
+            <button
+              onClick={() => {
+                setNamingGroup(null);
+                setSymbolsOpen((v) => !v);
+              }}
+              aria-pressed={symbolsOpen}
+              aria-label="Plant symbols and sizes"
+              className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-bold ${
+                symbolsOpen ? "bg-ink text-black" : "bg-surface2 text-muted"
+              }`}
+            >
+              Symbols
+            </button>
           </div>
+
+          {symbolsOpen && (
+            <PlantSymbolPanel
+              prefs={symbolPrefs}
+              onChange={(itemId, patch) => {
+                const before = symbolPrefs[itemId] ?? {};
+                const next = { ...before, ...patch };
+                // An override that matches the default is not an override —
+                // dropping it is what lets a figure corrected in the code
+                // later still reach a device somebody once opened this on.
+                if (next.stamp === stampFor(itemId)) delete next.stamp;
+                if (next.spreadFt === spreadFtFor(itemId)) delete next.spreadFt;
+                const all = { ...symbolPrefs };
+                if (Object.keys(next).length === 0) delete all[itemId];
+                else all[itemId] = next;
+                updateSettings({ plantSymbols: all });
+              }}
+              onReset={() => updateSettings({ plantSymbols: {} })}
+            />
+          )}
 
           {namingGroup !== null && (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
@@ -2913,6 +2981,151 @@ function LayersCard({
  * at the plan, not while standing at the grid, so a plant placed generic has
  * to be nameable where it stands.
  */
+/**
+ * A stamp, drawn small.
+ *
+ * The picker shows the PICTURE rather than a word, because the picture is what
+ * ends up on the plan and "Mound" versus "Crown" means nothing until you have
+ * seen both. Drawn by the same function the map draws with, so a swatch can
+ * never fall out of step with the symbol it is choosing.
+ */
+function StampSwatch({
+  kind,
+  color,
+  size = 34,
+}: {
+  kind: PlantStampKind;
+  color: string;
+  size?: number;
+}) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, size, size);
+    drawPlantStamp(ctx, kind, size / 2, size / 2, size / 2 - 3, {
+      color,
+      selected: false,
+      toScale: true,
+    });
+  }, [kind, color, size]);
+  return (
+    <canvas
+      ref={ref}
+      style={{ width: size, height: size }}
+      className="shrink-0"
+      aria-hidden="true"
+    />
+  );
+}
+
+/**
+ * What each plant category looks like, and how wide it is drawn.
+ *
+ * Both are defaults for a CATEGORY, which is the level a plan is drawn at:
+ * every ornamental tree is 12ft here, and a serviceberry that really is 20ft
+ * across is a per-plant spread, which nothing stores yet.
+ *
+ * Only what is changed is kept. An override equal to the default is deleted on
+ * the way in, so a figure corrected in the code later still reaches a device
+ * somebody once opened this panel on.
+ */
+function PlantSymbolPanel({
+  prefs,
+  onChange,
+  onReset,
+}: {
+  prefs: Record<string, { stamp?: PlantStampKind; spreadFt?: number }>;
+  onChange: (
+    itemId: string,
+    patch: { stamp?: PlantStampKind; spreadFt?: number },
+  ) => void;
+  onReset: () => void;
+}) {
+  const changed = Object.keys(prefs).length > 0;
+  return (
+    <div className="rounded-xl border border-edge bg-surface p-2">
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="text-[0.65rem] font-bold tracking-widest text-muted">
+          SYMBOLS
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[0.65rem] text-muted">
+          how each kind is drawn, and how wide
+        </span>
+        <button
+          onClick={onReset}
+          disabled={!changed}
+          className="shrink-0 rounded-lg bg-surface2 px-2 py-1 text-[0.6rem] font-bold text-muted disabled:opacity-30"
+        >
+          Reset all
+        </button>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {PLANT_GROUPS.map((g) => {
+          const item = getItem(g.itemId);
+          const color = item?.color ?? "#22c55e";
+          const stamp = stampFor(g.itemId, prefs);
+          return (
+            <div key={g.itemId} className="flex items-center gap-1.5">
+              <StampSwatch kind={stamp} color={color} />
+              <span className="w-20 shrink-0 truncate text-[0.65rem] font-bold text-ink">
+                {g.label}
+              </span>
+              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+                {PLANT_STAMPS.map((k) => (
+                  <button
+                    key={k}
+                    onClick={() => onChange(g.itemId, { stamp: k })}
+                    aria-label={`${g.label}: ${STAMP_LABEL[k]}`}
+                    aria-pressed={k === stamp}
+                    title={STAMP_LABEL[k]}
+                    className={`shrink-0 rounded-lg p-0.5 ${
+                      k === stamp ? "bg-accent" : "bg-surface2"
+                    }`}
+                  >
+                    <StampSwatch kind={k} color={color} size={22} />
+                  </button>
+                ))}
+              </div>
+              {/*
+                A number field rather than a slider: these are figures somebody
+                knows — a nursery says 12ft, not "about two thirds of the way
+                along". 16px, or iOS zooms the whole window when it is focused,
+                which the map cannot come back from.
+              */}
+              <input
+                type="number"
+                inputMode="decimal"
+                min={MIN_SPREAD_FT}
+                max={MAX_SPREAD_FT}
+                step={0.5}
+                value={spreadFtFor(g.itemId, prefs)}
+                aria-label={`${g.label} spread in feet`}
+                onChange={(e) =>
+                  onChange(g.itemId, {
+                    spreadFt: safeSpreadFt(
+                      e.target.value,
+                      spreadFtFor(g.itemId, prefs),
+                    ),
+                  })
+                }
+                className="w-14 shrink-0 rounded-lg border border-edge bg-surface2 px-1.5 py-1 text-[16px] tabular-nums text-ink"
+              />
+              <span className="shrink-0 text-[0.65rem] text-muted">ft</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function PlantsCard({
   kinds,
   selected,

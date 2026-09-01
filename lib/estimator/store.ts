@@ -22,6 +22,7 @@ import {
   type ShapePhotoLink,
 } from "./photoLink";
 import { isLatLng, type LatLng } from "./geo";
+import { plantSymbolPrefsFrom } from "./plantStamp";
 import { sharedNodeIds } from "./plan";
 import { planViewFrom, type Basemap, type MapAnchor, type PlanView } from "./mapLayers";
 import {
@@ -330,9 +331,14 @@ function loadSettings(): EstimatorSettings {
   try {
     const raw = window.localStorage.getItem(SETTINGS_KEY);
     if (!raw) return DEFAULT_ESTIMATOR_SETTINGS;
+    const stored = JSON.parse(raw) as Partial<EstimatorSettings>;
     return {
       ...DEFAULT_ESTIMATOR_SETTINGS,
-      ...(JSON.parse(raw) as Partial<EstimatorSettings>),
+      ...stored,
+      // Rebuilt rather than spread in: a stamp name that is not a stamp would
+      // throw in the middle of a draw, and a spread of zero would draw a plant
+      // nobody could ever see or tap again.
+      plantSymbols: plantSymbolPrefsFrom(stored.plantSymbols),
     };
   } catch {
     return DEFAULT_ESTIMATOR_SETTINGS;
