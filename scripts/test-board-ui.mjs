@@ -1787,6 +1787,26 @@ try {
     });
   };
 
+  /*
+    Which category is armed, off the sub-toolbar's own buttons.
+
+    By `aria-pressed`, not by text: a category button carries a drawn stamp,
+    a label and a spread, so its own words cannot answer the question. The
+    label was added for exactly this — the ring and a tap on a plant both arm
+    these buttons, and something has to be able to say which one it landed
+    on.
+  */
+  const armed = () =>
+    page.evaluate(() => {
+      const names = ["Shade Tree", "Ornamental", "Evergreen", "Shrub",
+        "Perennial", "Ground Cover"];
+      for (const n of names) {
+        const b = document.querySelector(`button[aria-label="${n}"][aria-pressed="true"]`);
+        if (b) return n;
+      }
+      return null;
+    });
+
   const plantsTab = page.locator('button:text-is("plants")');
   const openPlantsTab = async () => {
     if ((await plantsTab.count()) === 1) await plantsTab.click();
@@ -2330,6 +2350,83 @@ try {
   await page.waitForTimeout(300);
 
   /*
+    7c-vii-5a-2. PICKING A PLANT SHOWS ITS OWN NAMES.
+
+    Tapping a shrub and then having to tap "Shrub" to see the shrub names is a
+    step that asks you to tell the app something it can already see. Picking
+    one on the map arms ITS category and ITS name, so the list in the column
+    is already the right one — and a tap on a name renames the plant you
+    picked rather than arming the next one.
+  */
+  await page.click('button[aria-label="Ground Cover"]');
+  await page.waitForTimeout(300);
+  ok("something else is armed to start with",
+    (await page.locator('button:has-text("Any Ground Cover")').count()) === 1);
+
+  // The plants on the plan are shrubs. Find one and tap it.
+  await page.click('button[aria-label="Select"]');
+  await page.waitForTimeout(300);
+  const pickCanvas = await page.locator("canvas[data-plan-canvas]").boundingBox();
+  const aPlant = await page.evaluate(() => {
+    const c = document.querySelector("canvas[data-plan-canvas]");
+    const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    const rect = c.getBoundingClientRect();
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 1] > 120 && d[i + 1] - d[i] > 40 && d[i + 1] - d[i + 2] > 25) {
+        const px = (i / 4) % c.width;
+        const py = Math.floor(i / 4 / c.width);
+        return { x: px / (c.width / rect.width), y: py / (c.height / rect.height) };
+      }
+    }
+    return null;
+  });
+  ok("there is a plant on the map to pick", aPlant !== null);
+  await page.mouse.click(pickCanvas.x + (aPlant?.x ?? 0), pickCanvas.y + (aPlant?.y ?? 0));
+  await page.waitForTimeout(400);
+
+  ok("PICKING A PLANT ARMS ITS OWN CATEGORY",
+    (await page.locator('button[aria-label="Shrub"][aria-pressed="true"]').count()) === 1,
+    await armed());
+  ok("SO THE NAMES IN THE COLUMN ARE ALREADY ITS OWN",
+    (await page.locator('button:has-text("Any Shrub")').count()) === 1 &&
+      (await page.locator('button:has-text("Any Ground Cover")').count()) === 0);
+  ok("and the list says which plant it is naming",
+    (await page.locator("aside >> text=/naming/i").count()) >= 1);
+
+  /*
+    AND A NAME RENAMES THE PLANT PICKED, rather than arming the next one. A
+    list that showed you exactly what you wanted and then did not do it would
+    be worse than the two presses it replaced.
+  */
+  const namedPlants = () =>
+    page.evaluate(() =>
+      (JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.plants ?? [])
+        .filter((p) => p.variantLabel).length);
+  const beforeNaming = await namedPlants();
+  const firstName = page.locator('aside button.truncate').first();
+  if ((await firstName.count()) === 1) await firstName.click();
+  await page.waitForTimeout(400);
+  ok("A NAME RENAMES THE PLANT THAT IS PICKED",
+    (await namedPlants()) === beforeNaming + 1,
+    `${beforeNaming} named before, ${await namedPlants()} after`);
+  ok("and it did not plant anything to do it",
+    (await planted()).plants.length === 2,
+    JSON.stringify((await planted()).plants));
+
+  // Reaching for a category is a choice about what comes NEXT, so it puts the
+  // plant down rather than quietly turning a shrub into a tree.
+  await page.click('button[aria-label="Shade Tree"]');
+  await page.waitForTimeout(400);
+  ok("CHOOSING A CATEGORY PUTS THE PICKED PLANT DOWN",
+    (await page.locator("aside >> text=/next Shade Tree/i").count()) >= 1,
+    "the list still says it is naming something");
+  ok("and the plant it was naming still is what it was",
+    (await namedPlants()) === beforeNaming + 1);
+
+  await page.click('button[aria-label="Shrub"]');
+  await page.waitForTimeout(300);
+
+  /*
     7c-vii-5b. ONLY A PENCIL PLANTS.
 
     A plan is read and moved about with two fingers while the pencil does the
@@ -2526,24 +2623,6 @@ try {
   // Six wedges, and the pick has to be the one under the tip. Straight UP is
   // the first category; the maths is pinned in scripts/test-plan.ts, and this
   // is the half that says the ring on screen agrees with it.
-  /*
-    Which category is armed, off the sub-toolbar's own buttons.
-
-    By `aria-pressed`, not by text: a category button's text is a glyph, a
-    label and a spread run together, so its own words cannot answer the
-    question. The label was added for exactly this — the ring arms these
-    buttons and something has to be able to say which one it landed on.
-  */
-  const armed = () =>
-    page.evaluate(() => {
-      const names = ["Shade Tree", "Ornamental", "Evergreen", "Shrub",
-        "Perennial", "Ground Cover"];
-      for (const n of names) {
-        const b = document.querySelector(`button[aria-label="${n}"][aria-pressed="true"]`);
-        if (b) return n;
-      }
-      return null;
-    });
   ok("Shrub is what is armed before the ring is used", (await armed()) === "Shrub",
     await armed());
 

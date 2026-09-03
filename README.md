@@ -898,6 +898,30 @@ grid: an unnamed shrub is a real answer, not a failure to finish. The 962 rows
 are still fetched lazily — on the first opening of the column rather than on
 the first press of a button that no longer exists.
 
+**Picking a plant on the map arms ITS category and ITS name**, so the list in
+the column is already the right one. Tapping a shrub and then having to tap
+*Shrub* to see the shrub names is a step that asks you to tell the app
+something it can already see, and the list you want is never more than the one
+belonging to the thing you just pointed at. The column comes with it, for the
+same reason arming the Plant tool does.
+
+**And then a tap on a name renames the plant you picked**, rather than arming
+the next one. A list that showed you exactly what you wanted and then did not
+do it would be worse than the two presses it replaced — the card carried *Name
+it*, which armed the plant's own category, and then *Make it X* to apply what
+was armed. Both are gone; what is left on the card is what it is and how to
+take it off.
+
+**One list, two jobs, and it says which**: *naming Green Velvet Boxwood* with a
+plant picked, *next Shrub* without one. Choosing a **category** puts the picked
+plant down first, because a category is a choice about what comes next —
+quietly turning a shade tree into a shrub because somebody reached for the next
+thing to plant is not an edit anybody asked for.
+
+The arming happens in the tap handler rather than an effect. That is what
+`react-hooks/set-state-in-effect` insists on, and rightly: it is a consequence
+of a tap, not of a render.
+
 **One category per row, not a grid of six.** A grid would fit and would give
 the spread nowhere to go — and the spread is half of what is being chosen,
 since a symbol on this plan is a canopy rather than a pin and eleven 6ft shrubs

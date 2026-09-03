@@ -1349,6 +1349,39 @@ export default function PlanPage({
     [plantGroupOf],
   );
 
+  /**
+   * Picking a plant on the map arms ITS category and ITS name.
+   *
+   * SO THE COLUMN IS ALREADY SHOWING THE RIGHT LIST. Tapping a shrub and then
+   * having to tap "Shrub" to see the shrub names is a step that asks you to
+   * tell the app something it can already see — and the list you want is
+   * never more than the one belonging to the thing you just pointed at.
+   *
+   * The column comes with it, for the same reason arming the Plant tool does:
+   * a tap on a plant is unambiguous, and the answer to it is in the Plants
+   * column rather than on the take-off.
+   *
+   * Done in the handler rather than an effect: `react-hooks/set-state-in-effect`
+   * refuses the effect, and rightly — this is a consequence of a tap, not of a
+   * render.
+   */
+  const pickPlant = useCallback(
+    (id: string | null) => {
+      setSelectedPlantId(id);
+      if (id === null) return;
+      const plant = plan.plants.find((p) => p.id === id);
+      if (!plant) return;
+      setPlantPick({
+        itemId: plant.itemId,
+        ...(plant.variantId
+          ? { variantId: plant.variantId, variantLabel: plant.variantLabel }
+          : {}),
+      });
+      setMode("plants");
+    },
+    [plan.plants],
+  );
+
   const placePlant = useCallback(
     (at: LatLng) => {
       const id = addPlant(at, plantPick);
@@ -2227,7 +2260,7 @@ export default function PlanPage({
           */
           onPickPlant={(itemId) => setPlantPick({ itemId })}
           selectedPlantId={selectedPlantId}
-          onSelectPlant={setSelectedPlantId}
+          onSelectPlant={pickPlant}
           onPlacePlant={placePlant}
           onMovePlant={movePlant}
           pinsDraggable={mode === "review"}
@@ -2534,7 +2567,36 @@ export default function PlanPage({
             */}
             <PlantsPanel
               pick={plantPick}
-              onPick={setPlantPick}
+              /*
+                ONE LIST, TWO JOBS, AND IT SAYS WHICH.
+
+                With a plant picked on the map the names RENAME it — that is
+                what tapping a plant and reading its category's names is for,
+                and a list that only armed the next one would show you exactly
+                what you wanted and then not do it.
+
+                Choosing a CATEGORY puts the plant down first. A category is a
+                choice about what comes next, and quietly turning a shade tree
+                into a shrub because somebody reached for the next thing to
+                plant is not an edit anybody asked for.
+              */
+              selectedName={selectedPlant ? plantName(selectedPlant) : null}
+              onPick={(next) => {
+                if (selectedPlant && next.itemId !== selectedPlant.itemId) {
+                  setSelectedPlantId(null);
+                  setPlantPick(next);
+                  return;
+                }
+                if (selectedPlant) {
+                  setPlantVariant(
+                    selectedPlant.id,
+                    next.variantId
+                      ? { variantId: next.variantId, variantLabel: next.variantLabel }
+                      : null,
+                  );
+                }
+                setPlantPick(next);
+              }}
               prefs={symbolPrefs}
               onPrefs={(itemId, patch) => {
                 const before = symbolPrefs[itemId] ?? {};
@@ -2580,31 +2642,6 @@ export default function PlanPage({
                 removePlant(selectedPlant.id);
                 setSelectedPlantId(null);
               }}
-              onNameSelected={() => {
-                if (!selectedPlant) return;
-                setPlantPick({
-                  itemId: selectedPlant.itemId,
-                  ...(selectedPlant.variantId
-                    ? {
-                        variantId: selectedPlant.variantId,
-                        variantLabel: selectedPlant.variantLabel,
-                      }
-                    : {}),
-                });
-              }}
-              onApplyPick={() => {
-                if (!selectedPlant) return;
-                setPlantVariant(
-                  selectedPlant.id,
-                  plantPick.variantId
-                    ? {
-                        variantId: plantPick.variantId,
-                        variantLabel: plantPick.variantLabel,
-                      }
-                    : null,
-                );
-              }}
-              pickLabel={plantPick.variantLabel ?? null}
               onRemoveKind={(itemId, variantId) => {
                 removePlantsOfKind(itemId, variantId);
                 setSelectedPlantId(null);
@@ -3721,6 +3758,7 @@ function AssemblyColorPanel({
  */
 function PlantsPanel({
   pick,
+  selectedName,
   onPick,
   prefs,
   onPrefs,
@@ -3732,6 +3770,8 @@ function PlantsPanel({
   onToggle,
 }: {
   pick: { itemId: string; variantId?: string; variantLabel?: string };
+  /** The plant picked on the map, if one is — the names then rename it. */
+  selectedName: string | null;
   onPick: (next: { itemId: string; variantId?: string; variantLabel?: string }) => void;
   prefs: PlantSymbolPrefs;
   onPrefs: (itemId: string, patch: { stamp?: PlantStampKind; spreadFt?: number }) => void;
@@ -3823,8 +3863,13 @@ function PlantsPanel({
         <span className="text-[0.65rem] font-bold tracking-widest text-muted">
           NAMES
         </span>
+        {/*
+          WHICH PLANT THESE NAME. One list does two jobs — it renames the
+          plant picked on the map, or it arms the next one — and a list that
+          did not say which would be a list you could not trust either way.
+        */}
         <span className="min-w-0 flex-1 truncate text-[0.65rem] text-muted">
-          {group?.label ?? "plant"}
+          {selectedName ? `naming ${selectedName}` : `next ${group?.label ?? "plant"}`}
         </span>
       </div>
       <div className="mt-1 flex max-h-64 flex-col gap-1 overflow-y-auto md-scroll">
@@ -3973,9 +4018,6 @@ function PlantsCard({
   selected,
   selectedName,
   onRemoveSelected,
-  onNameSelected,
-  onApplyPick,
-  pickLabel,
   onRemoveKind,
   glyphFor,
   open,
@@ -3987,9 +4029,6 @@ function PlantsCard({
   selected: PlacedPlant | null;
   selectedName: string | null;
   onRemoveSelected: () => void;
-  onNameSelected: () => void;
-  onApplyPick: () => void;
-  pickLabel: string | null;
   onRemoveKind: (itemId: string, variantId?: string) => void;
   glyphFor: (itemId: string) => string;
   open: boolean;
@@ -4052,26 +4091,17 @@ function PlantsCard({
           <p className="mb-1.5 truncate text-[0.7rem] font-bold text-ink">
             {selectedName}
           </p>
+          {/*
+            NAMING MOVED OUT OF HERE, and that is the point of the change.
+
+            This card carried "Name it" — which armed the plant's own category
+            — and then "Make it X" to apply what was armed: two presses to say
+            something the app could already see. Picking a plant on the map now
+            arms its category and its name, so the list above is already the
+            right one and a tap on a name is the whole of it. What is left here
+            is what this card is for: what it is, and taking it off.
+          */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <button
-              onClick={onNameSelected}
-              className="rounded-lg bg-surface2 px-2.5 py-1.5 text-[0.65rem] font-bold text-ink"
-            >
-              Name it
-            </button>
-            {/*
-              Only where a name is armed and it is not already this plant's.
-              A button that would do nothing is worse than no button — it says
-              there is something left to do.
-            */}
-            {pickLabel && pickLabel !== selected.variantLabel && (
-              <button
-                onClick={onApplyPick}
-                className="rounded-lg bg-accent px-2.5 py-1.5 text-[0.65rem] font-bold text-black"
-              >
-                Make it {pickLabel}
-              </button>
-            )}
             <div className="flex-1" />
             <button
               onClick={onRemoveSelected}
