@@ -2843,6 +2843,50 @@ materials deserve a home tile is a judgement about how Ryan sells, and it is
 meant to be argued with.
 
 
+## Needs field testing
+
+Everything below is verified in code and unverified in a yard. They are written
+down because a guess that nobody has checked reads exactly like a decision once
+it has been in the repo a week.
+
+- **Whether this iPad reports pencil hover at all.** The tool ring and the
+  ghost preview both hang on it, and it needs an M2 iPad Pro or later. If
+  nothing appears when the tip is held over the map, that is the hardware — the
+  column still arms a category, and nothing else changes.
+- **`RING_HOVER_MS` (900) and `RING_SETTLE_PX` (12).** Both are guesses. Too
+  short and the ring interrupts somebody lining a shrub up against a bed edge;
+  too long and nobody believes it is coming. A real hand at arm's length is the
+  only thing that settles them.
+- **Whether a 92px wedge is a target.** Six of them, aimed with a pencil tip
+  that is not touching the glass.
+- **Pencil-only planting, on a day the pencil is not in the truck.** Plants
+  cannot be placed on the map at all without one. That is the rule as asked
+  for; whether it wants a fallback is a field question.
+- **The stamps over bright satellite.** Circles with a texture inside read
+  cleanly on a dark ground; whether the seven are tellable apart at a glance
+  over sunlit turf, at working zoom, in a bed where they overlap, is not
+  something a screenshot on a desk answers.
+- **Whether iPad Safari grants element fullscreen.** If it does, the browser's
+  own chrome goes too; if it refuses, the app's own fullscreen is what you get
+  and there is no error either way.
+- **The third view state.** "Home locked in" pins the VIEW and leaves the plan
+  editable. Whether handing an iPad to a client wants the plan locked as well
+  is a different mode and not built.
+- **The Plants column in half a portrait screen.** Six category rows, their
+  counts, and a names list that runs to dozens.
+
+### Data worth knowing about
+
+- **One typo in `public/catalog/plants.json`**, measured rather than guessed:
+  962 rows, 17 spelled *Arborvitae* and **1 spelled *Arborviate*** ("Arborviate
+  Forever Goldy"). Not fixed, because the file is a catalog somebody else
+  maintains and a silent correction here would be undone by the next import.
+- **Six names appear twice** in that file — all botanical names
+  (`Chamaecyparis obtusa`, `Juniperus chinensis`, `Picea pungens`, …), which is
+  what happens when two cultivars are entered under the species. They are
+  distinct rows with distinct ids, so nothing in the app is confused by them;
+  the list just reads oddly.
+
 ## Development
 
 ```bash
