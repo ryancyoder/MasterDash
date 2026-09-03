@@ -272,11 +272,17 @@ export async function placeEventPhoto(
  * Which set of photographs the strip is showing.
  *
  * `visit` is the Upright session being replayed — a different table and a
- * different question. The two below are both this yard's: `property` is what
+ * different question. The two after it are both this yard's: `property` is what
  * was photographed on its visits, and `reference` is what belongs to the place
  * rather than to any one day.
+ *
+ * `plants` is not a photograph of this yard at all — it is the catalog, shown
+ * as pictures so a cultivar can be chosen by looking at it rather than by
+ * reading a name. It belongs on this switch because it is the same rail doing
+ * the same job: a row of thumbnails you pick from. A separate strip under the
+ * first one would be two rails competing for the same inch of screen.
  */
-export type PhotoSource = "visit" | "property" | "reference";
+export type PhotoSource = "visit" | "property" | "reference" | "plants";
 
 export async function fetchPropertyPhotos(
   propertyId: number,

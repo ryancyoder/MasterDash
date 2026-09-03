@@ -1296,7 +1296,7 @@ export default function PlanPage({
     // rows, and most estimates never drill that deep. It used to hang off a
     // "Name it" toggle in the top bar, which no longer exists — the column
     // shows the names for whatever is armed, without being asked.
-    if (mode !== "plants" || plantRows !== null) return;
+    if ((mode !== "plants" && stripSource !== "plants") || plantRows !== null) return;
     let live = true;
     void loadPlants().then((rows) => {
       if (live) setPlantRows(rows);
@@ -1304,7 +1304,7 @@ export default function PlanPage({
     return () => {
       live = false;
     };
-  }, [mode, plantRows]);
+  }, [mode, stripSource, plantRows]);
 
   const plantGroupOf = useCallback(
     (itemId: string) => PLANT_GROUPS.find((g) => g.itemId === itemId) ?? null,
@@ -1380,6 +1380,27 @@ export default function PlanPage({
       setMode("plants");
     },
     [plan.plants],
+  );
+
+  /**
+   * A cultivar chosen — from the column's list, or off the strip's rail.
+   *
+   * ONE FUNCTION FOR BOTH, because they are the same choice made two ways: a
+   * name you already know, or a picture you recognise. Two copies of the
+   * rename-or-arm rule would be two chances to get it different.
+   */
+  const pickPlantName = useCallback(
+    (variant: { variantId: string; variantLabel: string } | null) => {
+      const next = {
+        itemId: plantPick.itemId,
+        ...(variant ?? {}),
+      };
+      if (selectedPlantId) {
+        setPlantVariant(selectedPlantId, variant);
+      }
+      setPlantPick(next);
+    },
+    [plantPick.itemId, selectedPlantId],
   );
 
   const placePlant = useCallback(
@@ -2582,20 +2603,27 @@ export default function PlanPage({
               */
               selectedName={selectedPlant ? plantName(selectedPlant) : null}
               onPick={(next) => {
-                if (selectedPlant && next.itemId !== selectedPlant.itemId) {
+                /*
+                  A DIFFERENT CATEGORY IS A CATEGORY CHANGE, selected plant or
+                  not — and it puts a picked plant down, because a category is
+                  a choice about what comes NEXT. Testing this against the
+                  SELECTED plant rather than against what is armed was the
+                  bug: with nothing selected, tapping Ornamental fell through
+                  to the name branch and kept the old category.
+                */
+                if (next.itemId !== plantPick.itemId) {
                   setSelectedPlantId(null);
-                  setPlantPick(next);
+                  setPlantPick({ itemId: next.itemId });
                   return;
                 }
-                if (selectedPlant) {
-                  setPlantVariant(
-                    selectedPlant.id,
-                    next.variantId
-                      ? { variantId: next.variantId, variantLabel: next.variantLabel }
-                      : null,
-                  );
-                }
-                setPlantPick(next);
+                // Same category: this is a NAME, and the rail on the strip
+                // makes the same choice with a picture. One function, so the
+                // rename-or-arm rule cannot come out different in two places.
+                pickPlantName(
+                  next.variantId && next.variantLabel
+                    ? { variantId: next.variantId, variantLabel: next.variantLabel }
+                    : null,
+                );
               }}
               prefs={symbolPrefs}
               onPrefs={(itemId, patch) => {
@@ -2835,6 +2863,23 @@ export default function PlanPage({
         reference={referencePhotos}
         photoError={photoError}
         onDragPhoto={beginPhotoDrag}
+        /*
+          THE CATALOG AS PICTURES, for whichever category is armed. The
+          column's list is for finding a name you already know; this rail is
+          for the other case, which is most of them.
+        */
+        plants={
+          plantRows === null
+            ? null
+            : plantsInGroup(plantRows, plantGroupOf(plantPick.itemId)?.group ?? "")
+        }
+        plantGroupLabel={plantGroupOf(plantPick.itemId)?.label ?? "plant"}
+        plantPickedId={plantPick.variantId ?? null}
+        onPickPlant={(row) =>
+          pickPlantName(
+            row ? { variantId: `plant:${row.id}`, variantLabel: row.name } : null,
+          )
+        }
       />
       <ReviewTransport
         session={visit}

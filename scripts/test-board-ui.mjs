@@ -2480,6 +2480,52 @@ try {
   await page.waitForTimeout(300);
 
   /*
+    7c-vii-5a-3. THE CATALOG AS PICTURES, ON THE STRIP.
+
+    Nobody chooses a viburnum by reading forty names. 734 of the 962 rows
+    carry an image, and this is the rail where they earn their keep: the
+    column's list is for finding a name you already know.
+  */
+  const plantsRail = page.locator('button:text-is("Plants")');
+  ok("the strip offers the catalog beside the yard's photographs",
+    (await plantsRail.count()) === 1);
+  await plantsRail.click();
+  await page.waitForTimeout(900);
+
+  ok("THE ARMED CATEGORY'S PLANTS ARE ON THE STRIP, as pictures",
+    (await page.locator('button[aria-label="Arborvitae Mr. Bowling Ball"]').count()) === 1,
+    `${await page.locator('button[aria-pressed][aria-label^="A"]').count()} tiles`);
+  ok("and the generic leads it, because an unnamed shrub is a real answer",
+    (await page.locator('button:has-text("Any Shrub")').count()) >= 1);
+
+  /*
+    A PICTURE PICKS THE SAME AS A NAME DOES.
+
+    The rail and the column's list are one choice made two ways, so they go
+    through one function — two copies of the rename-or-arm rule would be two
+    chances to get it different.
+  */
+  const railPick = page.locator('button[aria-label="Arborvitae Mr. Bowling Ball"]');
+  await railPick.click();
+  await page.waitForTimeout(400);
+  ok("PICKING OFF THE STRIP ARMS THAT CULTIVAR",
+    (await railPick.getAttribute("aria-pressed")) === "true");
+  ok("and the column says so too",
+    (await page.locator("aside >> text=/Arborvitae Mr. Bowling Ball/").count()) >= 1);
+
+  // The rail follows the armed CATEGORY, not a category of its own.
+  await page.click('button[aria-label="Evergreen"]');
+  await page.waitForTimeout(700);
+  ok("THE RAIL FOLLOWS WHATEVER CATEGORY IS ARMED",
+    (await page.locator('button:has-text("Any Evergreen")').count()) >= 1 &&
+      (await page.locator('button[aria-label="Arborvitae Mr. Bowling Ball"]').count()) === 0);
+
+  await page.click('button[aria-label="Shrub"]');
+  await page.waitForTimeout(500);
+  await page.click('button:text-is("Visit")');
+  await page.waitForTimeout(300);
+
+  /*
     7c-vii-5b. ONLY A PENCIL PLANTS.
 
     A plan is read and moved about with two fingers while the pencil does the
@@ -2507,9 +2553,39 @@ try {
   await page.waitForTimeout(300);
   const fingerCanvas = await page.locator("canvas[data-plan-canvas]").boundingBox();
   const fingerAt = {
-    x: fingerCanvas.x + fingerCanvas.width * 0.42,
-    y: fingerCanvas.y + fingerCanvas.height * 0.7,
+    x: fingerCanvas.x + fingerCanvas.width * 0.12,
+    y: fingerCanvas.y + fingerCanvas.height * 0.88,
   };
+  /*
+    THE SPOT HAS TO BE EMPTY, and this says so rather than assuming it.
+
+    A tap that lands on a plant SELECTS it — with a finger as well as a pencil
+    — so a spot that quietly acquired a plant would make the finger check pass
+    for the wrong reason and the pencil check fail for one. It happened: the
+    strip grew a fourth tab, the canvas got shorter, and the fixed fraction
+    landed on a shrub.
+  */
+  /** Plant green within `half` px of a page point. */
+  const greenNear = (pt, half = 34) =>
+    page.evaluate(([x, y, r]) => {
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const rect = c.getBoundingClientRect();
+      const k = c.width / rect.width;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const px = (i / 4) % c.width;
+        const py = Math.floor(i / 4 / c.width);
+        if (Math.abs(px - (x - rect.left) * k) > r * k) continue;
+        if (Math.abs(py - (y - rect.top) * k) > r * k) continue;
+        if (d[i + 1] > 120 && d[i + 1] - d[i] > 40 && d[i + 1] - d[i + 2] > 25) n++;
+      }
+      return n;
+    }, [pt.x, pt.y, half]);
+
+  ok("the spot chosen for this is empty ground",
+    (await greenNear(fingerAt)) === 0,
+    `${await greenNear(fingerAt)} green under it`);
   const beforeFinger = (await planted()).plants.length;
   await touchTap(fingerAt.x, fingerAt.y);
   await page.waitForTimeout(400);

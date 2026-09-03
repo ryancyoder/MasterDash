@@ -858,6 +858,46 @@ being wrong rather than the thing measured:
 Mutation-tested: making a plant grabbable in Select again turns 1 check red,
 and ignoring the custom spread turns 2 here and 2 in `test:plan`.
 
+#### The catalog as pictures, on the strip
+
+**Plants** joins Visit, Property and Reference on the filmstrip's switch, and
+shows the armed category's cultivars as thumbnails. Nobody chooses a viburnum
+by reading forty names: the column's list is for finding a name you already
+know, and this rail is for the other case, which is most of them.
+
+**734 of the 962 rows carry an image**, and 228 do not — those say so with a
+plain leaf rather than an empty frame. The rail follows whatever category is
+armed, and the generic leads it, because an unnamed shrub is a real answer.
+
+**THE PICTURE IS OF THE KIND, NOT OF THE VARIETY**, and that is worth knowing
+before trusting one: every Arborvitae cultivar in the file points at the same
+`Thuja.jpeg`. It tells you what an arborvitae looks like, not what *Forever
+Goldy* looks like. Twenty-two of the images are hotlinked from
+provenwinners.com and a handful from other nurseries, so they are outside the
+service worker's cache and will not be there without signal.
+
+**It is on the same switch rather than a strip of its own.** A second rail
+under the first would be two rows competing for the same inch of screen, and
+this is the same rail doing the same job: a row of thumbnails you pick from.
+
+**One function decides what a pick means**, whether it came from the column's
+list or the strip's rail — they are one choice made two ways, and two copies of
+the rename-or-arm rule would be two chances to get it different. So a picture
+renames the plant you have picked on the map, exactly as a name does.
+
+**The tab is offered before the catalog has loaded.** Gating it on the rows
+arriving made the switch grow a fourth button the moment a fetch landed — the
+strip got taller and the map shorter under whatever finger was already on it.
+The rail says *Looking…* instead, which is a thing you can see rather than a
+layout that moves.
+
+That bug had a second life in the suite. A check tapped a fixed fraction of the
+canvas to prove a finger plants nothing and a pencil does; the strip growing a
+tab moved the canvas, the fraction landed on a shrub, and a tap on a plant
+SELECTS it — with a finger as well as a pencil. So the finger check passed for
+the wrong reason and the pencil check failed for one. It asserts the spot is
+empty ground first now.
+
 #### Only a pencil plants
 
 In the Plant tool a **finger pans and pinches and nothing else**. Placing a
@@ -2849,10 +2889,9 @@ Everything below is verified in code and unverified in a yard. They are written
 down because a guess that nobody has checked reads exactly like a decision once
 it has been in the repo a week.
 
-- **Whether this iPad reports pencil hover at all.** The tool ring and the
-  ghost preview both hang on it, and it needs an M2 iPad Pro or later. If
-  nothing appears when the tip is held over the map, that is the hardware — the
-  column still arms a category, and nothing else changes.
+- ~~Whether this iPad reports pencil hover at all.~~ **It does** — confirmed on
+  device. The tool ring and the ghost preview both work. Anything older than an
+  M2 iPad Pro still will not, and the column still arms a category there.
 - **`RING_HOVER_MS` (900) and `RING_SETTLE_PX` (12).** Both are guesses. Too
   short and the ring interrupts somebody lining a shrub up against a bed edge;
   too long and nobody believes it is coming. A real hand at arm's length is the

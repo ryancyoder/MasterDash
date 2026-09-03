@@ -21,6 +21,7 @@ import {
   type ReviewSession,
 } from "@/lib/estimator/review";
 import { fetchReviewSessions, type ReviewSessionRow } from "@/lib/estimator/reviewData";
+import type { PlantRow } from "@/lib/estimator/plants";
 import {
   eventLabel,
   type EventPhoto,
@@ -665,6 +666,10 @@ export function ReviewFilmstrip({
   reference,
   photoError,
   onDragPhoto,
+  plants,
+  plantGroupLabel,
+  plantPickedId,
+  onPickPlant,
 }: {
   session: ReviewSession | null;
   /** Grade frames from the survey shown on the canvas, if there is one. */
@@ -697,6 +702,19 @@ export function ReviewFilmstrip({
   events: PhotoEvent[] | null;
   /** Why they could not be read, said rather than shown as an empty yard. */
   photoError: string | null;
+  /**
+   * The catalog, for whichever category is armed. Null while it is loading.
+   *
+   * 962 rows across six groups — 426 perennials alone — so this is the one
+   * rail that is genuinely long, and the one where a picture earns its place:
+   * nobody chooses a viburnum by reading forty names.
+   */
+  plants: PlantRow[] | null;
+  plantGroupLabel: string;
+  /** The armed cultivar, as `plant:<id>`, or null for the generic. */
+  plantPickedId: string | null;
+  /** Null picks the generic — "any shrub" is a real answer. */
+  onPickPlant: (row: PlantRow | null) => void;
   /**
    * Start dragging a frame onto the map.
    *
@@ -732,16 +750,37 @@ export function ReviewFilmstrip({
     [session, frames],
   );
 
-  // The switch only earns its place when there is somewhere to switch to.
-  const canSwitch = propertyId !== null;
+  /*
+    The switch only earns its place when there is somewhere to switch to — and
+    PLANTS IS ALWAYS SOMEWHERE. The three photo rails are all about this yard
+    and need one; the catalog is not about the yard at all, so it is offered on
+    an estimate that has no property attached yet, which is exactly when
+    somebody is roughing a planting out.
+  */
+  const canPhotos = propertyId !== null;
+  /*
+    ALWAYS OFFERED, INCLUDING WHILE THE CATALOG IS STILL LOADING.
+
+    Gating the tab on `plants !== null` made the switch grow a fourth button
+    the moment a fetch landed — the strip got taller and the map shorter under
+    whatever finger was already on it. The rail says "Looking…" instead, which
+    is a thing you can see rather than a layout that moves.
+  */
+  const hasPlants = true;
+  const canSwitch = canPhotos || hasPlants;
   if (items.length === 0 && !canSwitch) return null;
 
   const switcher = canSwitch ? (
     <div className="flex shrink-0 flex-col justify-center gap-1 border-r border-edge pr-2">
       {([
-        ["visit", "Visit"],
-        ["property", "Property"],
-        ["reference", "Reference"],
+        ...(canPhotos
+          ? ([
+              ["visit", "Visit"],
+              ["property", "Property"],
+              ["reference", "Reference"],
+            ] as const)
+          : []),
+        ...(hasPlants ? ([["plants", "Plants"]] as const) : []),
       ] as const).map(([value, label]) => (
         <button
           key={value}
@@ -756,6 +795,90 @@ export function ReviewFilmstrip({
       ))}
     </div>
   ) : null;
+
+  /*
+    THE CATALOG, AS PICTURES.
+
+    Nobody chooses a viburnum by reading forty names. 734 of the 962 rows carry
+    an image and this is where they earn their keep — the column's list is for
+    finding a name you already know, and this rail is for the other case.
+
+    THE PICTURE IS OF THE KIND, NOT OF THE VARIETY, and that is worth knowing
+    before trusting it: every Arborvitae cultivar in the file points at the
+    same `Thuja.jpeg`. It tells you what an arborvitae looks like, not what
+    Forever Goldy looks like. 228 rows have no picture at all and say so
+    rather than showing an empty frame.
+  */
+  if (source === "plants") {
+    return (
+      <div className="flex shrink-0 gap-2 overflow-x-auto border-t border-edge bg-bg px-3 py-2 md-scroll">
+        {switcher}
+        {/*
+          The generic leads, exactly as it does in the column: an unnamed shrub
+          is a real answer, and it has to be reachable from inside the rail or
+          choosing a cultivar would be a one-way door.
+        */}
+        <button
+          onClick={() => onPickPlant(null)}
+          aria-pressed={plantPickedId === null}
+          className={`flex h-[104px] w-[92px] shrink-0 flex-col items-center justify-center gap-1 rounded-xl border px-1 text-center ${
+            plantPickedId === null
+              ? "border-accent bg-accent/15"
+              : "border-edge bg-surface"
+          }`}
+        >
+          <span aria-hidden="true" className="text-xl">🌿</span>
+          <span className="w-full truncate text-[0.6rem] font-bold text-ink">
+            Any {plantGroupLabel}
+          </span>
+        </button>
+        {plants === null ? (
+          <p className="self-center px-2 text-xs text-muted">Looking…</p>
+        ) : plants.length === 0 ? (
+          <p className="self-center px-2 text-xs leading-relaxed text-muted">
+            No named {plantGroupLabel.toLowerCase()} cached. The generic still
+            prices the job.
+          </p>
+        ) : (
+          plants.map((row) => {
+            const picked = plantPickedId === `plant:${row.id}`;
+            return (
+              <button
+                key={row.id}
+                onClick={() => onPickPlant(row)}
+                aria-label={row.name}
+                aria-pressed={picked}
+                title={row.botanical ?? row.name}
+                className={`flex h-[104px] w-[92px] shrink-0 flex-col overflow-hidden rounded-xl border text-left ${
+                  picked ? "border-accent bg-accent/15" : "border-edge bg-surface"
+                }`}
+              >
+                {row.image ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img
+                    src={row.image}
+                    alt=""
+                    loading="lazy"
+                    className="h-[68px] w-full bg-surface2 object-cover"
+                  />
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className="flex h-[68px] w-full items-center justify-center bg-surface2 text-lg opacity-40"
+                  >
+                    🌿
+                  </span>
+                )}
+                <span className="w-full flex-1 truncate px-1.5 py-1 text-[0.6rem] font-bold text-ink">
+                  {row.name}
+                </span>
+              </button>
+            );
+          })
+        )}
+      </div>
+    );
+  }
 
   /*
     THE YARD'S OWN PHOTOGRAPHS, which belong to the place rather than to a day.
