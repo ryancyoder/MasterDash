@@ -2067,6 +2067,49 @@ try {
     (await page.locator('button[aria-label^="Shrub: "]').count()) === 7);
 
   /*
+    SEVEN DIFFERENT MARKS, and this is the check the redesign needed.
+
+    Every stamp is now a plain circle with a texture inside it — which is the
+    convention, and which also means the CIRCLE is the part they all share.
+    Get the texture wrong, or draw it below the size where line work fits, and
+    seven categories come out as seven identical rings: a picker nobody can
+    pick from, and a plan whose legend means nothing.
+
+    Hashed off the rendered pixels of the swatches themselves, so it is the
+    drawing being compared and not a list of names.
+  */
+  const swatchHashes = await page.evaluate(() => {
+    const out = [];
+    // The Shrub row's own picker: seven buttons, one per stamp, all the same
+    // size — so what differs between them is the drawing and nothing else.
+    for (const c of document.querySelectorAll('button[aria-label^="Shrub: "] canvas')) {
+      if (c.width === 0) continue;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      /*
+        HASHED ON COLOUR, NOT ON ALPHA.
+
+        The first version folded in "is this pixel opaque", and five of the
+        seven came out byte-identical: every stamp carries a soft drop shadow
+        for legibility over turf, and at 30px that shadow makes the whole disc
+        opaque whatever is drawn inside it. The ruler was measuring the
+        shadow. Only the two with dashed outlines differed, which is exactly
+        the shape of that mistake.
+      */
+      let h = 2166136261;
+      for (let i = 0; i < d.length; i += 4) {
+        h = Math.imul(h ^ (d[i] + d[i + 1] * 3 + d[i + 2] * 7), 16777619) >>> 0;
+      }
+      out.push(h);
+    }
+    return out;
+  });
+  ok("the picker draws a swatch for every stamp",
+    swatchHashes.length === 7, `${swatchHashes.length} swatches`);
+  ok("AND NO TWO STAMPS ARE THE SAME MARK",
+    new Set(swatchHashes).size === 7,
+    `${new Set(swatchHashes).size} distinct of ${swatchHashes.length}`);
+
+  /*
     MEASURED WITH THE PANEL SHUT, both times.
 
     It is seven rows tall, so having it open takes most of the map's height —
@@ -2140,7 +2183,7 @@ try {
     exactly that mutation.
   */
   ok("SWITCHING IT OFF TAKES THE SYMBOLS OFF THE MAP",
-    shownInk > 100 && hiddenInk < 20,
+    shownInk > 40 && hiddenInk < 20,
     `${shownInk} drawn, ${hiddenInk} hidden`);
 
   // The half that makes it honest.

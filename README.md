@@ -680,6 +680,64 @@ planting another. Mutation-tested: cutting the projection turns 5 checks red,
 folding cultivars into the generic turns 3, keeping duplicate ids turns 1, and
 never drawing the symbol turns 4.
 
+#### Circles with a texture inside, which is how a plan is actually drawn
+
+The stamps were rebuilt as the drawing convention has them: **every symbol is a
+plain circle at exactly its own diameter, and what tells the categories apart
+is the texture inside it.**
+
+- **Shade tree** — branching: long limbs and short, under a crown ring.
+- **Ornamental** — blossom: a ring of clusters, the tree you see under.
+- **Evergreen** — the conifer star, drawn *inside* the rim.
+- **Shrub** — layered foliage: broken concentric arcs, offset ring to ring.
+- **Grasses** — curved blades out of a clump, in a dashed extent.
+- **Perennial** — a rosette of overlapping petals.
+- **Ground cover** — stipple in a dashed extent.
+
+**What it replaced, and why.** The first set was built on lobed and sawtooth
+EDGES — a cloud rim for a canopy, a star rim for a conifer. They read well one
+at a time and badly in a bed: a dozen scalloped rims overlapping is a hedge of
+squiggles, and the one thing a plan has to show is **where each canopy
+reaches**. A circle does that and nothing else does it as well, which is why
+the convention settled on circles a century ago.
+
+**The circle is drawn once, outside the switch**, which is what makes "at
+exactly the claimed radius" true of all seven rather than true of however many
+the switch remembered to close.
+
+**The stipple is a golden-angle spiral, not `Math.random()`.** It is what an
+evenly scattered stipple actually looks like — the way a sunflower packs seeds
+— and unlike random it draws the same mark every frame. A stipple that
+shimmered as the map redrew would be unusable, and no test could count it.
+
+**Below 11px there is no texture, only the outline and a centre dot.** A symbol
+too small to hold its own line work is a blot; the outline is the honest amount
+of information at that size, and the thing to fix is the zoom. That floor bit
+immediately: the symbols panel drew its picker at 22px, which is **under** it,
+so all seven choices came out as identical rings. The picker is 30px now — the
+texture *is* the picker there.
+
+**And the artwork got lighter, which moved a ruler.** A circle and a stipple is
+much less ink than a double scalloped rim: the plants-hidden check read 280
+before and 90 after, so its absolute floor of 100 had to come down to 40. An
+absolute threshold calibrated against one drawing has to move when the drawing
+does — the claim (*there was something, then there wasn't*) is unchanged, and
+90 against 0 states it just as well.
+
+**The check that this needed: no two stamps are the same mark.** Seven
+categories that all draw as plain rings would be a picker nobody can pick from
+and a legend that means nothing — and it is exactly what a wrong texture, or a
+swatch under the floor, produces. The seven swatches of one picker row are
+hashed off their rendered pixels.
+
+**Hashed on colour, not on alpha**, and the first version was not. Folding in
+"is this pixel opaque" made five of the seven byte-identical: every stamp
+carries a soft drop shadow for legibility over turf, and at 30px that shadow
+makes the whole disc opaque whatever is drawn inside it. The ruler was
+measuring the shadow. Only the two with dashed outlines differed — which is
+exactly the shape of that mistake, and the tell that it was the ruler rather
+than the drawing.
+
 #### The symbols are planting-plan stamps, drawn at their spread
 
 **A reversal, and worth stating as one.** A plant symbol was a coloured disc

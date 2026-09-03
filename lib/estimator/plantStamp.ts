@@ -191,56 +191,20 @@ export const PLANT_GRAB_MIN_PX = 18;
 const TAU = Math.PI * 2;
 
 /**
- * A ring of outward-bulging lobes: the cloud edge a deciduous canopy is drawn
- * with. `depth` is the lobe's share of the radius, so the lobes reach exactly
- * to `r` and the symbol keeps the diameter it claims.
+ * THE OUTLINE IS ALWAYS A PLAIN CIRCLE, AND THE TEXTURE IS WHAT DIFFERS.
+ *
+ * This replaced a set built on lobed and sawtooth EDGES — a cloud rim for a
+ * canopy, a star rim for a conifer. They read well one at a time and badly in
+ * a bed: a dozen scalloped rims overlapping is a hedge of squiggles, and the
+ * one thing a plan has to show is where each canopy reaches. A circle does
+ * that and nothing else does it as well, which is why the drawing convention
+ * settled on circles a century ago.
+ *
+ * So every stamp is a circle of exactly the claimed radius, and what tells the
+ * categories apart is the mark inside it — branching, a star, blossom, blades,
+ * stipple. That is also the convention: an LA plan is read by texture, and the
+ * legend is what names it.
  */
-function scallop(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  r: number,
-  lobes: number,
-  depth: number,
-) {
-  const rl = r * depth;
-  const d = r - rl;
-  ctx.beginPath();
-  for (let i = 0; i < lobes; i++) {
-    const th = (i / lobes) * TAU;
-    ctx.arc(
-      x + Math.cos(th) * d,
-      y + Math.sin(th) * d,
-      rl,
-      th - Math.PI * 0.86,
-      th + Math.PI * 0.86,
-    );
-  }
-  ctx.closePath();
-  ctx.stroke();
-}
-
-/** Alternating points: the sawtooth a conifer is drawn with. */
-function sawtooth(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  r: number,
-  teeth: number,
-  inner: number,
-) {
-  ctx.beginPath();
-  for (let i = 0; i < teeth * 2; i++) {
-    const th = (i / (teeth * 2)) * TAU - Math.PI / 2;
-    const rr = i % 2 === 0 ? r : r * inner;
-    const px = x + Math.cos(th) * rr;
-    const py = y + Math.sin(th) * rr;
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
-  }
-  ctx.closePath();
-  ctx.stroke();
-}
 
 /** Lines out of the middle: branches, or blades. */
 function radial(
@@ -274,6 +238,117 @@ function circle(
   ctx.arc(x, y, r, 0, TAU);
   ctx.stroke();
   ctx.restore();
+}
+
+/** A closed zig-zag inside the rim: the conifer's star, kept off the edge. */
+function starburst(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  outer: number,
+  inner: number,
+  teeth: number,
+) {
+  ctx.beginPath();
+  for (let i = 0; i < teeth * 2; i++) {
+    const th = (i / (teeth * 2)) * TAU - Math.PI / 2;
+    const rr = i % 2 === 0 ? outer : inner;
+    const px = x + Math.cos(th) * rr;
+    const py = y + Math.sin(th) * rr;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.stroke();
+}
+
+/** Small circles around a radius: blossom, or a rosette of leaves. */
+function ringOfDiscs(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  at: number,
+  rr: number,
+  count: number,
+  offset = 0,
+) {
+  for (let i = 0; i < count; i++) {
+    const th = (i / count) * TAU + offset;
+    ctx.beginPath();
+    ctx.arc(x + Math.cos(th) * at, y + Math.sin(th) * at, rr, 0, TAU);
+    ctx.stroke();
+  }
+}
+
+/** Broken concentric arcs: layered foliage, seen from above. */
+function arcRing(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  at: number,
+  count: number,
+  offset = 0,
+) {
+  const span = TAU / count;
+  for (let i = 0; i < count; i++) {
+    const from = i * span + offset + span * 0.16;
+    ctx.beginPath();
+    ctx.arc(x, y, at, from, from + span * 0.68);
+    ctx.stroke();
+  }
+}
+
+/**
+ * Scattered dots, and DETERMINISTIC ones.
+ *
+ * A golden-angle spiral — the way a sunflower packs its seeds — which is what
+ * an evenly scattered stipple actually looks like, and unlike `Math.random()`
+ * it draws the same mark every frame. A stipple that shimmered as the map
+ * redrew would be unusable, and a test could not count it.
+ */
+function stipple(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  count: number,
+  dot: number,
+) {
+  const GOLDEN = 2.39996322972865332;
+  for (let i = 1; i <= count; i++) {
+    const th = i * GOLDEN;
+    const rr = r * Math.sqrt(i / (count + 1));
+    ctx.beginPath();
+    ctx.arc(x + Math.cos(th) * rr, y + Math.sin(th) * rr, dot, 0, TAU);
+    ctx.fill();
+  }
+}
+
+/** Curved blades out of a clump, all leaning the same way. */
+function blades(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  count: number,
+) {
+  ctx.beginPath();
+  for (let i = 0; i < count; i++) {
+    const th = (i / count) * TAU;
+    const tipX = x + Math.cos(th) * r * 0.92;
+    const tipY = y + Math.sin(th) * r * 0.92;
+    // The control point is swung a fifth of a turn round, which is what bends
+    // a blade instead of drawing a spoke.
+    const cth = th + 0.42;
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(
+      x + Math.cos(cth) * r * 0.5,
+      y + Math.sin(cth) * r * 0.5,
+      tipX,
+      tipY,
+    );
+  }
+  ctx.stroke();
 }
 
 /**
@@ -323,46 +398,73 @@ export function drawPlantStamp(
   ctx.arc(x, y, r, 0, TAU);
   ctx.fill();
 
+  /*
+    THE CIRCLE, ALWAYS, AT EXACTLY THE CLAIMED RADIUS.
+
+    Not part of the switch: the outline is what every one of these has in
+    common and what the symbol is FOR — where this canopy reaches. Drawing it
+    once here is what makes that literally true of all seven rather than true
+    of however many the switch remembered to close.
+  */
+  circle(ctx, x, y, r, kind === "ground_cover" || kind === "grasses"
+    ? [Math.max(2, r * 0.34), Math.max(2, r * 0.26)]
+    : []);
+
+  /*
+    Below this the texture is a blot rather than a mark. A symbol too small to
+    hold its own line work shows its outline and its middle, which is the
+    honest amount of information at that size — the thing to fix is the zoom.
+  */
+  if (r < 11) {
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(1, r * 0.2), 0, TAU);
+    ctx.fillStyle = opts.selected ? "#22c55e" : opts.color;
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+
+  ctx.fillStyle = opts.selected ? "#22c55e" : opts.color;
+
   switch (kind) {
     case "shade_tree":
-      // The biggest canopy on the plan, and the boldest edge: deep lobes, and
-      // a second ring inside so it still reads as a tree at 20ft across.
-      scallop(ctx, x, y, r, 9, 0.3);
-      scallop(ctx, x, y, r * 0.58, 7, 0.32);
+      // BRANCHING, which is the deciduous plan symbol everybody draws: limbs
+      // out of a trunk, longer and shorter, under a canopy you see through.
+      radial(ctx, x, y, r * 0.16, r * 0.84, 6);
+      radial(ctx, x, y, r * 0.16, r * 0.5, 6, Math.PI / 6);
+      circle(ctx, x, y, r * 0.6);
       break;
     case "ornamental_tree":
-      // A lighter crown with the branching showing through it — which is what
-      // an ornamental is on a plan: a small tree you see under.
-      scallop(ctx, x, y, r, 7, 0.26);
-      radial(ctx, x, y, r * 0.1, r * 0.58, 6, 0.3);
+      // Blossom: a ring of clusters inside a light crown. An ornamental is
+      // read by what it does in flower, and it is the tree you see under.
+      ringOfDiscs(ctx, x, y, r * 0.52, r * 0.23, 7);
       break;
     case "evergreen_tree":
-      // The conifer sawtooth, the one plan convention everybody already reads.
-      sawtooth(ctx, x, y, r, 12, 0.7);
-      circle(ctx, x, y, r * 0.22);
+      // The conifer star, INSIDE the rim rather than as the rim. The
+      // convention everybody already reads, without giving up the circle.
+      starburst(ctx, x, y, r * 0.9, r * 0.4, 12);
       break;
     case "shrub":
-      // Many shallow lobes: dense and rounded, and unmistakably not a tree at
-      // a glance, which is the pair that has to be told apart most often.
-      scallop(ctx, x, y, r, 13, 0.2);
+      // Layered foliage: broken arcs, offset ring to ring. Dense and rounded,
+      // and unmistakably not a tree at a glance — the pair that has to be
+      // told apart most often.
+      arcRing(ctx, x, y, r * 0.72, 7);
+      arcRing(ctx, x, y, r * 0.42, 5, 0.4);
       break;
     case "grasses":
-      // No closed canopy at all — blades out of a clump, inside a dashed
-      // extent. A grass does not have an edge and should not be drawn one.
-      circle(ctx, x, y, r, [r * 0.28, r * 0.22]);
-      radial(ctx, x, y, r * 0.12, r * 0.92, 9);
-      radial(ctx, x, y, r * 0.12, r * 0.62, 9, Math.PI / 9);
+      // Blades out of a clump, inside a dashed extent: a grass has no closed
+      // canopy and should not be drawn one.
+      blades(ctx, x, y, r, 11);
       break;
     case "perennial":
-      // A rosette: small, and read in groups rather than one at a time.
-      circle(ctx, x, y, r);
-      radial(ctx, x, y, r * 0.3, r * 0.85, 6, 0.2);
+      // A rosette. Small, and read in groups rather than one at a time.
+      ringOfDiscs(ctx, x, y, r * 0.42, r * 0.34, 6, 0.3);
       break;
     case "ground_cover":
-      // The lightest mark on the plan. Dashed, because a ground cover is drawn
-      // as a spreading mat rather than as a thing with a trunk.
-      circle(ctx, x, y, r, [r * 0.5, r * 0.4]);
-      circle(ctx, x, y, r * 0.2);
+      // Stipple inside a dashed extent — the textbook groundcover hatch. The
+      // lightest mark on the plan, because it is a mat rather than a thing
+      // with a trunk.
+      stipple(ctx, x, y, r * 0.82, 16, Math.max(0.8, r * 0.07));
       break;
   }
 

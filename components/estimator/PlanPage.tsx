@@ -3863,7 +3863,14 @@ function PlantSymbolPanel({
                       k === stamp ? "bg-accent" : "bg-surface2"
                     }`}
                   >
-                    <StampSwatch kind={k} color={color} size={22} />
+                    {/*
+                      30, not 22. The texture IS the picker here — a swatch
+                      below the size where line work can be drawn shows a
+                      plain circle, and seven identical plain circles is not a
+                      choice anybody can make. See the floor in
+                      `drawPlantStamp`.
+                    */}
+                    <StampSwatch kind={k} color={color} size={30} />
                   </button>
                 ))}
               </div>
