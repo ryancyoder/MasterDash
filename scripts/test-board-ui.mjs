@@ -2270,16 +2270,65 @@ try {
 
   // A MOUSE HOVERING IN THE SAME PLACE MUST NOT SUMMON IT.
   await page.mouse.move(ringHome.x, ringHome.y);
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1400);
   const mouseInk = await ringInk(ringHome);
   ok("A MOUSE RESTING ON THE MAP SUMMONS NOTHING",
     mouseInk < 400, `${mouseInk} green under the cursor`);
+
+  /*
+    7c-vii-6a. THE GHOST: WHAT THE PENCIL IS ABOUT TO PLANT.
+
+    Hovering is not only how the menu is summoned — it is how a plant is
+    aimed. The armed symbol is drawn under the tip at the ground size it will
+    really be, so a 20ft shade tree over a 12ft gap is a tree you can see does
+    not fit before you commit it.
+
+    Somewhere clear of everything else on the plan, so what is counted is the
+    ghost and nothing else.
+  */
+  const ghostAt = {
+    x: ringCanvas.x + ringCanvas.width * 0.78,
+    y: ringCanvas.y + ringCanvas.height * 0.2,
+  };
+  const ghostBefore = await ringInk(ghostAt, 45);
+  await penMove(ghostAt.x, ghostAt.y);
+  await page.waitForTimeout(120);
+  await penMove(ghostAt.x + 1, ghostAt.y);
+  await page.waitForTimeout(500);
+  const ghostShrub = await ringInk(ghostAt, 45);
+  ok("A HOVERING PENCIL SHOWS WHAT IT IS ABOUT TO PLANT",
+    ghostBefore === 0 && ghostShrub > 12,
+    `${ghostBefore} bare, ${ghostShrub} hovering`);
+
+  /*
+    AND THE RING IS NOT UP YET, which is what the longer dwell buys.
+
+    Pausing to line a shrub up against a bed edge is now the ordinary use of a
+    hover, so the dwell that means "I want the menu" has to be plainly longer
+    than the pause that means "I am aiming". At the 400ms this started with,
+    the ring would already be open here.
+  */
+  ok("AND THE RING HAS NOT INTERRUPTED THE AIM",
+    (await ringInk(ghostAt, 110)) < 400,
+    `${await ringInk(ghostAt, 110)} in a ring-sized box after 600ms`);
+
+  // Hold on, and it comes.
+  await page.waitForTimeout(900);
+  const ghostRing = await ringInk(ghostAt, 110);
+  ok("and holding on brings it up after all",
+    ghostRing > 400, `${ghostRing} after 1.5s`);
+
+  // The ghost is hidden under it: the tip is choosing now, not aiming.
+  await penMove(ghostAt.x + 400, ghostAt.y + 200);
+  await page.waitForTimeout(300);
+  await penMove(ringCanvas.x + 10, ringCanvas.y + 10);
+  await page.waitForTimeout(300);
 
   // The pencil, held still.
   await penMove(ringHome.x, ringHome.y);
   await page.waitForTimeout(120);
   await penMove(ringHome.x + 2, ringHome.y + 1);
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1400);
   const openInk = await ringInk(ringHome);
   // READ THE CANVAS. A flag would be right against a build that opened
   // nothing anybody could see.
@@ -2317,6 +2366,42 @@ try {
   await page.waitForTimeout(400);
   ok("PICKING THE TOP WEDGE ARMS SHADE TREE", (await armed()) === "Shade Tree",
     await armed());
+  /*
+    AND THE GHOST IS NOW A SHADE TREE.
+
+    This is the check that says the preview follows what is ARMED rather than
+    drawing one shape for everything. A shade tree is 20ft against a shrub's
+    6ft, and both are drawn at their ground size — so the same hover in the
+    same place puts down a great deal more line work than it did.
+  */
+  await penMove(ghostAt.x, ghostAt.y);
+  await page.waitForTimeout(120);
+  await penMove(ghostAt.x + 1, ghostAt.y);
+  await page.waitForTimeout(400);
+  const ghostTree = await ringInk(ghostAt, 45);
+  ok("AND THE GHOST IS THE SYMBOL THAT IS ARMED, AT ITS OWN SIZE",
+    ghostTree > ghostShrub * 2,
+    `${ghostShrub} for a 6ft shrub, ${ghostTree} for a 20ft tree`);
+
+  /*
+    OUT OF RANGE, AND IT GOES WITH THE PENCIL.
+
+    The pen is moved OFF the canvas rather than a `pointerleave` being
+    dispatched by hand: a hand-made non-bubbling event is not a reliable way
+    to reach a React handler, and the first version of this check passed
+    against a build that never cleared the ghost at all — it was proving
+    nothing. A tip that has left the element is the real thing.
+  */
+  await penMove(ghostAt.x, ghostAt.y);
+  await page.waitForTimeout(200);
+  ok("the ghost is there to be left behind",
+    (await ringInk(ghostAt, 45)) > 12, `${await ringInk(ghostAt, 45)}`);
+  await penMove(ringCanvas.x + ringCanvas.width / 2, ringCanvas.y - 40);
+  await page.waitForTimeout(300);
+  ok("AND IT LEAVES WITH THE PENCIL",
+    (await ringInk(ghostAt, 45)) === 0,
+    `${await ringInk(ghostAt, 45)} left behind`);
+
   ok("and the ring goes away with the choice",
     (await ringInk(ringHome)) < openInk * 0.5,
     `${openInk} open, ${await ringInk(ringHome)} after`);
@@ -2329,7 +2414,7 @@ try {
   await penMove(ringHome.x, ringHome.y);
   await page.waitForTimeout(120);
   await penMove(ringHome.x + 1, ringHome.y + 1);
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1400);
   const px = ringHome.x + Math.sin((-120 * Math.PI) / 180) * 62;
   const py = ringHome.y - Math.cos((-120 * Math.PI) / 180) * 62;
   await penMove(px, py);
@@ -2346,7 +2431,7 @@ try {
   await penMove(ringHome.x, ringHome.y);
   await page.waitForTimeout(120);
   await penMove(ringHome.x + 1, ringHome.y);
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1400);
   ok("the ring is up again", (await ringInk(ringHome)) > mouseInk + 400);
   await penDown(ringHome.x, ringHome.y);
   await page.waitForTimeout(400);
@@ -2360,7 +2445,7 @@ try {
   await penMove(ringHome.x, ringHome.y);
   await page.waitForTimeout(120);
   await penMove(ringHome.x + 1, ringHome.y);
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1400);
   ok("once more, with feeling", (await ringInk(ringHome)) > mouseInk + 400);
   await penMove(ringHome.x + 200, ringHome.y + 120);
   await page.waitForTimeout(300);
@@ -2374,7 +2459,7 @@ try {
   await penMove(ringHome.x, ringHome.y);
   await page.waitForTimeout(120);
   await penMove(ringHome.x + 1, ringHome.y);
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1400);
   ok("AND IT ONLY COMES UP IN THE PLANT TOOL",
     (await ringInk(ringHome)) < openInk * 0.5,
     `${await ringInk(ringHome)} green in Select`);

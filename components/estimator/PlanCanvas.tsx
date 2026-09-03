@@ -699,6 +699,19 @@ export default function PlanCanvas({
   const [ringHot, setRingHot] = useState<number | null>(null);
   const hoverRef = useRef<Pt | null>(null);
   const dwellRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /*
+    WHERE THE TIP IS RIGHT NOW, which is a different question from where the
+    dwell is anchored: `hoverRef` only moves when the tip has drifted far
+    enough to restart the dwell, and the ghost has to follow every pixel.
+
+    A REF PLUS A FRAME TICK, not state per event. A pencil reports at up to
+    240Hz — four times a touch drag — and a `setState` per event is a full
+    canvas redraw per event. One redraw per animation frame is all a screen
+    can show anyway.
+  */
+  const penRef = useRef<Pt | null>(null);
+  const [hoverTick, setHoverTick] = useState(0);
+  const hoverRafRef = useRef<number | null>(null);
 
   /** A label being moved, as a ground offset from its shape's anchor. */
   const [dragLabel, setDragLabel] = useState<
@@ -1979,7 +1992,38 @@ export default function PlanCanvas({
     }
 
     /*
-      8. THE TOOL RING, over everything including the call-outs.
+      8. THE GHOST: what the pencil is about to plant, under the tip.
+
+      Drawn with the SAME stamp, the SAME colour and the SAME ground-scaled
+      radius as the plant it stands for, because a preview drawn any other way
+      is a preview of something else. Only the alpha differs, which is what
+      says it is not there yet.
+
+      `toScale` comes from `stampRadius` exactly as a real plant's does, so a
+      ground cover at 1ft shows as the same unreadable dot the placed one
+      would be — that is honest rather than unhelpful, and it is the zoom that
+      is wrong at that point, not the symbol.
+    */
+    if (penRef.current && !ringAt && tool === "plant") {
+      const face = plantFace({ itemId: plantPickId });
+      const { r, toScale } = stampRadius(face.spreadFt, ftPerPxNow);
+      ctx.save();
+      /*
+        0.7, not 0.5. Faint enough to read as "not there yet", solid enough to
+        read at all over bright turf — a preview you cannot see is not a
+        preview, and the satellite under it is the brightest thing on screen.
+      */
+      ctx.globalAlpha = 0.7;
+      drawPlantStamp(ctx, face.stamp, penRef.current.x, penRef.current.y, r, {
+        color: face.color,
+        selected: false,
+        toScale,
+      });
+      ctx.restore();
+    }
+
+    /*
+      9. THE TOOL RING, over everything including the call-outs.
 
       It is a menu summoned onto the map for a moment; anything drawn over it
       would be something the tip could aim at and not get. Drawn on the canvas
@@ -2051,6 +2095,7 @@ export default function PlanCanvas({
   }, [
     ringAt,
     ringHot,
+    hoverTick,
     plantPickId,
     shapes,
     callouts,
@@ -2426,6 +2471,12 @@ export default function PlanCanvas({
       pointersRef.current.delete(e.pointerId);
       return;
     }
+    // The tip has landed: whatever happens next is a real mark, so the ghost
+    // stops standing in for it.
+    if (penRef.current) {
+      penRef.current = null;
+      paintHover();
+    }
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     // Two fingers always pinch, whatever the tool — abandoning any drag the
@@ -2641,6 +2692,15 @@ export default function PlanCanvas({
     };
   }
 
+  /** One redraw per frame, however fast the pencil reports. */
+  const paintHover = useCallback(() => {
+    if (hoverRafRef.current !== null) return;
+    hoverRafRef.current = requestAnimationFrame(() => {
+      hoverRafRef.current = null;
+      setHoverTick((t) => t + 1);
+    });
+  }, []);
+
   /** Put the ring away, and forget the dwell that was building. */
   const closeRing = useCallback(() => {
     if (dwellRef.current) clearTimeout(dwellRef.current);
@@ -2649,6 +2709,13 @@ export default function PlanCanvas({
     setRingAt(null);
     setRingHot(null);
   }, []);
+
+  /** And the ghost with it, when the pencil goes out of range. */
+  const clearHover = useCallback(() => {
+    penRef.current = null;
+    closeRing();
+    paintHover();
+  }, [closeRing, paintHover]);
 
   /*
     A PENCIL HELD STILL ABOVE THE MAP.
@@ -2666,10 +2733,26 @@ export default function PlanCanvas({
   function handleHover(e: React.PointerEvent<HTMLCanvasElement>) {
     if (e.pointerType !== "pen" || e.buttons !== 0) return;
     if (tool !== "plant") {
-      if (ringAt) closeRing();
+      if (ringAt || penRef.current) clearHover();
       return;
     }
     const cp = canvasPoint(e);
+
+    /*
+      THE GHOST FOLLOWS THE TIP, ALWAYS — and that is the whole reason the
+      dwell got longer.
+
+      What the pencil is about to plant is drawn under it, at the ground size
+      it will really be, before anything is committed. A 20ft shade tree over
+      a 12ft gap is a tree that does not fit, and this is the only moment that
+      is cheap to find out: the alternative is planting it, looking, and
+      undoing.
+
+      Hidden while the ring is open, because then the tip is choosing rather
+      than aiming and the ring is drawn over the very spot the ghost would be.
+    */
+    penRef.current = cp;
+    paintHover();
 
     if (ringAt) {
       // Open: the tip steers it. Past the leave radius it closes, choosing
@@ -3020,9 +3103,9 @@ export default function PlanCanvas({
         }}
         // Out of hover range, or off the canvas: the pencil has left, so the
         // ring goes with it rather than hanging over a map nobody is aiming at.
-        onPointerLeave={() => closeRing()}
+        onPointerLeave={() => clearHover()}
         onPointerOut={(e) => {
-          if (e.pointerType === "pen") closeRing();
+          if (e.pointerType === "pen") clearHover();
         }}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}

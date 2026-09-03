@@ -802,9 +802,32 @@ and ignoring the custom spread turns 2 here and 2 in `test:plan`.
 
 #### The tool ring, summoned by hovering a pencil
 
-Hold an Apple Pencil still over the map with the **Plant** tool up and the six
-categories come to the tip: Shade Tree, Ornamental, Evergreen, Shrub,
-Perennial, Ground Cover. Slide onto one and touch down to arm it.
+Hold an Apple Pencil over the map with the **Plant** tool up and the symbol it
+is about to plant is drawn under the tip, at the ground size it will really be.
+Hold still for a second and the six categories come to the tip: Shade Tree,
+Ornamental, Evergreen, Shrub, Perennial, Ground Cover. Slide onto one, touch
+down, and it is armed — and the ghost under the tip is that one from then on.
+
+**The ghost is the point, and the ring is what it grew into.** A 20ft shade
+tree over a 12ft gap is a tree that does not fit, and hovering is the only
+moment that is cheap to find out: the alternative is planting it, looking, and
+undoing. It is drawn with the same stamp, the same colour and the same
+ground-scaled radius as the plant it stands for — a preview drawn any other way
+is a preview of something else — and only the alpha differs, at 0.7, which is
+faint enough to read as *not there yet* and solid enough to read at all over
+turf.
+
+**Which is why the dwell got longer: 400ms, then 900.** Hovering is no longer
+something you only do to summon a menu; it is how a plant is aimed. Pausing to
+line a shrub up against a bed edge is now the ordinary use of a hover, so the
+dwell that means *I want the menu* has to be plainly longer than the pause that
+means *I am aiming*. Both figures are guesses that need a real hand at arm's
+length to settle — too short and the ring interrupts somebody placing a plant,
+too long and nobody believes it is coming.
+
+**One redraw per frame, not one per event.** A pencil reports at up to 240Hz,
+four times a touch drag, and a `setState` per event is a full canvas redraw per
+event. The tip goes in a ref and a frame tick drives the render.
 
 **Why a hover and not the Pencil's double-tap.** The double-tap, and the
 Pencil Pro's squeeze, are delivered to native code only through
@@ -849,6 +872,16 @@ options would be unreachable.
 **The symbols on the ring come through `plantFace`**, so a stamp somebody
 changed in the symbols panel is the stamp the ring offers — not a second
 opinion about what a shrub looks like.
+
+**Two rulers that were proving nothing.** A hand-dispatched non-bubbling
+`pointerleave` is not a reliable way to reach a React handler, and the first
+version of *it leaves with the pencil* passed against a build that never
+cleared the ghost at all. Moving the tip off the canvas is the real thing. And
+twice now a browser run has been read against a **stale build** — the mutation
+restored, the suite run without rebuilding — which looks exactly like a
+surviving mutant. `npm run test:board-ui` builds first; the raw
+`node scripts/test-board-ui.mjs` does not, and that is the one to stop reaching
+for.
 
 **Playwright has no pen**, and that is why the checks go through CDP.
 `page.mouse` sends `pointerType: "mouse"`, which the ring refuses on purpose,

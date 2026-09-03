@@ -19,8 +19,21 @@
 // wedge a tip is over can be checked without a browser — the failure this
 // guards against is a ring that looks right and picks the neighbour.
 
-/** How long the tip must hold still before the ring opens. */
-export const RING_HOVER_MS = 400;
+/**
+ * How long the tip must hold still before the ring opens.
+ *
+ * LONGER THAN IT WAS, and the ghost below is the reason. Hovering is no
+ * longer something you only do to summon a menu — it is how you aim a plant,
+ * with the symbol drawn under the tip at the size it will really be. Pausing
+ * to line a shrub up against a bed edge is now the ordinary use of a hover, so
+ * the dwell that means "I want the menu" has to be plainly longer than the
+ * pause that means "I am aiming".
+ *
+ * A guess, and one that needs a real hand at arm's length to settle: too short
+ * and the ring interrupts somebody placing a plant, too long and nobody
+ * believes it is coming.
+ */
+export const RING_HOVER_MS = 900;
 /**
  * How far it may drift while holding, in canvas pixels.
  *
