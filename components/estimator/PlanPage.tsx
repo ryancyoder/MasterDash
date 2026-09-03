@@ -1296,8 +1296,14 @@ export default function PlanPage({
    * tile agree without either being told to.
    */
   const symbolPrefs = settings.plantSymbols;
+  /*
+    Takes anything with an `itemId` rather than a whole `PlacedPlant`, because
+    the tool ring asks the same question about a category NOBODY has planted
+    yet — and the answer has to be the same one, or the symbol on the ring
+    would not be the symbol that lands on the map.
+  */
   const plantFace = useCallback(
-    (plant: PlacedPlant) => {
+    (plant: { itemId: string }) => {
       const item = getItem(plant.itemId);
       return {
         stamp: stampFor(plant.itemId, symbolPrefs),
@@ -2075,6 +2081,16 @@ export default function PlanPage({
                     setPlantPick({ itemId: g.itemId });
                     setNamingGroup((open) => (open === null ? null : g.group));
                   }}
+                  /*
+                    Named, and it says which one is live — the same treatment
+                    the tool row got, and for the same reason: the button's
+                    own text is a glyph, a label and a spread run together, so
+                    "which category is armed" is not a question its text can
+                    answer. The tool ring arms these too, and something has to
+                    be able to say which it landed on.
+                  */
+                  aria-label={g.label}
+                  aria-pressed={on}
                   className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-bold ${
                     on ? "bg-accent text-black" : "bg-surface2 text-ink"
                   }`}
@@ -2337,6 +2353,17 @@ export default function PlanPage({
           */
           plants={drawnPlants}
           plantFace={plantFace}
+          plantPickId={plantPick.itemId}
+          /*
+            The ring arms a category exactly as the sub-toolbar's own buttons
+            do — including clearing the cultivar, for the same reason: having
+            reached for Evergreen, the next tap must plant an evergreen and
+            not the Green Velvet boxwood armed three categories ago.
+          */
+          onPickPlant={(itemId) => {
+            setPlantPick({ itemId });
+            setNamingGroup((open) => (open === null ? null : plantGroupOf(itemId)?.group ?? null));
+          }}
           selectedPlantId={selectedPlantId}
           onSelectPlant={setSelectedPlantId}
           onPlacePlant={placePlant}

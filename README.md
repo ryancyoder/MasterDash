@@ -800,6 +800,62 @@ being wrong rather than the thing measured:
 Mutation-tested: making a plant grabbable in Select again turns 1 check red,
 and ignoring the custom spread turns 2 here and 2 in `test:plan`.
 
+#### The tool ring, summoned by hovering a pencil
+
+Hold an Apple Pencil still over the map with the **Plant** tool up and the six
+categories come to the tip: Shade Tree, Ornamental, Evergreen, Shrub,
+Perennial, Ground Cover. Slide onto one and touch down to arm it.
+
+**Why a hover and not the Pencil's double-tap.** The double-tap, and the
+Pencil Pro's squeeze, are delivered to native code only through
+`UIPencilInteraction` — WebKit surfaces neither, so a web page never learns the
+gesture happened, and iPadOS swallows it silently rather than failing loudly.
+What Safari *does* give a page, since 16.1 on an M2 iPad Pro, is where the tip
+is while it is up to 12mm **above** the glass: ordinary pointer events with
+`pointerType: "pen"` and no buttons. Holding still over the map is therefore a
+gesture the pencil uniquely has, it leaves no mark, and it needs no button to
+find.
+
+**A mouse is deliberately not admitted**, though a mouse hovers too. A pencil
+held still above the map is an intention; a cursor left resting where somebody
+put it is not, and a ring that opened every time it paused would be a ring
+nobody could work under.
+
+**Nothing is taken away where it does not work.** Anything before the M2 iPad
+Pro reports no pencil hover at all, so the ring simply never appears and the
+sub-toolbar is still how a category is armed. It is an addition, not a
+replacement — which is the only responsible shape for a feature gated on one
+generation of hardware.
+
+**It arms; it does not plant.** Where the tree goes is the next tap's question,
+and the answer is not "wherever you happened to summon the menu". The press
+that chooses is consumed outright — falling through would put a tree under the
+ring, which is the one outcome a menu must never have.
+
+**The hole in the middle picks nothing**, and moving the tip past the rim
+closes it. A menu summoned by accident needs a way out more than one you asked
+for does, and "wait for it to go" is not a way out.
+
+**The angles live in `toolRing.ts`, not in the canvas**, because the failure to
+guard against is a ring that looks right and picks the neighbour — no
+screenshot catches that. Every one of the six is checked at its own middle and
+at both its edges, plus the seam and the wrap over the top; dropping the
+half-step that centres wedge 0 on the top turns **twelve** of those red. The
+icons are placed by the same function that picks, so what is drawn and what is
+chosen cannot disagree, and each icon is checked to land inside its own wedge.
+Summoned near an edge the ring is pulled onto the canvas, or two of its six
+options would be unreachable.
+
+**The symbols on the ring come through `plantFace`**, so a stamp somebody
+changed in the symbols panel is the stamp the ring offers — not a second
+opinion about what a shrub looks like.
+
+**Playwright has no pen**, and that is why the checks go through CDP.
+`page.mouse` sends `pointerType: "mouse"`, which the ring refuses on purpose,
+so the hover is dispatched with `Input.dispatchMouseEvent` and the pointer type
+set. Testing it with a mouse would have tested the one input this feature does
+not accept.
+
 #### One control in the corner: unlocked, home, pinned
 
 **The + and − buttons are gone.** A pinch does it on the iPad and a wheel does

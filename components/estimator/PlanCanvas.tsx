@@ -19,6 +19,17 @@ import {
   type WorldPoint,
 } from "@/lib/estimator/geo";
 import { smoothOutline } from "@/lib/estimator/curve";
+import { PLANT_GROUPS } from "@/lib/estimator/tree";
+import {
+  RING_HOVER_MS,
+  RING_INNER_PX,
+  RING_LEAVE_PX,
+  RING_OUTER_PX,
+  ringOrigin,
+  ringSettled,
+  wedgeAt,
+  wedgeIconAt,
+} from "@/lib/estimator/toolRing";
 import {
   metresPerPixel,
   pxPerWorldFor,
@@ -470,6 +481,8 @@ export default function PlanCanvas({
   onMoveCallout,
   plants,
   plantFace,
+  plantPickId,
+  onPickPlant,
   selectedPlantId,
   onSelectPlant,
   onPlacePlant,
@@ -553,6 +566,10 @@ export default function PlanCanvas({
   onMoveCallout: (id: string, at: LatLng) => void;
   /** Plants standing on the plan, one symbol each. */
   plants: PlacedPlant[];
+  /** The category the next tap plants, so the ring can show which is armed. */
+  plantPickId: string;
+  /** A category chosen off the ring. Arms it; it does not plant. */
+  onPickPlant: (itemId: string) => void;
   /**
    * Which stamp a plant wears, its colour, and how wide it grows.
    *
@@ -561,7 +578,7 @@ export default function PlanCanvas({
    * and it is what lets a named cultivar draw as its own category's symbol
    * without this component knowing what a cultivar is.
    */
-  plantFace: (plant: PlacedPlant) => {
+  plantFace: (plant: { itemId: string }) => {
     stamp: PlantStampKind;
     color: string;
     spreadFt: number;
@@ -670,6 +687,19 @@ export default function PlanCanvas({
   const [dragCallout, setDragCallout] = useState<{ id: string; at: LatLng } | null>(
     null,
   );
+  /*
+    THE TOOL RING, and the hover that summons it.
+
+    `ringAt` is where it is drawn — already nudged to fit the canvas — and
+    `ringHot` is the wedge the tip is over. `hoverRef` and `dwellRef` are the
+    dwell: a ref and a timer rather than state, because a hover fires as fast
+    as a draw and re-rendering on each one would cost a frame for nothing.
+  */
+  const [ringAt, setRingAt] = useState<Pt | null>(null);
+  const [ringHot, setRingHot] = useState<number | null>(null);
+  const hoverRef = useRef<Pt | null>(null);
+  const dwellRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   /** A label being moved, as a ground offset from its shape's anchor. */
   const [dragLabel, setDragLabel] = useState<
     { shapeId: string; dx: number; dy: number } | null
@@ -1947,7 +1977,81 @@ export default function PlanCanvas({
       ctx.fillStyle = "#ffffff";
       ctx.fillText(text, x, y - 8);
     }
+
+    /*
+      8. THE TOOL RING, over everything including the call-outs.
+
+      It is a menu summoned onto the map for a moment; anything drawn over it
+      would be something the tip could aim at and not get. Drawn on the canvas
+      rather than in the DOM for the same reason the plant stamps are: it is
+      positioned in canvas pixels, it has to sit under the pencil to the pixel,
+      and a DOM layer over the map is one more surface to keep out of the way
+      of a press.
+    */
+    if (ringAt) {
+      const n = PLANT_GROUPS.length;
+      const step = (Math.PI * 2) / n;
+      ctx.save();
+      ctx.translate(ringAt.x, ringAt.y);
+
+      for (let i = 0; i < n; i++) {
+        const hot = i === ringHot;
+        const armed = PLANT_GROUPS[i].itemId === plantPickId;
+        // Canvas angles run from +x and clockwise with y down, so the top is
+        // −90°. Half a step back puts wedge 0 CENTRED on the top, which is
+        // the same offset `wedgeAt` applies — one convention, stated twice
+        // because the two have to agree exactly.
+        const from = -Math.PI / 2 + i * step - step / 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, RING_OUTER_PX, from, from + step);
+        ctx.arc(0, 0, RING_INNER_PX, from + step, from, true);
+        ctx.closePath();
+        ctx.fillStyle = hot
+          ? "rgba(34,197,94,0.42)"
+          : armed
+            ? "rgba(34,197,94,0.20)"
+            : "rgba(10,10,10,0.72)";
+        ctx.fill();
+        ctx.strokeStyle = hot ? "#22c55e" : "rgba(255,255,255,0.22)";
+        ctx.lineWidth = hot ? 2.5 : 1;
+        ctx.stroke();
+
+        // The symbol that will actually land on the map, not an icon of one.
+        const icon = wedgeIconAt(i, n);
+        // Through `plantFace`, so a stamp somebody changed in the symbols
+        // panel is the stamp the ring offers — not a second opinion about
+        // what a shrub looks like.
+        drawPlantStamp(ctx, plantFace(PLANT_GROUPS[i]).stamp, icon.x, icon.y - 8, 13, {
+          color: "#22c55e",
+          selected: hot,
+          toScale: true,
+        });
+        drawLabel(
+          ctx,
+          PLANT_GROUPS[i].label,
+          icon.x,
+          icon.y + 16,
+          hot ? "#ffffff" : "rgba(255,255,255,0.75)",
+        );
+      }
+
+      // The hole, which picks nothing: pressing here is how a ring summoned
+      // by accident is put away without arming anything.
+      ctx.beginPath();
+      ctx.arc(0, 0, RING_INNER_PX, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(10,10,10,0.72)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.22)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      drawLabel(ctx, "Plant", 0, 0, "rgba(255,255,255,0.75)");
+      ctx.restore();
+    }
+
   }, [
+    ringAt,
+    ringHot,
+    plantPickId,
     shapes,
     callouts,
     imageFailed,
@@ -2303,6 +2407,25 @@ export default function PlanCanvas({
   }
 
   function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
+    /*
+      THE RING TAKES THE PRESS BEFORE ANYTHING ELSE, and returns.
+
+      It is drawn over the map and it is what the tip is aimed at, so a press
+      while it is open belongs to it — including a press in the hole, which
+      closes it and plants nothing. Falling through would put a tree wherever
+      the ring happened to be sitting, which is the one outcome a menu must
+      never have.
+    */
+    if (ringAt) {
+      const cp = canvasPoint(e);
+      const hit = wedgeAt(cp.x - ringAt.x, cp.y - ringAt.y, PLANT_GROUPS.length);
+      closeRing();
+      // Arms the category; it does not plant. Where the tree goes is the next
+      // tap's question, and it is not "wherever you summoned the menu".
+      if (hit !== null) onPickPlant(PLANT_GROUPS[hit].itemId);
+      pointersRef.current.delete(e.pointerId);
+      return;
+    }
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     // Two fingers always pinch, whatever the tool — abandoning any drag the
@@ -2516,6 +2639,66 @@ export default function PlanCanvas({
       startY: e.clientY,
       centre: viewRef.current.centre,
     };
+  }
+
+  /** Put the ring away, and forget the dwell that was building. */
+  const closeRing = useCallback(() => {
+    if (dwellRef.current) clearTimeout(dwellRef.current);
+    dwellRef.current = null;
+    hoverRef.current = null;
+    setRingAt(null);
+    setRingHot(null);
+  }, []);
+
+  /*
+    A PENCIL HELD STILL ABOVE THE MAP.
+
+    Hover events are `pointermove` with nothing down. Only a PEN gets this: a
+    mouse hovers too, and a cursor left resting where somebody put it is not
+    an intention — a ring that opened every time it paused would be a ring
+    nobody could work under. And only in the Plant tool, where there is
+    something for it to offer.
+
+    On any device that does not report pencil hover — anything before the M2
+    iPad Pro, and every finger — this simply never fires, and the sub-toolbar
+    is still how a category is armed. Nothing is taken away.
+  */
+  function handleHover(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (e.pointerType !== "pen" || e.buttons !== 0) return;
+    if (tool !== "plant") {
+      if (ringAt) closeRing();
+      return;
+    }
+    const cp = canvasPoint(e);
+
+    if (ringAt) {
+      // Open: the tip steers it. Past the leave radius it closes, choosing
+      // nothing — moving away is how you refuse a menu you did not want.
+      const dx = cp.x - ringAt.x;
+      const dy = cp.y - ringAt.y;
+      if (Math.hypot(dx, dy) > RING_LEAVE_PX) {
+        closeRing();
+        return;
+      }
+      setRingHot(wedgeAt(dx, dy, PLANT_GROUPS.length));
+      return;
+    }
+
+    // Building a dwell. Any real drift restarts it, so a hand that is
+    // travelling never trips the ring on its way past.
+    const last = hoverRef.current;
+    if (last && ringSettled(last, cp)) return;
+    hoverRef.current = cp;
+    if (dwellRef.current) clearTimeout(dwellRef.current);
+    dwellRef.current = setTimeout(() => {
+      const held = hoverRef.current;
+      if (!held) return;
+      const canvas = canvasRef.current;
+      setRingAt(
+        ringOrigin(held, canvas?.clientWidth ?? 0, canvas?.clientHeight ?? 0),
+      );
+      setRingHot(null);
+    }, RING_HOVER_MS);
   }
 
   function handlePointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -2827,7 +3010,20 @@ export default function PlanCanvas({
         */
         data-plan-canvas="true"
         onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
+        onPointerMove={(e) => {
+          // Hover and drag are the same event with the buttons different, so
+          // both run: `handleHover` returns immediately on anything with a
+          // button down, and `handlePointerMove` has nothing to move without
+          // a drag in progress.
+          handleHover(e);
+          handlePointerMove(e);
+        }}
+        // Out of hover range, or off the canvas: the pencil has left, so the
+        // ring goes with it rather than hanging over a map nobody is aiming at.
+        onPointerLeave={() => closeRing()}
+        onPointerOut={(e) => {
+          if (e.pointerType === "pen") closeRing();
+        }}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
         onContextMenu={(e) => e.preventDefault()}

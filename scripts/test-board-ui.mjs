@@ -2191,6 +2191,197 @@ try {
   ok("and nothing was planted by reaching for the tool",
     (await planted()).plants.length === 2);
 
+  /*
+    7c-vii-6. THE TOOL RING, SUMMONED BY HOVERING A PENCIL.
+
+    The Pencil's own double-tap is delivered to native code only — WebKit
+    surfaces neither it nor the Pencil Pro's squeeze — so what stands in for it
+    is the one thing Safari DOES report from a pencil that is not touching:
+    where the tip is, up to 12mm above the glass. Hold it still over the map
+    with the Plant tool up and the six categories come to the tip.
+
+    PLAYWRIGHT HAS NO PEN. `page.mouse` sends `pointerType: "mouse"`, and the
+    ring refuses a mouse on purpose — a cursor left resting where somebody put
+    it is not an intention. So the events are dispatched through CDP with the
+    pointer type set, which is the only way to exercise the gesture this is
+    actually for.
+  */
+  const cdp = await page.context().newCDPSession(page);
+  const penMove = async (x, y, buttons = 0) => {
+    await cdp.send("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x,
+      y,
+      button: "none",
+      buttons,
+      pointerType: "pen",
+      force: 0,
+    });
+  };
+  const penDown = async (x, y) => {
+    await cdp.send("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x,
+      y,
+      button: "left",
+      buttons: 1,
+      clickCount: 1,
+      pointerType: "pen",
+      force: 0.5,
+    });
+    await cdp.send("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x,
+      y,
+      button: "left",
+      buttons: 0,
+      clickCount: 1,
+      pointerType: "pen",
+      force: 0,
+    });
+  };
+
+  // Armed on Shrub from the checks above; the Plant tool is up.
+  await page.click('button[aria-label="Plant"]');
+  await page.waitForTimeout(250);
+  const ringCanvas = await page.locator("canvas[data-plan-canvas]").boundingBox();
+  const ringHome = {
+    x: ringCanvas.x + ringCanvas.width * 0.3,
+    y: ringCanvas.y + ringCanvas.height * 0.35,
+  };
+
+  /** Plant green in a box around a page point — the ring is drawn in it. */
+  const ringInk = (pt, half = 110) =>
+    page.evaluate(([x, y, r]) => {
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const rect = c.getBoundingClientRect();
+      const k = c.width / rect.width;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const px = (i / 4) % c.width;
+        const py = Math.floor(i / 4 / c.width);
+        if (Math.abs(px - (x - rect.left) * k) > r * k) continue;
+        if (Math.abs(py - (y - rect.top) * k) > r * k) continue;
+        if (d[i + 1] > 120 && d[i + 1] - d[i] > 40 && d[i + 1] - d[i + 2] > 25) n++;
+      }
+      return n;
+    }, [pt.x, pt.y, half]);
+
+  // A MOUSE HOVERING IN THE SAME PLACE MUST NOT SUMMON IT.
+  await page.mouse.move(ringHome.x, ringHome.y);
+  await page.waitForTimeout(900);
+  const mouseInk = await ringInk(ringHome);
+  ok("A MOUSE RESTING ON THE MAP SUMMONS NOTHING",
+    mouseInk < 400, `${mouseInk} green under the cursor`);
+
+  // The pencil, held still.
+  await penMove(ringHome.x, ringHome.y);
+  await page.waitForTimeout(120);
+  await penMove(ringHome.x + 2, ringHome.y + 1);
+  await page.waitForTimeout(900);
+  const openInk = await ringInk(ringHome);
+  // READ THE CANVAS. A flag would be right against a build that opened
+  // nothing anybody could see.
+  ok("A PENCIL HELD STILL OVER THE MAP BRINGS THE RING UP",
+    openInk > mouseInk + 400, `${mouseInk} without, ${openInk} with`);
+
+  // Six wedges, and the pick has to be the one under the tip. Straight UP is
+  // the first category; the maths is pinned in scripts/test-plan.ts, and this
+  // is the half that says the ring on screen agrees with it.
+  /*
+    Which category is armed, off the sub-toolbar's own buttons.
+
+    By `aria-pressed`, not by text: a category button's text is a glyph, a
+    label and a spread run together, so its own words cannot answer the
+    question. The label was added for exactly this — the ring arms these
+    buttons and something has to be able to say which one it landed on.
+  */
+  const armed = () =>
+    page.evaluate(() => {
+      const names = ["Shade Tree", "Ornamental", "Evergreen", "Shrub",
+        "Perennial", "Ground Cover"];
+      for (const n of names) {
+        const b = document.querySelector(`button[aria-label="${n}"][aria-pressed="true"]`);
+        if (b) return n;
+      }
+      return null;
+    });
+  ok("Shrub is what is armed before the ring is used", (await armed()) === "Shrub",
+    await armed());
+
+  // Up and onto the first wedge, then down.
+  await penMove(ringHome.x, ringHome.y - 62);
+  await page.waitForTimeout(200);
+  await penDown(ringHome.x, ringHome.y - 62);
+  await page.waitForTimeout(400);
+  ok("PICKING THE TOP WEDGE ARMS SHADE TREE", (await armed()) === "Shade Tree",
+    await armed());
+  ok("and the ring goes away with the choice",
+    (await ringInk(ringHome)) < openInk * 0.5,
+    `${openInk} open, ${await ringInk(ringHome)} after`);
+  // The whole point of arming rather than planting: nothing is on the map yet.
+  ok("AND NOTHING WAS PLANTED BY CHOOSING",
+    (await planted()).plants.length === 2,
+    JSON.stringify((await planted()).plants));
+
+  // Round the ring the other way: bottom-left is the fifth of six.
+  await penMove(ringHome.x, ringHome.y);
+  await page.waitForTimeout(120);
+  await penMove(ringHome.x + 1, ringHome.y + 1);
+  await page.waitForTimeout(900);
+  const px = ringHome.x + Math.sin((-120 * Math.PI) / 180) * 62;
+  const py = ringHome.y - Math.cos((-120 * Math.PI) / 180) * 62;
+  await penMove(px, py);
+  await page.waitForTimeout(200);
+  await penDown(px, py);
+  await page.waitForTimeout(400);
+  ok("AND THE WEDGE UNDER THE TIP IS THE ONE PICKED, all the way round",
+    (await armed()) === "Perennial", await armed());
+
+  /*
+    THE HOLE PICKS NOTHING, which is how a ring summoned by accident is put
+    away. Without it the only ways out would be choosing something or waiting.
+  */
+  await penMove(ringHome.x, ringHome.y);
+  await page.waitForTimeout(120);
+  await penMove(ringHome.x + 1, ringHome.y);
+  await page.waitForTimeout(900);
+  ok("the ring is up again", (await ringInk(ringHome)) > mouseInk + 400);
+  await penDown(ringHome.x, ringHome.y);
+  await page.waitForTimeout(400);
+  ok("PRESSING THE MIDDLE PUTS IT AWAY AND CHANGES NOTHING",
+    (await ringInk(ringHome)) < openInk * 0.5 && (await armed()) === "Perennial",
+    `${await ringInk(ringHome)} ink, ${await armed()} armed`);
+  ok("and it planted nothing on the way out",
+    (await planted()).plants.length === 2);
+
+  // Moving the tip away closes it too — refusing a menu by walking off it.
+  await penMove(ringHome.x, ringHome.y);
+  await page.waitForTimeout(120);
+  await penMove(ringHome.x + 1, ringHome.y);
+  await page.waitForTimeout(900);
+  ok("once more, with feeling", (await ringInk(ringHome)) > mouseInk + 400);
+  await penMove(ringHome.x + 200, ringHome.y + 120);
+  await page.waitForTimeout(300);
+  ok("MOVING THE TIP AWAY CLOSES IT, choosing nothing",
+    (await ringInk(ringHome)) < openInk * 0.5 && (await armed()) === "Perennial",
+    `${await ringInk(ringHome)} ink`);
+
+  // And it belongs to the Plant tool: there is nothing for it to offer in Select.
+  await page.click('button[aria-label="Select"]');
+  await page.waitForTimeout(250);
+  await penMove(ringHome.x, ringHome.y);
+  await page.waitForTimeout(120);
+  await penMove(ringHome.x + 1, ringHome.y);
+  await page.waitForTimeout(900);
+  ok("AND IT ONLY COMES UP IN THE PLANT TOOL",
+    (await ringInk(ringHome)) < openInk * 0.5,
+    `${await ringInk(ringHome)} green in Select`);
+
+  await page.click('button[aria-label="Plant"]');
+  await page.waitForTimeout(250);
+
   // 7c-viii. A CORNER CAN BE SWAPPED BETWEEN AN ANGLE AND A CURVE.
   //
   // Storing the rounding PER CORNER is what a real bed needs — one that runs

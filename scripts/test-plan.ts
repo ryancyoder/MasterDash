@@ -57,6 +57,16 @@ import {
   shapeColorOf,
 } from "../lib/estimator/assemblyColor.ts";
 import {
+  RING_INNER_PX,
+  RING_LEAVE_PX,
+  RING_OUTER_PX,
+  RING_SETTLE_PX,
+  ringOrigin,
+  ringSettled,
+  wedgeAt,
+  wedgeIconAt,
+} from "../lib/estimator/toolRing.ts";
+import {
   pendingTakeoffs,
   photoTakeoffLabel,
 } from "../lib/estimator/pendingTakeoff.ts";
@@ -1258,6 +1268,108 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   ok("and it still reaches the take-off Upright draws",
     (takeoffProjection(off)?.shapes.length ?? 0) === 1,
     JSON.stringify(takeoffProjection(off)?.shapes.length ?? 0));
+}
+
+// --- The tool ring, summoned by hovering a pencil -----------------------------
+//
+// The angles are the whole risk. A ring that picks the wedge NEXT to the one
+// under the tip looks entirely right and plants the wrong thing, and no
+// screenshot would catch it — so every one of the six is checked by aiming at
+// its own middle and at both of its edges.
+
+{
+  console.log("\n--- the tool ring ---");
+
+  const N = 6;
+  const mid = (RING_INNER_PX + RING_OUTER_PX) / 2;
+  /** A point at `deg` clockwise from the top, `r` out from the centre. */
+  const at = (deg: number, r = mid) => ({
+    dx: Math.sin((deg * Math.PI) / 180) * r,
+    dy: -Math.cos((deg * Math.PI) / 180) * r,
+  });
+
+  // Wedge 0 is CENTRED on the top, not started there.
+  const p0 = at(0);
+  ok("straight up is the first wedge", wedgeAt(p0.dx, p0.dy, N) === 0);
+  for (let i = 0; i < N; i++) {
+    const c = at(i * 60);
+    ok(`wedge ${i} owns its own middle`, wedgeAt(c.dx, c.dy, N) === i,
+      `${wedgeAt(c.dx, c.dy, N)}`);
+    // Just inside each edge, which is where an off-by-half-a-step lands.
+    const lo = at(i * 60 - 29);
+    const hi = at(i * 60 + 29);
+    ok(`and both sides of it`,
+      wedgeAt(lo.dx, lo.dy, N) === i && wedgeAt(hi.dx, hi.dy, N) === i,
+      `${wedgeAt(lo.dx, lo.dy, N)} and ${wedgeAt(hi.dx, hi.dy, N)} for ${i}`);
+  }
+  // And the seam: 30 degrees round is the boundary between 0 and 1.
+  const seamLo = at(29.5);
+  const seamHi = at(30.5);
+  ok("THE SEAM IS WHERE IT LOOKS",
+    wedgeAt(seamLo.dx, seamLo.dy, N) === 0 && wedgeAt(seamHi.dx, seamHi.dy, N) === 1,
+    `${wedgeAt(seamLo.dx, seamLo.dy, N)} then ${wedgeAt(seamHi.dx, seamHi.dy, N)}`);
+  // Going the other way round the top, which is where a wrap is got wrong.
+  const back = at(-1);
+  ok("and it wraps at the top rather than falling off",
+    wedgeAt(back.dx, back.dy, N) === 0, `${wedgeAt(back.dx, back.dy, N)}`);
+
+  /*
+    THE HOLE IN THE MIDDLE IS NOT A WEDGE, and neither is anything past the
+    rim. Backing out without choosing is what a menu summoned by accident
+    needs most, and a ring whose centre picked something would have no way to
+    do it.
+  */
+  ok("the middle picks nothing", wedgeAt(0, 0, N) === null);
+  ok("nor does anything inside the hole",
+    wedgeAt(0, -(RING_INNER_PX - 2), N) === null);
+  ok("nor anything past the rim",
+    wedgeAt(0, -(RING_OUTER_PX + 2), N) === null);
+  ok("and the rim itself is still in",
+    wedgeAt(0, -(RING_OUTER_PX - 1), N) === 0);
+
+  ok("a ring of no wedges has none to pick", wedgeAt(0, -mid, 0) === null);
+
+  // The icons ride the same angles, so what is drawn and what is picked can
+  // never disagree.
+  for (let i = 0; i < N; i++) {
+    const icon = wedgeIconAt(i, N);
+    ok(`wedge ${i}'s icon is inside wedge ${i}`,
+      wedgeAt(icon.x, icon.y, N) === i, `${wedgeAt(icon.x, icon.y, N)}`);
+  }
+  ok("and the first icon is above the centre, not below it",
+    wedgeIconAt(0, N).y < 0 && Math.abs(wedgeIconAt(0, N).x) < 1e-9,
+    JSON.stringify(wedgeIconAt(0, N)));
+
+  /*
+    SUMMONED NEAR AN EDGE, THE RING MOVES SO IT FITS.
+
+    Otherwise the wedges over the edge could never be reached — a menu with
+    two of its six options off the canvas.
+  */
+  const corner = ringOrigin({ x: 4, y: 4 }, 1000, 600);
+  ok("a ring summoned in the corner is pulled onto the canvas",
+    corner.x >= RING_OUTER_PX && corner.y >= RING_OUTER_PX,
+    JSON.stringify(corner));
+  const far = ringOrigin({ x: 996, y: 596 }, 1000, 600);
+  ok("and off the far edge likewise",
+    far.x <= 1000 - RING_OUTER_PX && far.y <= 600 - RING_OUTER_PX,
+    JSON.stringify(far));
+  ok("while one with room is left exactly where it was asked for",
+    JSON.stringify(ringOrigin({ x: 500, y: 300 }, 1000, 600)) ===
+      JSON.stringify({ x: 500, y: 300 }));
+  // A canvas too small to hold the ring cannot satisfy both edges; it centres
+  // rather than clamping to a contradiction and landing off screen.
+  const tiny = ringOrigin({ x: 10, y: 10 }, 80, 60);
+  ok("and a canvas too small for it centres rather than contradicting itself",
+    tiny.x === 40 && tiny.y === 30, JSON.stringify(tiny));
+
+  ok("a tip that has not moved is settled",
+    ringSettled({ x: 100, y: 100 }, { x: 100 + RING_SETTLE_PX - 1, y: 100 }));
+  ok("and one that has drifted is not",
+    !ringSettled({ x: 100, y: 100 }, { x: 100 + RING_SETTLE_PX + 1, y: 100 }));
+  // The leave radius has to be outside the rim, or the ring would close
+  // before a wedge at the rim could be reached.
+  ok("and you can reach the rim without leaving", RING_LEAVE_PX > RING_OUTER_PX);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
