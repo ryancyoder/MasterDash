@@ -2615,42 +2615,22 @@ export default function PlanPage({
               rows={plantRows}
               symbolsOpen={symbolsOpen}
               onSymbolsOpen={setSymbolsOpen}
-              open={sideOpen("plantpick")}
-              onToggle={() => toggleSide("plantpick")}
-            />
-            {/* And the bill of what is actually on the plan, under it. */}
-          {/*
-            THE PLANTS, AS A BILL RATHER THAN AS A LIST OF SYMBOLS.
-
-            Grouped by species, because twelve rows all saying "Shrub" is not
-            something anybody can read and the COUNT is the answer here — a
-            plant take-off is a schedule of quantities, which is exactly what
-            the proposal turns it into.
-
-            Above the shapes: a plan is read plants-first when there are any,
-            and a bill that sat under nine beds would need scrolling to.
-          */}
-          {plantKinds.length > 0 && (
-            <PlantsCard
               kinds={plantKinds}
-              hidden={plan.plantsHidden}
-              onShow={togglePlants}
-              selected={selectedPlant}
-              selectedName={selectedPlant ? plantName(selectedPlant) : null}
+              onRemoveKind={(itemId, variantId) => {
+                removePlantsOfKind(itemId, variantId);
+                setSelectedPlantId(null);
+              }}
               onRemoveSelected={() => {
                 if (!selectedPlant) return;
                 removePlant(selectedPlant.id);
                 setSelectedPlantId(null);
               }}
-              onRemoveKind={(itemId, variantId) => {
-                removePlantsOfKind(itemId, variantId);
-                setSelectedPlantId(null);
-              }}
-              glyphFor={(itemId) => getItem(itemId)?.glyph ?? "🌿"}
-              open={sideOpen("plants")}
-              onToggle={() => toggleSide("plants")}
+              hidden={plan.plantsHidden}
+              onShow={togglePlants}
+              open={sideOpen("plantpick")}
+              onToggle={() => toggleSide("plantpick")}
             />
-          )}
+            {/* And the bill of what is actually on the plan, under it. */}
             </>
           ) : mode === "review" ? (
             <>
@@ -3760,6 +3740,11 @@ function PlantsPanel({
   pick,
   selectedName,
   onPick,
+  kinds,
+  onRemoveKind,
+  onRemoveSelected,
+  hidden,
+  onShow,
   prefs,
   onPrefs,
   onResetPrefs,
@@ -3773,6 +3758,13 @@ function PlantsPanel({
   /** The plant picked on the map, if one is — the names then rename it. */
   selectedName: string | null;
   onPick: (next: { itemId: string; variantId?: string; variantLabel?: string }) => void;
+  /** What is on the plan, by species. The counts hang off the same rows. */
+  kinds: { key: string; itemId: string; variantId?: string; label: string; count: number }[];
+  onRemoveKind: (itemId: string, variantId?: string) => void;
+  onRemoveSelected: () => void;
+  /** The planting layer is switched off, so the counts are not on the map. */
+  hidden: boolean;
+  onShow: () => void;
   prefs: PlantSymbolPrefs;
   onPrefs: (itemId: string, patch: { stamp?: PlantStampKind; spreadFt?: number }) => void;
   onResetPrefs: () => void;
@@ -3784,17 +3776,22 @@ function PlantsPanel({
 }) {
   const group = PLANT_GROUPS.find((g) => g.itemId === pick.itemId);
   const named = rows === null ? null : plantsInGroup(rows, group?.group ?? "");
+  const total = kinds.reduce((sum, k) => sum + k.count, 0);
+  /** What is placed, per category and per cultivar within it. */
+  const placedOf = (itemId: string) => ({
+    total: kinds.filter((k) => k.itemId === itemId).reduce((n, k) => n + k.count, 0),
+    generic: kinds.find((k) => k.itemId === itemId && !k.variantId)?.count ?? 0,
+    cultivars: kinds.filter((k) => k.itemId === itemId && k.variantId),
+  });
   return (
     <InfoBox
       label="PLANTING"
       open={open}
       onToggle={onToggle}
       badge={
-        !open && (
-          <span className="min-w-0 flex-1 truncate text-[0.7rem] text-ink">
-            {pick.variantLabel ?? group?.label ?? "Plant"}
-          </span>
-        )
+        <span className="shrink-0 text-[0.7rem] tabular-nums text-muted">
+          {total} placed
+        </span>
       }
       action={
         <button
@@ -3819,32 +3816,111 @@ function PlantsPanel({
         room to be drawn at a size where its texture reads, which is what
         tells the categories apart at all.
       */}
+      {/*
+        ONE LIST, NOT TWO.
+
+        This row used to be the picker and a second card underneath was the
+        bill — the same six categories, one above the other, in a column
+        narrow enough that they read as one list drawn twice. The count and
+        its Clear hang off the row that arms the category, because "what a
+        shrub is" and "how many shrubs there are" are two facts about one
+        thing and there was never a reason to ask them in two places.
+
+        A row with nothing placed carries no count and no Clear. A zero is not
+        information, and a Clear that would clear nothing says there is
+        something there.
+      */}
       <div className="mt-2 flex flex-col gap-1">
         {PLANT_GROUPS.map((g) => {
           const on = pick.itemId === g.itemId;
+          const placed = placedOf(g.itemId);
           return (
-            <button
-              key={g.itemId}
-              onClick={() => onPick({ itemId: g.itemId })}
-              aria-label={g.label}
-              aria-pressed={on}
-              className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-bold ${
-                on ? "bg-accent text-black" : "bg-surface2 text-ink"
-              }`}
-            >
-              <StampSwatch
-                kind={stampFor(g.itemId, prefs)}
-                color={on ? "#000000" : "#22c55e"}
-                size={26}
-              />
-              <span className="min-w-0 flex-1 truncate text-left">{g.label}</span>
-              <span className="shrink-0 tabular-nums opacity-70">
-                {spreadFtFor(g.itemId, prefs)}&#8242;
-              </span>
-            </button>
+            <div key={g.itemId} className="flex flex-col gap-0.5">
+              <div
+                className={`flex items-center gap-2 rounded-lg pr-1 text-xs font-bold ${
+                  on ? "bg-accent text-black" : "bg-surface2 text-ink"
+                }`}
+              >
+                <button
+                  onClick={() => onPick({ itemId: g.itemId })}
+                  aria-label={g.label}
+                  aria-pressed={on}
+                  className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5"
+                >
+                  <StampSwatch
+                    kind={stampFor(g.itemId, prefs)}
+                    color={on ? "#000000" : "#22c55e"}
+                    size={26}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-left">{g.label}</span>
+                  <span className="shrink-0 tabular-nums opacity-70">
+                    {spreadFtFor(g.itemId, prefs)}&#8242;
+                  </span>
+                </button>
+                {placed.total > 0 && (
+                  <>
+                    <span className="shrink-0 tabular-nums">&times;{placed.total}</span>
+                    <button
+                      onClick={() => onRemoveKind(g.itemId, undefined)}
+                      title={`Remove all ${placed.generic} unnamed ${g.label}`}
+                      disabled={placed.generic === 0}
+                      className={`shrink-0 rounded-md px-1.5 py-0.5 text-[0.6rem] font-bold disabled:opacity-30 ${
+                        on ? "bg-black/15 text-black" : "bg-surface text-muted"
+                      }`}
+                    >
+                      Clear
+                    </button>
+                  </>
+                )}
+              </div>
+              {/*
+                THE CULTIVARS PLACED UNDER THEIR OWN CATEGORY, indented.
+
+                They used to be top-level rows on the bill — "Arborvitae Mr.
+                Bowling Ball" sitting beside "Shrub" as though it were a
+                seventh category, when it is three of the eleven shrubs on the
+                row above it. They are separate lines on the proposal, which
+                is why they keep their own count and their own Clear.
+              */}
+              {placed.cultivars.map((k) => (
+                <div
+                  key={k.key}
+                  className="ml-6 flex items-center gap-2 rounded-lg bg-surface2/60 px-2 py-1 text-[0.65rem]"
+                >
+                  <span className="min-w-0 flex-1 truncate text-ink">{k.label}</span>
+                  <span className="shrink-0 tabular-nums font-bold text-ink">
+                    &times;{k.count}
+                  </span>
+                  <button
+                    onClick={() => onRemoveKind(k.itemId, k.variantId)}
+                    title={`Remove all ${k.count} ${k.label}`}
+                    className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-[0.6rem] font-bold text-muted"
+                  >
+                    Clear
+                  </button>
+                </div>
+              ))}
+            </div>
           );
         })}
       </div>
+
+      {/*
+        THE COUNT IS NOT A LIE, AND THIS IS WHAT KEEPS IT FROM READING AS ONE.
+
+        Every count above stays exactly as it was while the layer is switched
+        off — the plants are on the take-off and they are priced. Without this
+        line the column says "16 placed" over a map with nothing on it, which
+        reads as the count being wrong rather than as the drawing being off.
+      */}
+      {hidden && (
+        <button
+          onClick={onShow}
+          className="mt-2 w-full rounded-lg bg-surface2 px-2 py-1.5 text-left text-[0.65rem] font-bold text-muted"
+        >
+          Not drawn on the map · counted here · <span className="text-ink">show</span>
+        </button>
+      )}
 
       {symbolsOpen && (
         <div className="mt-2">
@@ -3871,6 +3947,23 @@ function PlantsPanel({
         <span className="min-w-0 flex-1 truncate text-[0.65rem] text-muted">
           {selectedName ? `naming ${selectedName}` : `next ${group?.label ?? "plant"}`}
         </span>
+        {/*
+          AND THE PICKED PLANT'S REMOVE, HERE.
+
+          It was the third copy of the same thing: the row above highlighted,
+          this line naming it, and a separate card underneath repeating its
+          name with a Remove of its own. Taking a plant off belongs beside the
+          line that says which plant is in hand.
+        */}
+        {selectedName && (
+          <button
+            onClick={onRemoveSelected}
+            title="Remove this plant"
+            className="shrink-0 rounded-md bg-surface2 px-2 py-0.5 text-[0.6rem] font-bold text-[#fca5a5]"
+          >
+            Remove
+          </button>
+        )}
       </div>
       <div className="mt-1 flex max-h-64 flex-col gap-1 overflow-y-auto md-scroll">
         <button
@@ -4008,112 +4101,6 @@ function PlantSymbolPanel({
         })}
       </div>
     </div>
-  );
-}
-
-function PlantsCard({
-  kinds,
-  hidden,
-  onShow,
-  selected,
-  selectedName,
-  onRemoveSelected,
-  onRemoveKind,
-  glyphFor,
-  open,
-  onToggle,
-}: {
-  kinds: { key: string; itemId: string; variantId?: string; label: string; count: number }[];
-  hidden: boolean;
-  onShow: () => void;
-  selected: PlacedPlant | null;
-  selectedName: string | null;
-  onRemoveSelected: () => void;
-  onRemoveKind: (itemId: string, variantId?: string) => void;
-  glyphFor: (itemId: string) => string;
-  open: boolean;
-  onToggle: () => void;
-}) {
-  const total = kinds.reduce((sum, k) => sum + k.count, 0);
-  return (
-    <InfoBox
-      label="PLANTS"
-      open={open}
-      onToggle={onToggle}
-      title={<span className="text-xs font-bold text-ink">Plants</span>}
-      // The count is the whole point of this box, so it is what survives
-      // folding — a bill of plants folded to the word "plants" says nothing.
-      badge={<span className="text-xs tabular-nums text-muted">{total} placed</span>}
-    >
-      <div className="mb-2" />
-      {/*
-        THE COUNT IS NOT A LIE, AND THIS IS WHAT KEEPS IT FROM READING AS ONE.
-
-        Every row and every number below stays exactly as it was while the
-        layer is off — the plants are on the take-off and they are priced.
-        Without this line the card says "12 placed" over a map with nothing on
-        it, which reads as the count being wrong rather than as the drawing
-        being switched off.
-      */}
-      {hidden && (
-        <button
-          onClick={onShow}
-          className="mb-2 w-full rounded-lg bg-surface2 px-2 py-1.5 text-left text-[0.65rem] font-bold text-muted"
-        >
-          Not drawn on the map · counted here · <span className="text-ink">show</span>
-        </button>
-      )}
-      <div className="flex flex-col gap-1">
-        {kinds.map((kind) => (
-          <div key={kind.key} className="flex items-center gap-2">
-            <span aria-hidden="true" className="shrink-0 text-sm">
-              {glyphFor(kind.itemId)}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-xs text-ink">
-              {kind.label}
-            </span>
-            <span className="shrink-0 text-xs font-bold tabular-nums text-ink">
-              ×{kind.count}
-            </span>
-            <button
-              onClick={() => onRemoveKind(kind.itemId, kind.variantId)}
-              title={`Remove all ${kind.count} ${kind.label}`}
-              className="shrink-0 rounded-lg bg-surface2 px-2 py-1 text-[0.65rem] font-bold text-muted"
-            >
-              Clear
-            </button>
-          </div>
-        ))}
-      </div>
-
-      {selected && (
-        <div className="mt-2 border-t border-edge pt-2">
-          <p className="mb-1.5 truncate text-[0.7rem] font-bold text-ink">
-            {selectedName}
-          </p>
-          {/*
-            NAMING MOVED OUT OF HERE, and that is the point of the change.
-
-            This card carried "Name it" — which armed the plant's own category
-            — and then "Make it X" to apply what was armed: two presses to say
-            something the app could already see. Picking a plant on the map now
-            arms its category and its name, so the list above is already the
-            right one and a tap on a name is the whole of it. What is left here
-            is what this card is for: what it is, and taking it off.
-          */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <div className="flex-1" />
-            <button
-              onClick={onRemoveSelected}
-              title="Remove this plant"
-              className="rounded-lg bg-surface2 px-2.5 py-1.5 text-[0.65rem] font-bold text-[#fca5a5]"
-            >
-              Remove
-            </button>
-          </div>
-        </div>
-      )}
-    </InfoBox>
   );
 }
 

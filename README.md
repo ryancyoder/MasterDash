@@ -922,6 +922,26 @@ The arming happens in the tap handler rather than an effect. That is what
 `react-hooks/set-state-in-effect` insists on, and rightly: it is a consequence
 of a tap, not of a render.
 
+**One list, not two.** The column shipped with the picker as one list of the
+six categories and a bill of what was placed as a second, directly underneath —
+in a column narrow enough that they read as one list drawn twice. The named
+cultivars made it worse: *Arborvitae Mr. Bowling Ball* sat on the bill beside
+*Shrub* as though it were a seventh category, when it is three of the eleven
+shrubs on the row above it. And the plant you had picked appeared a third time
+— its category row highlighted, the naming line saying so, and a card at the
+bottom repeating its name with a Remove of its own.
+
+So the count and its Clear hang off the row that arms the category: what a
+shrub **is** and how many shrubs there **are** are two facts about one thing,
+and there was never a reason to ask them in two places. Cultivars are indented
+under their own category, keeping their own count and Clear because they are
+their own line on the proposal. The picked plant's Remove sits on the naming
+line, beside the words that say which plant is in hand.
+
+**A row with nothing placed carries no count and no Clear.** A zero is not
+information, and a Clear that would clear nothing says there is something
+there.
+
 **One category per row, not a grid of six.** A grid would fit and would give
 the spread nowhere to go — and the spread is half of what is being chosen,
 since a symbol on this plan is a canopy rather than a pin and eleven 6ft shrubs

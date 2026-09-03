@@ -2329,6 +2329,44 @@ try {
       (await page.locator('main button[aria-pressed][aria-label="Ground Cover"]').count()) === 1);
 
   /*
+    ONE LIST, NOT TWO — which is the redundancy this column shipped with.
+
+    The picker was one list of the six categories and a bill underneath was a
+    second, in a column narrow enough that they read as one list drawn twice.
+    The count and its Clear hang off the row that arms the category now: what
+    a shrub IS and how many shrubs there ARE are two facts about one thing.
+  */
+  ok("there is one plant list, not two",
+    (await page.locator('button[aria-label="Fold or open PLANTING"]').count()) === 1 &&
+      (await page.locator('button[aria-label="Fold or open PLANTS"]').count()) === 0);
+
+  /** A category's whole row, as text — the button and whatever hangs off it. */
+  const categoryRow = (label) =>
+    page.evaluate(([l]) => {
+      const b = document.querySelector(`button[aria-label="${l}"][aria-pressed]`);
+      const row = b?.closest("div.flex.flex-col");
+      return row ? (row.textContent ?? "").replace(/\s+/g, " ").trim() : null;
+    }, [label]);
+
+  ok("THE COUNT IS ON THE ROW THAT ARMS THE CATEGORY",
+    /Shrub/.test((await categoryRow("Shrub")) ?? "") &&
+      /×2/.test((await categoryRow("Shrub")) ?? ""),
+    await categoryRow("Shrub"));
+  ok("and a Clear with it",
+    /Clear/.test((await categoryRow("Shrub")) ?? ""),
+    await categoryRow("Shrub"));
+
+  /*
+    A category with nothing placed carries no count and no Clear. A zero is
+    not information, and a Clear that would clear nothing says there is
+    something there.
+  */
+  ok("a category with nothing placed carries neither",
+    !/×/.test((await categoryRow("Perennial")) ?? "x") &&
+      !/Clear/.test((await categoryRow("Perennial")) ?? "Clear"),
+    await categoryRow("Perennial"));
+
+  /*
     THE NAMES SHOW WITHOUT BEING ASKED FOR.
 
     The bar needed a "Name it" button because it had no room for them; a
@@ -2412,6 +2450,21 @@ try {
   ok("and it did not plant anything to do it",
     (await planted()).plants.length === 2,
     JSON.stringify((await planted()).plants));
+
+  /*
+    AND THE CULTIVAR IS NESTED UNDER ITS OWN CATEGORY.
+
+    Named plants used to be top-level rows on the bill — "Arborvitae Mr.
+    Bowling Ball" sitting beside "Shrub" as though it were a seventh category,
+    when it is three of the eleven shrubs on the row above. It keeps its own
+    count and its own Clear, because it is its own line on the proposal.
+  */
+  const shrubRow = (await categoryRow("Shrub")) ?? "";
+  ok("A NAMED PLANT IS NESTED UNDER ITS CATEGORY, not beside it",
+    /×1/.test(shrubRow) && shrubRow.length > 20,
+    shrubRow);
+  ok("and the category still counts all of them, named or not",
+    /×2/.test(shrubRow), shrubRow);
 
   // Reaching for a category is a choice about what comes NEXT, so it puts the
   // plant down rather than quietly turning a shrub into a tree.
