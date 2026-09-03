@@ -858,6 +858,64 @@ being wrong rather than the thing measured:
 Mutation-tested: making a plant grabbable in Select again turns 1 check red,
 and ignoring the custom spread turns 2 here and 2 in `test:plan`.
 
+#### Only a pencil plants
+
+In the Plant tool a **finger pans and pinches and nothing else**. Placing a
+plant is a drawn mark, and the hand is doing something else — a plan is read
+and moved about with two fingers while the pencil does the marking. A stray
+thumb that plants a tree is a tree somebody has to notice and undo.
+
+Moving a plant follows the same rule, for the same reason: one that slid
+because a thumb rested on it is a plant nobody moved on purpose. A finger tap
+still *selects* what it lands on; it just creates nothing.
+
+**A mouse is admitted.** A desk has no pencil, a mouse cannot pinch, and its
+drag is already a pan — and on the iPad no mouse events are generated at all,
+so admitting it changes nothing in the field. It is the same `pen`-or-`mouse`
+rule Upright's `isDrawInput()` uses.
+
+**The cost, stated plainly: on an iPad with no pencil to hand, plants cannot be
+placed on the map.** Every other tool still takes a finger, and the tile grid
+still counts plants — but that is a real limit and it is worth knowing before
+somebody drives to a yard without the pencil.
+
+#### Plants get their own column
+
+**Review · Plan · Plants.** The categories, the cultivar names, the symbols and
+their sizes, and the bill of what is placed were a bar across the top of the
+map. They are a third tab now.
+
+**A list of forty cultivars is a column, not a row.** The category row fitted
+in a bar; the names never did — there are 962 plants in the table and a shrub
+group alone runs to dozens, so a row that scrolls sideways is a list you hunt
+through rather than read. And every row across the top is a row taken off the
+map on an iPad held in one hand.
+
+**The names show without being asked for.** The bar needed a *Name it* button
+because it had no room for them; a column has room, and a cultivar you can see
+is one you might use. The generic leads the list, exactly as it does on the
+grid: an unnamed shrub is a real answer, not a failure to finish. The 962 rows
+are still fetched lazily — on the first opening of the column rather than on
+the first press of a button that no longer exists.
+
+**One category per row, not a grid of six.** A grid would fit and would give
+the spread nowhere to go — and the spread is half of what is being chosen,
+since a symbol on this plan is a canopy rather than a pin and eleven 6ft shrubs
+do not fit in a 20ft bed. One per row also leaves the stamp room to be drawn at
+a size where its texture reads, which is the only thing telling the categories
+apart.
+
+**Arming the Plant tool opens the column.** Reaching for the tool is reaching
+for a category and a name; leaving the column on the take-off would mean two
+taps to arm anything, and a tool whose controls are on a screen you have to go
+and find.
+
+**What that cost the suite, and it is the honest cost of the move:** a dozen
+checks were reading plant controls that are no longer over the map, or shape
+cards while the column was on Plants. They say which tab they need now. A page
+that has just reloaded opens on the take-off, so anything reading the plant
+column has to open it first.
+
 #### The tool ring, summoned by hovering a pencil
 
 Hold an Apple Pencil over the map with the **Plant** tool up and the symbol it

@@ -1760,6 +1760,44 @@ try {
   // several sides: a plant placed on the map and the same plant tapped on the
   // grid are ONE line, because the map is another way of entering the estimate
   // rather than a second estimate that has to be reconciled with it.
+  /*
+    THE THIRD COLUMN.
+
+    Everything about plants — the categories, the names, the symbols and the
+    bill — moved off a bar across the top of the map and into its own tab.
+    Arming the Plant TOOL opens it, but a page that has just reloaded opens on
+    the take-off, so anything reading the plant column has to say so.
+  */
+  /*
+    A PENCIL, THROUGH CDP.
+
+    Playwright's own mouse sends `pointerType: "mouse"`, and the two rules
+    below turn on the difference between a pen and a finger — so both have to
+    be dispatched with the pointer type set, which only CDP can do.
+  */
+  const cdpPen = await page.context().newCDPSession(page);
+  const penDownAt = async (x, y) => {
+    await cdpPen.send("Input.dispatchMouseEvent", {
+      type: "mousePressed", x, y, button: "left", buttons: 1,
+      clickCount: 1, pointerType: "pen", force: 0.5,
+    });
+    await cdpPen.send("Input.dispatchMouseEvent", {
+      type: "mouseReleased", x, y, button: "left", buttons: 0,
+      clickCount: 1, pointerType: "pen", force: 0,
+    });
+  };
+
+  const plantsTab = page.locator('button:text-is("plants")');
+  const openPlantsTab = async () => {
+    if ((await plantsTab.count()) === 1) await plantsTab.click();
+    await page.waitForTimeout(300);
+  };
+  const openPlanTab = async () => {
+    const t = page.locator('button:text-is("plan")');
+    if ((await t.count()) === 1) await t.click();
+    await page.waitForTimeout(300);
+  };
+
   const plantGreen = () =>
     page.evaluate(() => {
       const c = document.querySelector("canvas[data-plan-canvas]");
@@ -1920,6 +1958,8 @@ try {
 
   await page.click('button[aria-label="Select"]');
   await page.waitForTimeout(200);
+  // A reload opens on the take-off; the plant card is in the Plants column.
+  await openPlantsTab();
 
   // Coming back is a fresh mount, and a fresh mount FITS the map to what is
   // drawn — so the symbols are no longer where they were tapped. Find one on
@@ -2215,6 +2255,8 @@ try {
   await page.locator("main button.aspect-square").nth(planAfterHide).click();
   await page.waitForSelector('button[aria-label="Plant"]', { timeout: 15000 });
   await page.waitForTimeout(1200);
+  // A reload opens on the take-off; the counted-here line is on the plant card.
+  await openPlantsTab();
   const reloadInk = await plantGreen();
   ok("IT SURVIVES THE PAGE BEING RELOADED",
     reloadInk < 20 &&
@@ -2233,6 +2275,109 @@ try {
     `${await plantGreen()} against ${reloadInk} hidden`);
   ok("and nothing was planted by reaching for the tool",
     (await planted()).plants.length === 2);
+
+  /*
+    7c-vii-5a. THE PLANTS COLUMN.
+
+    The categories, the cultivar names, the symbols and the bill were a bar
+    across the top of the map. A list of forty cultivars is a column and not a
+    row, and every row up there was a row taken off the map on an iPad held in
+    one hand — so they are a third tab beside Review and Plan.
+  */
+  ok("there is a third tab beside Review and Plan",
+    (await plantsTab.count()) === 1);
+  await openPlanTab();
+  await page.waitForTimeout(200);
+  ok("the plant categories are NOT on a bar over the map",
+    (await page.locator('button[aria-label="Shade Tree"]').count()) === 0,
+    `${await page.locator('button[aria-label="Shade Tree"]').count()} on the plan tab`);
+
+  /*
+    AND REACHING FOR THE TOOL OPENS THE COLUMN.
+
+    Reaching for the Plant tool is reaching for a category and a name. Leaving
+    the column on the take-off would mean two taps to arm anything, and a tool
+    whose controls are on a screen you have to go and find.
+  */
+  await page.click('button[aria-label="Plant"]');
+  await page.waitForTimeout(400);
+  ok("ARMING THE PLANT TOOL OPENS THE PLANTS COLUMN",
+    (await page.locator('button[aria-label="Shade Tree"][aria-pressed]').count()) === 1,
+    `${await page.locator('button[aria-label="Shade Tree"]').count()} categories`);
+  ok("with all six of them",
+    (await page.locator('main button[aria-pressed][aria-label="Ornamental"]').count()) === 1 &&
+      (await page.locator('main button[aria-pressed][aria-label="Ground Cover"]').count()) === 1);
+
+  /*
+    THE NAMES SHOW WITHOUT BEING ASKED FOR.
+
+    The bar needed a "Name it" button because it had no room for them; a
+    column has room, and a cultivar you can see is one you might use. The
+    generic leads the list, because an unnamed shrub is a real answer.
+  */
+  ok("and the names for the armed category are simply there",
+    (await page.locator('button:has-text("Any Shrub")').count()) === 1);
+  ok("with no Name it button left to press",
+    (await page.locator('button:text-is("Name it")').count()) === 0);
+
+  // Arming another category changes the list under it.
+  await page.click('button[aria-label="Ornamental"]');
+  await page.waitForTimeout(400);
+  ok("ARMING ANOTHER CATEGORY CHANGES THE NAMES UNDER IT",
+    (await page.locator('button:has-text("Any Ornamental")').count()) === 1 &&
+      (await page.locator('button:has-text("Any Shrub")').count()) === 0);
+  await page.click('button[aria-label="Shrub"]');
+  await page.waitForTimeout(300);
+
+  /*
+    7c-vii-5b. ONLY A PENCIL PLANTS.
+
+    A plan is read and moved about with two fingers while the pencil does the
+    marking, so a finger in the Plant tool pans and pinches and nothing else.
+    A stray thumb that plants a tree is a tree somebody has to notice and
+    undo.
+
+    A MOUSE IS ADMITTED, which is why every other check in this suite still
+    plants with `page.mouse`: a desk has no pencil, a mouse cannot pinch, and
+    on the iPad no mouse events are generated at all.
+  */
+  const touchTap = async (x, y) => {
+    await cdpTouch.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y, id: 1 }],
+    });
+    await cdpTouch.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+  };
+  const cdpTouch = await page.context().newCDPSession(page);
+
+  await page.click('button[aria-label="Plant"]');
+  await page.waitForTimeout(300);
+  const fingerCanvas = await page.locator("canvas[data-plan-canvas]").boundingBox();
+  const fingerAt = {
+    x: fingerCanvas.x + fingerCanvas.width * 0.42,
+    y: fingerCanvas.y + fingerCanvas.height * 0.7,
+  };
+  const beforeFinger = (await planted()).plants.length;
+  await touchTap(fingerAt.x, fingerAt.y);
+  await page.waitForTimeout(400);
+  ok("A FINGER TAP IN THE PLANT TOOL PLANTS NOTHING",
+    (await planted()).plants.length === beforeFinger,
+    `${beforeFinger} before, ${(await planted()).plants.length} after`);
+
+  // And the pencil in the same place does.
+  await penDownAt(fingerAt.x, fingerAt.y);
+  await page.waitForTimeout(400);
+  ok("AND A PENCIL IN THE SAME PLACE DOES",
+    (await planted()).plants.length === beforeFinger + 1,
+    `${beforeFinger} before, ${(await planted()).plants.length} after`);
+  // Put it back: the counts below are written for the plants that were here.
+  await page.locator('button[aria-label="Undo the last change to the plan"]').click();
+  await page.waitForTimeout(400);
+  ok("and undo takes it off again",
+    (await planted()).plants.length === beforeFinger);
 
   /*
     7c-vii-6. THE TOOL RING, SUMMONED BY HOVERING A PENCIL.
@@ -2522,6 +2667,12 @@ try {
   //
   // This also draws the suite's first shape, which is worth having on its own:
   // the take-off's central gesture had no end-to-end check at all.
+  /*
+    Back to the take-off's own column. Everything from here is shapes, and
+    their cards are in the Plan tab — the Plant tool left the column on
+    Plants, which is what it is for.
+  */
+  await openPlanTab();
   await page.click('button[aria-label="Area"]');
   await page.waitForTimeout(200);
   const canvasForShape = await page.locator("canvas[data-plan-canvas]").boundingBox();

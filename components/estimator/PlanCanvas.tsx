@@ -2272,8 +2272,29 @@ export default function PlanCanvas({
     return null;
   }
 
+/**
+ * WHAT MAY PLANT, AND MOVE, A PLANT.
+ *
+ * A pencil and a mouse; never a finger. Placing a plant is a drawn mark, and
+ * the hand is doing something else — a plan is read and moved about with two
+ * fingers while the pencil does the marking, and a stray thumb that plants a
+ * tree is a tree somebody has to notice and undo.
+ *
+ * A MOUSE IS ADMITTED because a desk has no pencil and the gesture it would
+ * be confused with does not exist there: a mouse cannot pinch, and its drag
+ * is already a pan. On the iPad no mouse events are generated at all, so
+ * admitting it changes nothing in the field.
+ *
+ * The cost, stated plainly: on an iPad with no pencil to hand, plants cannot
+ * be placed on the map at all. The tile grid still counts them, and every
+ * other tool still takes a finger.
+ */
+function isPlantInput(type: string): boolean {
+  return type === "pen" || type === "mouse";
+}
+
   /** A tap that landed without turning into a pan. */
-  function handleTap(cp: Pt) {
+  function handleTap(cp: Pt, pointerType: string) {
     const t = transformNow();
     const ll = toLatLng(fromCanvas(cp, t));
 
@@ -2305,7 +2326,9 @@ export default function PlanCanvas({
         onSelectPlant(hit.id);
         return;
       }
-      onPlacePlant(ll);
+      // A finger tap in the Plant tool selects what it lands on and nothing
+      // else. It does not plant: see `isPlantInput`.
+      if (isPlantInput(pointerType)) onPlacePlant(ll);
       return;
     }
 
@@ -2536,7 +2559,10 @@ export default function PlanCanvas({
       It stays SELECTABLE in Select, because tapping one to read its card or
       take it off the plan is not a change to where anything is.
     */
-    if (tool === "plant") {
+    // Moving a plant is the same rule as placing one: a finger is panning the
+    // map, and a plant that slid because a thumb rested on it is a plant
+    // nobody moved on purpose.
+    if (tool === "plant" && isPlantInput(e.pointerType)) {
       const t = transformNow();
       const grabbed = plantAt(cp, t);
       if (grabbed) {
@@ -3056,7 +3082,7 @@ export default function PlanCanvas({
     setSnapTo(null);
     setDragNodes(null);
 
-    if (press && !press.moved) handleTap(canvasPoint(e));
+    if (press && !press.moved) handleTap(canvasPoint(e), e.pointerType);
   }
 
   function handlePointerCancel(e: React.PointerEvent<HTMLCanvasElement>) {
