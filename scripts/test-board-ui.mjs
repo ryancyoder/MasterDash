@@ -4279,11 +4279,19 @@ try {
   ok("the conifer is found, and drawn big enough to have an edge",
     evgRim.length > 40 && Math.max(...evgRim) > 20,
     `${evgRim.length} rays, ${Math.max(...evgRim)}px radius`);
-  ok("A LONE CONIFER'S OWN OUTLINE IS SERRATED, not a circle with a star in it",
+  /*
+    AND IT IS A POINTED STAR, NOT A NIBBLED RIM — a third of the radius at
+    least. That floor is the part worth having. "More variation than a circle"
+    is satisfied by a 2px ripple, which is exactly what the first two attempts
+    at this shipped and what was reported, twice, as unrecognisable. The
+    profile cuts to 42% of the radius; a third leaves room to tune it without
+    leaving room to lose it.
+  */
+  ok("A LONE CONIFER'S OWN OUTLINE IS A POINTED STAR, not a nibbled circle",
     spreadOf(evgRim) > spreadOf(soloRim) + 2 &&
-      spreadOf(evgRim) > Math.max(...evgRim) * 0.08,
-    `${spreadOf(evgRim)} against ${spreadOf(soloRim)} on the plain circle, ` +
-      `radius ${Math.max(...evgRim)}`);
+      spreadOf(evgRim) > Math.max(...evgRim) * 0.33,
+    `${spreadOf(evgRim)} deep on a ${Math.max(...evgRim)}px radius, ` +
+      `against ${spreadOf(soloRim)} on the plain circle`);
   ok("AND ITS TEETH ARE CUT INWARD — it still says where the canopy stops",
     Math.max(...evgRim) <= Math.max(...soloRim) + 1,
     `${Math.max(...evgRim)} against the round ${Math.max(...soloRim)}`);

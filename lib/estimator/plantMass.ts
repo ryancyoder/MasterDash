@@ -295,17 +295,24 @@ export const EDGE_PROFILES: Record<string, EdgeProfile> = {
   shade_tree: { lobes: 9, depth: 0.14, shape: "scallop" },
   ornamental_tree: { lobes: 8, depth: 0.13, shape: "scallop" },
   /*
-    SPIKES, AND THEY HAVE TO BE BIG ONES.
+    SPIKES, AND THEY HAVE TO BE BIG ONES — 0.58, which is nearly four times
+    any other profile and is a POINTED STAR rather than a serration: the
+    notches cut to 42% of the radius, so what is drawn is twelve real points
+    with valleys between them.
 
-    This is the edge that should be unmistakable at a glance — a conifer mass
-    ought to be recognisable across the room with the label covered — and it
-    is the category the fewest pixels are ever spent on, since an evergreen's
-    8ft spread is the smallest of the three trees. So it gets the deepest bite
-    of any profile and few enough teeth that each one is a shape rather than a
-    serration: 12 at a quarter of the radius is a 6px tooth on a canopy that
-    the old figures drew as a 2px ripple.
+    That is the figure Ryan picked off a sheet of four, and picking it off a
+    sheet is the point. This edge was set twice from reasoning about tooth
+    sizes in pixels — 20 teeth at 14%, then 12 at 26% — and reported as
+    unrecognisable both times. A conifer is not a circle with a nibbled rim.
+    It is a spiky thing, and how spiky is a question only a drawing answers.
+
+    ONE PROFILE, TWO SURFACES, and this depth was checked on both before it
+    was taken: a lone conifer stamp is this outline, and a hedge of them
+    massed is the same teeth cut into the union boundary. A run of five at
+    0.58 still reads as one continuous mass rather than as a row of stars,
+    which is the thing that would have argued for a second, shallower figure.
   */
-  evergreen_tree: { lobes: 12, depth: 0.26, shape: "saw" },
+  evergreen_tree: { lobes: 12, depth: 0.58, shape: "saw" },
   // A mound: shallow scallops, fewer than a tree's and not as deep.
   shrub: { lobes: 7, depth: 0.12, shape: "scallop" },
   // Finer and sharper, which is what a stand of grasses looks like in outline

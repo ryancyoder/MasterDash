@@ -480,13 +480,15 @@ export function drawPlantStamp(
       ringOfDiscs(ctx, x, y, r * 0.52, r * 0.23, 7);
       break;
     case "evergreen_tree":
-      // The sawtooth is the rim now, so what goes inside is the branching
-      // under it — short, one spoke per tooth, and stopping well clear of the
-      // notches. A second ring of teeth in here is what made the old symbol a
-      // scribble. It waits for room: at a 12px canopy twelve spokes into a
-      // 7px middle is a blot, and the serrated outline is already saying
-      // conifer on its own.
-      if (r >= 16) radial(ctx, x, y, r * 0.12, r * 0.55, 12);
+      /*
+        NOTHING INSIDE IT AT ALL, and that is deliberate rather than unfinished.
+
+        The points cut to 42% of the radius, so the star IS the symbol — there
+        is barely a middle left to put anything in, and every version of this
+        that carried interior line work as well (a second ring of teeth, then
+        a set of spokes) came back reported as a scribble at the sizes a plan
+        is actually read at. This is the shape that was picked off a drawing.
+      */
       break;
     case "shrub":
       // Layered foliage: broken arcs, offset ring to ring. Dense and rounded,

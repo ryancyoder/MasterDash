@@ -820,14 +820,32 @@ about the MASS edge below, which only exists where two of a kind overlap. The
 thing being looked at, one evergreen on its own, went on being a circle.
 
 `RIM_TEXTURED` is that exception, and it is one entry long. What is not given
-up is the claim: the teeth are cut **inward** from the true radius with their
+up is the claim: the points are cut **inward** from the true radius with their
 tips exactly on it, so the symbol still reaches precisely as far as the canopy
 does — the same inward-only rule the mass edge follows, read from the same
 `EDGE_PROFILES` row, so a lone conifer and a row of them merged into one mass
 are serrated identically. Two opinions about what a conifer looks like is how
-they drift apart. The branching inside waits for `r ≥ 16`: at a 12px canopy
-twelve spokes into a 7px middle is a blot, and the serrated outline is already
-saying conifer on its own.
+they drift apart.
+
+**And nothing goes inside it.** The notches cut to 42% of the radius, so the
+star IS the symbol — there is barely a middle left to fill, and every version
+that carried interior line work as well (a ring of teeth, then a set of spokes)
+came back reported as a scribble.
+
+**HOW DEEP IS A QUESTION ONLY A DRAWING ANSWERS, and that is the actual
+lesson here.** The figure was set twice from reasoning about tooth sizes in
+pixels — 20 teeth at 14%, then 12 at 26% — and reported as unrecognisable both
+times. What settled it was rendering four candidates side by side at the four
+sizes an 8ft conifer is really drawn at and letting Ryan point: A, the grasses
+pinwheel verbatim; B, the same blades with a solid rim; C, the blades as the
+outline itself; D, the shallow serration then on `main`. He picked C, so
+`depth` is **0.58** — nearly four times any other profile, and a pointed star
+rather than a serration.
+
+The same sheet is what settled sharing one profile between the two surfaces. A
+run of five massed at 0.58 still reads as one continuous outline rather than as
+a row of separate stars, which is the only thing that would have argued for a
+second, shallower figure for masses.
 
 **Rendering it is not the same as verifying it, and this is the third time that
 lesson has been paid for here** (the flow arrows, the outline crosshair, now
@@ -856,11 +874,14 @@ to a shrub's 6ft turns 3 checks red.
 
 **And the conifer's own outline is read off the canvas**, with a shade tree at
 the same 80ft spread beside it as the ruler in the same frame: the rim varies
-(there are teeth) and it never reaches further than the round one does (they
-are cut inward). Neither half means much alone. Put the evergreen back on a
-plain circle and the first goes red at 2px of variation against the ruler's
-2.5; draw the teeth at 1.15 × the radius and the second goes red at 64px
-against the round 56.5.
+by at least a third of its radius (it is a pointed star) and it never reaches
+further than the round one does (the points are cut inward). Neither half means
+much alone, and the depth floor is the half worth having — *more variation than
+a circle* is satisfied by a 2px ripple, which is exactly what shipped twice.
+Put the evergreen back on a plain circle and it goes red at 2px of variation
+against the ruler's 2.5; put the shallow 0.26 serration back and it goes red at
+14px deep on a 56px radius; draw the points at 1.15 × the radius and the
+inward-only check goes red at 64px against the round 56.5.
 
 #### Overlapping plants of one kind are drawn as one mass
 
