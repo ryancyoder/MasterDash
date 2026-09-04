@@ -4208,7 +4208,7 @@ try {
     same frame. A textured edge that bulged outward would say the planting
     covers more ground than it does, on every mass, systematically.
   */
-  ok("THE MASS EDGE NEVER REACHES PAST THE PLAIN CANOPY",
+  ok("THE MASS EDGE NEVER REACHES PAST THE SINGLE CANOPY",
     Math.max(...massRim) <= Math.max(...soloRim) + 1,
     `${Math.max(...massRim)} against ${Math.max(...soloRim)}`);
 
@@ -4219,15 +4219,20 @@ try {
     with a sign in it rather than a number nobody can calibrate.
   */
   const spreadOf = (rim) => Math.max(...rim) - Math.min(...rim);
-  ok("A PLAIN CANOPY IS ROUND, to within a pixel of drawing",
-    spreadOf(soloRim) < 3, `${spreadOf(soloRim)}px of variation`);
-  ok("AND THE MASS EDGE IS CUT INTO — the texture reached the screen",
-    spreadOf(massRim) > spreadOf(soloRim) + 2 &&
-      // And by something like the depth asked for, rather than by a pixel of
-      // luck: a canopy bites 10% of its radius, so half that is a floor no
-      // wobble in the sampling can reach.
-      spreadOf(massRim) > Math.max(...soloRim) * 0.05,
-    `${spreadOf(massRim)} against ${spreadOf(soloRim)} on the plain circle, ` +
+  /*
+    A SINGLE CANOPY IS SCALLOPED, exactly as its own mass is — which is the
+    rule that replaced three rounds of a stamp and a mass border disagreeing.
+    This check used to read "A PLAIN CANOPY IS ROUND, to within a pixel of
+    drawing" and it was the ruler everything else here measured against; it
+    had to go with the rule it belonged to.
+  */
+  ok("THE MASS EDGE IS CUT INTO — the texture reached the screen",
+    spreadOf(massRim) > Math.max(...massRim) * 0.06,
+    `${spreadOf(massRim)} deep on a ${Math.max(...massRim)}px radius`);
+  ok("AND A SINGLE CANOPY IS CUT INTO THE SAME WAY",
+    spreadOf(soloRim) > Math.max(...soloRim) * 0.06 &&
+      Math.abs(spreadOf(soloRim) - spreadOf(massRim)) < Math.max(...soloRim) * 0.05,
+    `${spreadOf(soloRim)} alone against ${spreadOf(massRim)} massed, ` +
       `radius ${Math.max(...soloRim)}`);
 
   /*
@@ -4282,65 +4287,6 @@ try {
   await page.waitForTimeout(400);
   ok("nothing is picked while the conifer is read",
     (await page.locator("aside >> text=/naming/i").count()) === 0);
-
-  const evgRim = (await rimRadii(await pointNow(evgOff), 160)).filter((r) => r > 0);
-  ok("the conifer is found, and drawn big enough to have an edge",
-    evgRim.length > 40 && Math.max(...evgRim) > 20,
-    `${evgRim.length} rays, ${Math.max(...evgRim)}px radius`);
-  /*
-    AND IT IS A POINTED STAR, NOT A NIBBLED RIM — a third of the radius at
-    least. That floor is the part worth having. "More variation than a circle"
-    is satisfied by a 2px ripple, which is exactly what the first two attempts
-    at this shipped and what was reported, twice, as unrecognisable. The
-    profile cuts to 42% of the radius; a third leaves room to tune it without
-    leaving room to lose it.
-  */
-  ok("A LONE CONIFER'S OWN OUTLINE IS A POINTED STAR, not a nibbled circle",
-    spreadOf(evgRim) > spreadOf(soloRim) + 2 &&
-      spreadOf(evgRim) > Math.max(...evgRim) * 0.33,
-    `${spreadOf(evgRim)} deep on a ${Math.max(...evgRim)}px radius, ` +
-      `against ${spreadOf(soloRim)} on the plain circle`);
-  ok("AND ITS TEETH ARE CUT INWARD — it still says where the canopy stops",
-    Math.max(...evgRim) <= Math.max(...soloRim) + 1,
-    `${Math.max(...evgRim)} against the round ${Math.max(...soloRim)}`);
-
-  /*
-    7c-x-c-5b. AND TWO OF THEM MASS INTO A FINE BORDER, NOT A COARSE ONE.
-
-    THIS IS THE CHECK THAT WOULD HAVE CAUGHT THE LAST MISTAKE. The conifer's
-    mass border was set by copying the sixteen teeth grasses carried, and it
-    did not look like the grasses border at all — it could not, because a
-    grass clump is 3ft across and an evergreen 8ft, so the same sixteen teeth
-    are 5.9px apart on one and 15.7px apart on the other. Every check on it
-    passed: they all read the profile ROW, which was byte-identical to the one
-    that had been copied, rather than the rim that got drawn.
-
-    So this counts the teeth on the RENDERED boundary. It reads the far side of
-    the first canopy — the arc away from its neighbour, which is that disc's
-    own rim rather than the union's crossing — and counts the inward troughs
-    round it. At this radius a 6.5px pitch is about two dozen; the fixed
-    sixteen would be seven over the same arc.
-  */
-  await armPlant(page);
-  await page.waitForTimeout(200);
-  const evgSpare = fractionOff(0.44, 0.68);
-  const beforeMass = await plantCount();
-  await tapAt(evgSpare);
-  await page.waitForTimeout(400);
-  ok("a second conifer went down beside the first",
-    (await plantCount()) === beforeMass + 1,
-    `${beforeMass} before, ${await plantCount()} after`);
-  await plantBtn.click();
-  await page.waitForTimeout(250);
-  const evgFrom = await pointNow(evgSpare);
-  const evgAt2 = await pointNow(evgOff);
-  await page.mouse.move(evgFrom.x, evgFrom.y);
-  await page.mouse.down();
-  await page.mouse.move(evgAt2.x, evgAt2.y - trueR * 0.9, { steps: 10 });
-  await page.mouse.up();
-  await page.waitForTimeout(500);
-  await page.mouse.click(evgClear.x, evgClear.y);
-  await page.waitForTimeout(400);
 
   /** Inward troughs on the far arc of a canopy, and their pitch in pixels. */
   const rimTeeth = (pt, maxR) =>
@@ -4412,6 +4358,63 @@ try {
       };
     }, [pt.x, pt.y, maxR]);
 
+  const evgRim = (await rimRadii(await pointNow(evgOff), 160)).filter((r) => r > 0);
+  ok("the conifer is found, and drawn big enough to have an edge",
+    evgRim.length > 40 && Math.max(...evgRim) > 20,
+    `${evgRim.length} rays, ${Math.max(...evgRim)}px radius`);
+  /*
+    Its rim is read with `rimTeeth` rather than `rimRadii` below — 420 rays and
+    a hysteresis count, against 60 rays. At a 6.5px pitch there are about 54
+    teeth round this canopy, so sixty rays over half of it is two per tooth and
+    the depth it reports is whatever the sampling happened to land on. The
+    coarse reading is kept only for the extent, which is one number and does
+    not care.
+  */
+  ok("AND ITS TEETH ARE CUT INWARD — it still says where the canopy stops",
+    Math.max(...evgRim) <= Math.max(...soloRim) + 1,
+    `${Math.max(...evgRim)} against the round ${Math.max(...soloRim)}`);
+  const loneTeeth = await rimTeeth(await pointNow(evgOff), 160);
+  ok("and its teeth are countable on the drawing",
+    loneTeeth.troughs > 8, JSON.stringify(loneTeeth));
+
+  /*
+    7c-x-c-5b. AND TWO OF THEM MASS INTO A FINE BORDER, NOT A COARSE ONE.
+
+    THIS IS THE CHECK THAT WOULD HAVE CAUGHT THE LAST MISTAKE. The conifer's
+    mass border was set by copying the sixteen teeth grasses carried, and it
+    did not look like the grasses border at all — it could not, because a
+    grass clump is 3ft across and an evergreen 8ft, so the same sixteen teeth
+    are 5.9px apart on one and 15.7px apart on the other. Every check on it
+    passed: they all read the profile ROW, which was byte-identical to the one
+    that had been copied, rather than the rim that got drawn.
+
+    So this counts the teeth on the RENDERED boundary. It reads the far side of
+    the first canopy — the arc away from its neighbour, which is that disc's
+    own rim rather than the union's crossing — and counts the inward troughs
+    round it. At this radius a 6.5px pitch is about two dozen; the fixed
+    sixteen would be seven over the same arc.
+  */
+  await armPlant(page);
+  await page.waitForTimeout(200);
+  const evgSpare = fractionOff(0.44, 0.68);
+  const beforeMass = await plantCount();
+  await tapAt(evgSpare);
+  await page.waitForTimeout(400);
+  ok("a second conifer went down beside the first",
+    (await plantCount()) === beforeMass + 1,
+    `${beforeMass} before, ${await plantCount()} after`);
+  await plantBtn.click();
+  await page.waitForTimeout(250);
+  const evgFrom = await pointNow(evgSpare);
+  const evgAt2 = await pointNow(evgOff);
+  await page.mouse.move(evgFrom.x, evgFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(evgAt2.x, evgAt2.y - trueR * 0.9, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  await page.mouse.click(evgClear.x, evgClear.y);
+  await page.waitForTimeout(400);
+
   const teeth = await rimTeeth(evgAt2, 160);
   ok("the massed pair is found and its far rim read",
     teeth.r > 20 && teeth.troughs > 0, JSON.stringify(teeth));
@@ -4425,6 +4428,17 @@ try {
     teeth.troughs >= 15 && teeth.pitchPx < 11,
     `${teeth.troughs} teeth at ${teeth.pitchPx.toFixed(1)}px apart ` +
       `on a ${teeth.r}px rim`);
+  /*
+    AND THIS IS THE ONE RYAN ASKED FOR: the single symbol wears the same edge
+    its mass does. Both readings are taken off the drawing, on the same canopy
+    at the same zoom, so the comparison is between two rendered rims rather
+    than between two table rows — which is exactly the mistake that let a mass
+    border and a stamp drift apart three times over.
+  */
+  ok("A LONE CONIFER AND A MASSED ONE WEAR THE SAME EDGE",
+    Math.abs(teeth.pitchPx - loneTeeth.pitchPx) < 1.5,
+    `${loneTeeth.pitchPx.toFixed(1)}px per tooth alone, ` +
+      `${teeth.pitchPx.toFixed(1)}px massed`);
 
   // Off the plan again, and back to Pick, which is where the cleanup below
   // expects to find the tool.

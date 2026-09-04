@@ -863,57 +863,36 @@ has no grasses row any more: a border for something that never masses is data
 nothing reads. The fine saw that was on it is the conifer's now, which is where
 it is actually drawn.
 
-**The conifer is the one whose texture is its OUTLINE, and getting that wrong
-cost three rounds.** Every stamp was a plain circle with its mark inside — the
-right call for six of the seven, since a bed of scalloped rims is a hedge of
-squiggles and *where a canopy reaches* is the one thing a plan must be able to
-say. The sawtooth is the case that argument loses: it is a **silhouette**, all
-of its information is in the edge, and a starburst drawn inside a circle is a
-starburst inside a circle. Ryan reported it twice — *nothing unique for
-evergreens*, then *still not seeing sawtooth* — and both times the answer was
-about the MASS edge below, which only exists where two of a kind overlap. The
-thing being looked at, one evergreen on its own, went on being a circle.
+**EVERY SYMBOL WEARS THE EDGE ITS OWN MASS WEARS.** One description of a
+plant's boundary — `EDGE_PROFILES` — read by both surfaces: a lone boxwood and
+eleven massed boxwood carry the same scallops, a lone conifer and a hedge of
+them the same teeth. The two can no longer disagree, and disagreeing is what
+every round of this was actually about.
 
-`RIM_PROFILES` is that exception, and it is one entry long. What is not given
-up is the claim: the points are cut **inward** from the true radius with their
-tips exactly on it, so the symbol still reaches precisely as far as the canopy
-does — the same inward-only rule the mass border follows.
+**It got here the long way, and the route is the lesson.** Every stamp was a
+plain circle with its mark inside, on the argument that a bed of scalloped rims
+is a hedge of squiggles and *where a canopy reaches* is the one thing a plan
+must be able to say. Then the conifer was cut out of that as a special case,
+because its sawtooth is a **silhouette** — all of the information is in the
+edge, and a starburst inside a circle is a starburst inside a circle. Then the
+conifer's own two surfaces were split, so one plant wore a deep pointed star
+and a hedge of them a fine saw. Ryan's answer to the whole business: *the
+single symbol should match the massing outline shape.*
 
-**The two surfaces disagree on purpose, and that is a reversal.** The stamp
-and the mass border were read from one `EDGE_PROFILES` row, on the argument
-that two opinions about what a conifer looks like is how they drift apart. A
-real argument — and a *guess* about how the two would read. Ryan looked at both
-on the plan and asked for the finer border on the mass, which settles it: a
-symbol and a texture are different jobs. Twelve points cutting to 42% of the
-radius **is** one conifer; the same notches run round a whole hedge read as a
-row of starfish rather than as one planting. So the stamp keeps its star and
-the mass takes the fine saw grasses carries. Both are saw teeth, so they are
-still recognisably the same plant, and `test:plan` pins both halves — the split
-is exactly the kind of thing somebody later mistakes for a bug and "fixes".
+**The original objection is largely retired, which is what makes it possible.**
+A bed of overlapping rims was the failure case, and overlapping plants of one
+kind are **massed** now — one outline, not a dozen. What is left is a mixed
+bed, where a scalloped shrub crosses a lobed canopy, and at the depths in that
+table (10–16%) that reads as texture rather than as squiggle.
 
-**And nothing goes inside it.** The notches cut to 42% of the radius, so the
-star IS the symbol — there is barely a middle left to fill, and every version
-that carried interior line work as well (a ring of teeth, then a set of spokes)
-came back reported as a scribble.
+What is **not** given up is the claim: every profile bites inward only, cusps
+exactly on the true radius, so a symbol still reaches precisely as far as the
+canopy does.
 
-**HOW DEEP IS A QUESTION ONLY A DRAWING ANSWERS, and that is the actual
-lesson here.** The figure was set twice from reasoning about tooth sizes in
-pixels — 20 teeth at 14%, then 12 at 26% — and reported as unrecognisable both
-times. What settled it was rendering four candidates side by side at the four
-sizes an 8ft conifer is really drawn at and letting Ryan point: A, the grasses
-pinwheel verbatim; B, the same blades with a solid rim; C, the blades as the
-outline itself; D, the shallow serration then on `main`. He picked C, so
-`depth` is **0.58** — nearly four times any other profile, and a pointed star
-rather than a serration.
-
-**And the mass border went the other way, which is the part I got wrong.** The
-same sheet was used to argue for sharing one profile between the two surfaces:
-a run of five massed at 0.58 still reads as one continuous outline, so nothing
-seemed to demand a second figure. Ryan looked at it in the app and asked for
-the finer border, and that is the reading that counts — a row of six at 58%
-reads as starfish however defensible the geometry is. The mass now carries
-grasses' 16 teeth at 16%; see *And the mass edge carries the plant* below for
-the figures and the one thing it costs.
+**The conifer keeps its branching inside**, and has to. While its rim was a
+deep pointed star the star was the whole symbol and anything inside it was a
+scribble; a fine 16% saw is a much quieter edge — near enough a shrub's shallow
+scallops at a glance — so the inside is once more what says conifer.
 
 **Rendering it is not the same as verifying it, and this is the third time that
 lesson has been paid for here** (the flow arrows, the outline crosshair, now
@@ -966,7 +945,16 @@ draws far LESS than one, because both symbols are gone and a single outline is
 drawn in their place. Letting grasses mass again turns it red at **1434 for
 two against 1929 for one**.
 
-**The conifer's MASS border is counted on the rendered rim**, and this is the
+**A lone conifer and a massed one are counted on the RENDERED rim and compared
+to each other**, which is the check the whole business needed and never had.
+Every previous check compared two table rows; the rows agreed while the
+drawings did not. Both readings are now taken off the canvas, on the same
+canopy at the same zoom, and their tooth pitches have to match within a pixel
+and a half. Putting the singles back on plain circles turns three checks red —
+2.5px of variation alone against 8.5 massed, and 25.4px per tooth alone against
+6.9 massed.
+
+**The mass border's own tooth count is read the same way**, and this is the
 check that would have caught the mistake above. Every existing check on that
 border passed while it was wrong, because they all read the profile *row* —
 byte-identical to the one that had been copied — rather than the rim that got
@@ -984,16 +972,12 @@ anti-aliasing makes a minimum test fire everywhere, and the first version
 counted a coarse sixteen-tooth border as two dozen teeth and passed against the
 very build it was written to catch.
 
-**And the conifer's own outline is read off the canvas**, with a shade tree at
-the same 80ft spread beside it as the ruler in the same frame: the rim varies
-by at least a third of its radius (it is a pointed star) and it never reaches
-further than the round one does (the points are cut inward). Neither half means
-much alone, and the depth floor is the half worth having — *more variation than
-a circle* is satisfied by a 2px ripple, which is exactly what shipped twice.
-Put the evergreen back on a plain circle and it goes red at 2px of variation
-against the ruler's 2.5; put the shallow 0.26 serration back and it goes red at
-14px deep on a 56px radius; draw the points at 1.15 × the radius and the
-inward-only check goes red at 64px against the round 56.5.
+**The extent is still checked against a ruler in the same frame** — a shade
+tree at the same 80ft spread, on the same canopy, at the same zoom. Its cusps
+sit exactly on the true radius, so a mass or a conifer that reached further
+than it does would be overstating the ground it covers. What that ruler can no
+longer be is *round*: the check that used to read "A PLAIN CANOPY IS ROUND, to
+within a pixel of drawing" went with the rule it belonged to.
 
 #### Overlapping plants of one kind are drawn as one mass
 
@@ -1113,12 +1097,10 @@ mass of maples as a cloud, and neither needs its label to be recognised.
 **Grasses have no row, because they do not mass** — see the clump above. A
 border for something that never merges is data nothing reads.
 
-**Evergreen is the one row that is NOT the stamp's own shape.** A lone conifer
-is a deep pointed star (12 points, 58%, in `RIM_PROFILES`); this is the border
-its *mass* carries, and it is the fine saw grasses used to have — asked for by
-name, and free for the taking since grasses no longer mass. A mass boundary
-runs for hundreds of pixels round a whole hedge — it is a texture, not a
-symbol, and the star's notches on it read as a row of starfish.
+**Evergreen carries the fine saw grasses used to have** — asked for by name,
+and free for the taking since grasses no longer mass. This row is what a lone
+conifer wears too: there is no second table for stamps any more, which is the
+point of *every symbol wears the edge its own mass wears* above.
 
 **And it is set by tooth PITCH, not by tooth count, which reverses the rule
 stated at the top of `plantMass.ts`.** That rule — *the lobes belong to the

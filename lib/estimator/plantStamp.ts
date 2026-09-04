@@ -189,7 +189,7 @@ export const PLANT_GRAB_MIN_PX = 18;
 
 // --- The line work ---------------------------------------------------------
 
-import { edgeDrawn, edgeLoop, type EdgeProfile } from "./plantMass";
+import { edgeDrawn, edgeLoop, edgeProfileOf, resolveEdge } from "./plantMass";
 
 const TAU = Math.PI * 2;
 
@@ -244,36 +244,34 @@ function circle(
 }
 
 /**
- * WHICH KINDS CARRY THEIR TEXTURE ON THE RIM RATHER THAN INSIDE IT.
+ * A SINGLE SYMBOL WEARS THE SAME EDGE ITS MASS DOES, and that is now the rule
+ * rather than an exception for one kind.
  *
- * One, and the exception is the point. Every stamp used to be a plain circle
- * with its mark inside, and the argument for that still holds for six of the
- * seven: a bed of scalloped rims is a hedge of squiggles, and where a canopy
- * REACHES is the one thing a plan has to be able to say.
+ * It got here the long way. Every stamp was a plain circle with its mark
+ * inside, on the argument that a bed of scalloped rims is a hedge of squiggles
+ * and where a canopy REACHES is the one thing a plan must be able to say. Then
+ * the conifer was cut out of that as a special case, because its sawtooth is a
+ * silhouette and a starburst inside a circle is a starburst inside a circle.
+ * Then the conifer's own two surfaces were split, so one plant wore a deep
+ * pointed star and a hedge of them a fine saw.
  *
- * The conifer is the case that argument loses. Its sawtooth is the single plan
- * convention every reader already knows, and it is a SILHOUETTE — the whole
- * information is in the outline. Put it inside a circle and what reaches the
- * screen is a starburst in a hoop, which is why this shipped twice with an
- * evergreen nobody could pick out. Ryan said so twice.
+ * Ryan's answer to the whole business: **the single symbol should match the
+ * massing outline shape.** So there is one description of a plant's edge —
+ * `EDGE_PROFILES` — and both surfaces read it. One boxwood and eleven massed
+ * boxwood carry the same rim; a lone conifer and a hedge of them carry the
+ * same teeth. The two can no longer disagree, which is what every round of
+ * this has actually been about.
  *
- * What is NOT given up is the claim. The points are cut INWARD from the true
- * radius, tips exactly on it, so the symbol still reaches precisely as far as
- * the canopy does — the same inward-only rule the massed edge follows.
+ * THE ORIGINAL OBJECTION IS LARGELY RETIRED, which is why it can be. A bed of
+ * overlapping rims was the failure case, and overlapping plants of one kind
+ * are MASSED now — they are one outline, not a dozen. What is left is a mixed
+ * bed, where a scalloped shrub crosses a lobed canopy, and at the depths in
+ * that table (10–16%) that reads as texture rather than as squiggle.
  *
- * THE FIGURES ARE THE STAMP'S OWN, THOUGH, AND NO LONGER THE MASS PROFILE'S.
- * They were shared, on the argument that two opinions about what a conifer
- * looks like is how they drift apart — a real argument, and a guess about how
- * the two would read. Ryan looked at both on the plan and asked for a finer
- * border on the mass, which settles it: a symbol and a texture are different
- * jobs. Twelve points cutting to 42% of the radius IS one conifer; the same
- * notches run round a whole hedge read as a row of starfish. Both are saw
- * teeth, so they are still recognisably the same plant — see `EDGE_PROFILES`
- * in plantMass.ts for the other half and what it costs.
+ * What is NOT given up is the claim. Every profile bites INWARD only, cusps
+ * exactly on the true radius, so a symbol still reaches precisely as far as
+ * the canopy does.
  */
-export const RIM_PROFILES: Partial<Record<PlantStampKind, EdgeProfile>> = {
-  evergreen_tree: { lobes: 12, depth: 0.58, shape: "saw" },
-};
 
 /**
  * The outline, textured or plain, as a path — NOT stroked or filled here.
@@ -289,8 +287,10 @@ function rimPath(
   y: number,
   r: number,
 ): boolean {
-  const profile = RIM_PROFILES[kind];
-  if (!profile || !edgeDrawn(profile, r)) {
+  // Resolved at the size it is drawn, because a saw edge is set by its tooth
+  // pitch rather than by a count — the same call the mass makes.
+  const profile = resolveEdge(edgeProfileOf(kind), r);
+  if (!edgeDrawn(profile, r)) {
     ctx.beginPath();
     ctx.arc(x, y, r, 0, TAU);
     return false;
@@ -558,14 +558,15 @@ export function drawPlantStamp(
       break;
     case "evergreen_tree":
       /*
-        NOTHING INSIDE IT AT ALL, and that is deliberate rather than unfinished.
+        THE BRANCHING IS BACK, and it has to be.
 
-        The points cut to 42% of the radius, so the star IS the symbol — there
-        is barely a middle left to put anything in, and every version of this
-        that carried interior line work as well (a second ring of teeth, then
-        a set of spokes) came back reported as a scribble at the sizes a plan
-        is actually read at. This is the shape that was picked off a drawing.
+        While the rim was a deep pointed star the star was the whole symbol and
+        anything inside it was a scribble. A fine 16% saw is a much quieter
+        edge — near enough a shrub's shallow scallops at a glance — so the
+        inside is once more what says conifer: spokes to a trunk, which is how
+        a needled tree is drawn on every plan that has ever had one.
       */
+      radial(ctx, x, y, r * 0.1, r * 0.72, 12);
       break;
     case "shrub":
       // Layered foliage: broken arcs, offset ring to ring. Dense and rounded,

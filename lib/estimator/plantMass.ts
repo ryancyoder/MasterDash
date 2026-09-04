@@ -365,21 +365,13 @@ export const EDGE_PROFILES: Record<string, EdgeProfile> = {
   shade_tree: { lobes: 9, depth: 0.14, shape: "scallop" },
   ornamental_tree: { lobes: 8, depth: 0.13, shape: "scallop" },
   /*
-    FINE TEETH, AND THIS IS THE ONE PROFILE THAT IS DELIBERATELY NOT THE
-    STAMP'S OWN SHAPE.
+    FINE TEETH — and this row is what a LONE conifer wears too.
 
-    A lone conifer is a deep pointed star — twelve points cutting to 42% of
-    the radius, in `RIM_PROFILES` over in plantStamp.ts. This is a different
-    job. A mass boundary is not a symbol; it runs for hundreds of pixels round
-    a whole hedge, and the same 58% notches on it read as a row of starfish
-    rather than as one planting.
-
-    Sharing one description between the two surfaces was the rule here, and
-    the argument for it was real — two opinions about what a conifer looks
-    like is how they drift apart. Ryan looked at both on the plan and asked
-    for the finer border, which settles it: the rule was a guess about how it
-    would read, and this is a reading of it. The two shapes are still both
-    saw teeth, so they are recognisably the same plant.
+    There was briefly a second table for stamps, so one plant wore a deep
+    pointed star and a hedge of them this saw. That is gone: a single symbol
+    wears the edge its own mass wears, which is the rule stated over
+    `rimPath` in plantStamp.ts and the one thing that stops the two drifting
+    apart. They had drifted apart three times by then.
 
     These are the figures that used to sit on the grasses row — asked for by
     name, and grasses no longer needs them, since a stand of them does not

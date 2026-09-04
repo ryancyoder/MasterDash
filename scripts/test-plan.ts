@@ -68,7 +68,6 @@ import {
   spreadFtFor,
   stampFor,
   stampRadius,
-  RIM_PROFILES,
 } from "../lib/estimator/plantStamp.ts";
 import {
   SHAPE_PALETTE,
@@ -1838,30 +1837,19 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     edgeProfileOf("grasses").lobes === 0 && edgeProfileOf("grasses").depth === 0,
     JSON.stringify(edgeProfileOf("grasses")));
   /*
-    THE CONIFER IS THE ONE KIND WHOSE TWO SURFACES DISAGREE ON PURPOSE, and
-    both halves are pinned here because the split is the thing somebody will
-    later mistake for a bug and "fix".
+    ONE EDGE PER PLANT, AND BOTH SURFACES READ IT.
 
-    Its STAMP is a deep pointed star — twelve points cutting to 42% of the
-    radius — and that is the deepest thing drawn anywhere, because on one
-    plant the star is the whole symbol. Its MASS BORDER is the fine saw
-    grasses carries, because a boundary running round a whole hedge is a
-    texture rather than a symbol, and 58% notches on it read as a row of
-    starfish. Ryan looked at both on the plan and asked for exactly this.
+    This is the rule that replaced three rounds of the two disagreeing — a
+    plain circle against a scalloped mass, then a deep pointed star against a
+    fine saw. A single symbol wears exactly what its own mass wears, so the
+    question "why does one of these look different from eleven of them" can no
+    longer be asked. `EDGE_PROFILES` is the only description there is; there is
+    no second table for stamps any more.
   */
-  ok("a lone conifer's own rim bites deeper than any mass border",
-    (RIM_PROFILES.evergreen_tree?.depth ?? 0) >
-      Math.max(...PLANT_STAMPS.map((k) => edgeProfileOf(k).depth)),
-    `${RIM_PROFILES.evergreen_tree?.depth} against ` +
-      `${Math.max(...PLANT_STAMPS.map((k) => edgeProfileOf(k).depth))}`);
-  ok("AND ITS MASS BORDER IS THE FINE SAW — a 6.5px tooth, 16% deep",
+  ok("AND THE CONIFER'S MASS BORDER IS THE FINE SAW — a 6.5px tooth, 16% deep",
     edgeProfileOf("evergreen_tree").pitchPx === 6.5 &&
       edgeProfileOf("evergreen_tree").depth === 0.16,
     JSON.stringify(edgeProfileOf("evergreen_tree")));
-  // Both are saw teeth, so the two surfaces are still recognisably one plant.
-  ok("and both surfaces are teeth rather than scallops",
-    RIM_PROFILES.evergreen_tree?.shape === "saw" &&
-      edgeProfileOf("evergreen_tree").shape === "saw");
 
   /*
     THE FLOOR IS PER PROFILE, not one radius for every kind: twelve teeth need
@@ -1889,8 +1877,7 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     `r=12 ${evgAt(12)}, r=9 ${evgAt(9)}`);
   ok("and it still goes plain when there is no room for a tooth",
     !evgAt(5), `r=5 ${evgAt(5)}`);
-  ok("while a lone conifer keeps its star at that size",
-    edgeDrawn(RIM_PROFILES.evergreen_tree!, 12));
+
 
   /*
     AND THE TIPS ARE SAMPLED EXACTLY.
@@ -1902,7 +1889,7 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     the points, on the rim.
   */
   const partial = { x: 0, y: 0, r: 40, from: 0.37, to: 2.9 };
-  const conifer = RIM_PROFILES.evergreen_tree!;
+  const conifer = resolveEdge(edgeProfileOf("evergreen_tree"), 40);
   const cusps = edgePoints(partial, conifer)
     .filter((p) => Math.abs(Math.hypot(p.x, p.y) - 40) < 1e-9).length;
   ok("EVERY TOOTH TIP IS LANDED ON EXACTLY, even on a partial arc",
