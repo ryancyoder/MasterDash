@@ -32,10 +32,14 @@ import {
   type PlanShape,
 } from "../lib/estimator/plan.ts";
 import {
+  EDGE_MIN_R,
+  edgePoints,
+  edgeProfileOf,
   massGroups,
   massLabelAt,
   massOutline,
 } from "../lib/estimator/plantMass.ts";
+import { PLANT_STAMPS } from "../lib/estimator/plantStamp.ts";
 import {
   buildProposal,
   effectiveTaps,
@@ -1503,6 +1507,22 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   ok("A CANOPY INSIDE ANOTHER DRAWS NO RIM AT ALL",
     massOutline(swallowed).every((a) => a.r === 20),
     JSON.stringify(massOutline(swallowed).map((a) => a.r)));
+  /*
+    AND TWO ON EXACTLY THE SAME SPOT DRAW ONE RIM — not none.
+
+    Read literally, each of two identical circles is "inside" the other, so
+    both excuse themselves and the mass has no outline at all. Dropping one
+    plant onto another lands both on one pixel and one lat/lng, so this is the
+    ordinary way a bed gets crowded rather than a contrived case.
+  */
+  const twins = [disc("a", "box", 10, 10, 12), disc("b", "box", 10, 10, 12)];
+  const twinArcs = massOutline(twins);
+  ok("TWO PLANTS ON ONE SPOT DRAW ONE WHOLE RIM, not nothing",
+    Math.abs(
+      twinArcs.reduce((sum, a) => sum + (a.to - a.from), 0) - 2 * Math.PI,
+    ) < 1e-12,
+    `${twinArcs.length} arcs, ${twinArcs.reduce((s, a) => s + (a.to - a.from), 0)} of turn`);
+
   ok("and the one that swallowed it keeps its whole rim",
     Math.abs(
       massOutline(swallowed).reduce((s, a) => s + (a.to - a.from), 0) - 2 * Math.PI,
@@ -1528,6 +1548,120 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   const at = massLabelAt(pair);
   ok("the call-out is centred on the planting, above the highest canopy",
     at.x === 6 && at.y === -10, JSON.stringify(at));
+}
+
+// --- The mass edge, and what it says about the plant -------------------------
+
+{
+  console.log("\n--- mass edge texture ---");
+
+  const arcOf = (r: number) => ({ x: 0, y: 0, r, from: 0, to: Math.PI * 2 });
+
+  /*
+    IT ONLY EVER BITES INWARD, and this is the check that matters.
+
+    The circle is drawn at the spread the plant will reach, so it is a claim
+    about ground. A lobe bulging past it would say the planting covers more
+    than it does — systematically, on every mass, at every zoom. Every point of
+    every profile is therefore required to sit on or inside the true rim.
+  */
+  let worst = 0;
+  for (const kind of PLANT_STAMPS) {
+    for (const pt of edgePoints(arcOf(40), edgeProfileOf(kind))) {
+      worst = Math.max(worst, Math.hypot(pt.x, pt.y) - 40);
+    }
+  }
+  ok("NO EDGE TEXTURE EVER REACHES PAST THE TRUE CANOPY",
+    worst <= 1e-9, `${worst}px beyond the rim at worst`);
+
+  /*
+    AND IT REALLY BITES. A profile that returned the plain circle would pass
+    the check above and say nothing, which is the way an honesty check quietly
+    stops meaning anything.
+  */
+  const deepest = (kind: string) => {
+    let d = 0;
+    for (const pt of edgePoints(arcOf(40), edgeProfileOf(kind))) {
+      d = Math.max(d, 40 - Math.hypot(pt.x, pt.y));
+    }
+    return d;
+  };
+  ok("a canopy's edge is cut into, not left round",
+    deepest("shade_tree") > 3, `${deepest("shade_tree")}px deep`);
+
+  /*
+    THE KINDS ARE TOLD APART BY THEIR EDGES, which is the whole feature: the
+    interior texture used to do this and there is no interior any more. A
+    conifer bites deeper than a canopy and does it with far more teeth.
+  */
+  ok("A CONIFER'S EDGE IS DEEPER THAN A CANOPY'S",
+    deepest("evergreen_tree") > deepest("shade_tree"),
+    `${deepest("evergreen_tree")} against ${deepest("shade_tree")}`);
+  // Round to the last decimal place a circle can be held to: hypot of a
+  // radius and its own angles is not bit-exact, and "no edge" is a claim
+  // about the drawing rather than about floating point.
+  ok("and a mat has no crown edge at all — it is a broken line",
+    deepest("ground_cover") < 1e-9 &&
+      Array.isArray(edgeProfileOf("ground_cover").dash),
+    `${deepest("ground_cover")} deep`);
+
+  /*
+    THE LOBES BELONG TO THE PLANT, NOT TO THE SCREEN.
+
+    A count that came from a screen distance would grow lobes as you zoomed
+    in, so a mass would change character on the way in. Counted here as the
+    inward troughs around a full turn, at two very different sizes.
+  */
+  const troughs = (kind: string, r: number) => {
+    const pts = edgePoints(arcOf(r), edgeProfileOf(kind));
+    const rad = pts.map((p) => Math.hypot(p.x, p.y));
+    let n = 0;
+    // The loop closes, so the last point repeats the first; walk it as a ring.
+    for (let i = 1; i < rad.length - 1; i++) {
+      if (rad[i] < rad[i - 1] - 1e-12 && rad[i] <= rad[i + 1]) n++;
+    }
+    return n;
+  };
+  for (const kind of ["shade_tree", "evergreen_tree", "shrub"]) {
+    ok(`${kind} keeps its own lobe count at any size`,
+      troughs(kind, 40) === edgeProfileOf(kind).lobes &&
+        troughs(kind, 400) === edgeProfileOf(kind).lobes,
+      `${troughs(kind, 40)} at 40px, ${troughs(kind, 400)} at 400px, ` +
+        `${edgeProfileOf(kind).lobes} asked for`);
+  }
+
+  /*
+    AND NOTHING IS RANDOM. A jitter reseeded per frame would shimmer under a
+    pan; the phase comes from the angle, so the edge belongs to the circle and
+    holds still. Same input, same points, to the last bit.
+  */
+  ok("the edge is drawn the same way every time",
+    JSON.stringify(edgePoints(arcOf(40), edgeProfileOf("shade_tree"))) ===
+      JSON.stringify(edgePoints(arcOf(40), edgeProfileOf("shade_tree"))));
+
+  /*
+    The inset is measured in the circle's own frame, so a plant dragged across
+    the map carries its edge with it rather than swimming through a pattern
+    fixed to the canvas.
+  */
+  const here = edgePoints(arcOf(40), edgeProfileOf("shade_tree"));
+  const there = edgePoints(
+    { x: 500, y: -250, r: 40, from: 0, to: Math.PI * 2 },
+    edgeProfileOf("shade_tree"),
+  );
+  ok("and it travels with the plant",
+    here.every((p, i) =>
+      Math.abs(p.x + 500 - there[i].x) < 1e-9 &&
+      Math.abs(p.y - 250 - there[i].y) < 1e-9));
+
+  // An unknown kind falls back to the plain rim rather than to a guess.
+  ok("something with no profile of its own is drawn round",
+    deepest("no_such_plant") < 1e-9, `${deepest("no_such_plant")} deep`);
+
+  // The floor is a drawing decision, not arithmetic: at 5px a 10% lobe is half
+  // a pixel, and the canvas is told to draw the plain arc below it.
+  ok("there is a size below which the texture is not drawn at all",
+    EDGE_MIN_R > 5);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

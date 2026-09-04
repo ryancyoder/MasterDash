@@ -3979,6 +3979,164 @@ try {
     (await plantCount()) === wereThere,
     `${wereThere} at the start, ${await plantCount()} now`);
 
+
+  /*
+    7c-x-c-4. AND THE MASS EDGE CARRIES THE PLANT.
+
+    Removing the interior line work is what makes a mass readable, and it also
+    throws away the one thing that told the categories apart. So the boundary
+    takes it on: a cloud for a canopy, a sawtooth for a conifer, a broken line
+    for a mat. `EDGE_PROFILES` holds the figures and scripts/test-plan.ts pins
+    the geometry — that it only ever bites INWARD, that the lobes belong to the
+    plant rather than to the screen, that nothing is random. What none of that
+    can see is whether any of it reached the screen.
+
+    DRAWN BIG ON PURPOSE. A 10% lobe on the 14px canopy this map draws at is
+    a pixel and a half, and that is not a reading — it is the noise on one. The
+    spread override (checked in its own right above) takes the shade tree to
+    80ft, which is the same control a crew uses when their trees are bigger
+    than the table's default. Measured: 0.7px per foot at this zoom, so 80ft is
+    a 56px canopy and a 5.6px lobe.
+  */
+  await armPlant(page);
+  await page.waitForTimeout(300);
+  const symbolPanel = page.locator('button[aria-label="Plant symbols and sizes"]');
+  await symbolPanel.click();
+  await page.waitForTimeout(300);
+  const treeSpread = page.locator('input[aria-label="Shade Tree spread in feet"]');
+  ok("the panel offers the shade tree its own spread",
+    (await treeSpread.count()) === 1);
+  await treeSpread.fill("80");
+  await page.waitForTimeout(400);
+  await symbolPanel.click();
+  await page.waitForTimeout(400);
+
+  /** The outermost plant-green pixel along each of many rays from a point. */
+  const rimRadii = (pt, maxR) =>
+    page.evaluate(([x, y, r]) => {
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const rect = c.getBoundingClientRect();
+      const k = c.width / rect.width;
+      const cx = (x - rect.left) * k;
+      const cy = (y - rect.top) * k;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      const green = (px, py) => {
+        if (px < 0 || py < 0 || px >= c.width || py >= c.height) return false;
+        const i = (Math.round(py) * c.width + Math.round(px)) * 4;
+        return d[i + 1] > 120 && d[i + 1] - d[i] > 40 && d[i + 1] - d[i + 2] > 25;
+      };
+      const out = [];
+      // The LOWER half only: a mass carries its call-out above the canopy, in
+      // the plant's own colour, and a ray through it would measure lettering.
+      for (let n = 0; n < 60; n++) {
+        const a = (Math.PI * n) / 59;
+        let found = 0;
+        for (let rr = r * k; rr >= 2; rr -= 0.5) {
+          if (green(cx + rr * Math.cos(a), cy + rr * Math.sin(a))) {
+            found = rr / k;
+            break;
+          }
+        }
+        out.push(found);
+      }
+      return out;
+    }, [pt.x, pt.y, maxR]);
+
+  const edgeSolo = fractionOff(0.5, 0.32);
+  const edgeMass = fractionOff(0.84, 0.32);
+  const edgeSpare = fractionOff(0.26, 0.12);
+  for (const [name, off] of [
+    ["the single", edgeSolo],
+    ["the mass", edgeMass],
+    ["the one to be dragged in", edgeSpare],
+  ]) {
+    const pt = await pointNow(off);
+    ok(`the ground for ${name} is clear before the big trees`,
+      (await ringInk(pt, 70)) === 0, `${await ringInk(pt, 70)} green`);
+  }
+
+  await tapAt(edgeSolo);
+  await page.waitForTimeout(300);
+  await tapAt(edgeMass);
+  await page.waitForTimeout(300);
+  await tapAt(edgeSpare);
+  await page.waitForTimeout(400);
+  // Onto each other, and nothing picked, exactly as the check above sets up.
+  await plantBtn.click();
+  await page.waitForTimeout(300);
+  const bigFrom = await pointNow(edgeSpare);
+  const bigTo = await pointNow(edgeMass);
+  await page.mouse.move(bigFrom.x, bigFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(bigTo.x, bigTo.y, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  const bigClear = await pointNow(fractionOff(0.36, 0.62));
+  await page.mouse.click(bigClear.x, bigClear.y);
+  await page.waitForTimeout(400);
+  ok("nothing is picked while the edge is read",
+    (await page.locator("aside >> text=/naming/i").count()) === 0);
+
+  const soloRim = (await rimRadii(await pointNow(edgeSolo), 160)).filter((r) => r > 0);
+  const massRim = (await rimRadii(await pointNow(edgeMass), 160)).filter((r) => r > 0);
+  ok("both canopies are found, and drawn big enough to have an edge",
+    soloRim.length > 40 && massRim.length > 40 && Math.max(...soloRim) > 20,
+    `${soloRim.length} and ${massRim.length} rays, ${Math.max(...soloRim)}px radius`);
+
+  /*
+    IT DOES NOT REACH PAST THE TRUE CANOPY — and the ruler is the single
+    plant's own circle, drawn at exactly the spread, at the same zoom, in the
+    same frame. A textured edge that bulged outward would say the planting
+    covers more ground than it does, on every mass, systematically.
+  */
+  ok("THE MASS EDGE NEVER REACHES PAST THE PLAIN CANOPY",
+    Math.max(...massRim) <= Math.max(...soloRim) + 1,
+    `${Math.max(...massRim)} against ${Math.max(...soloRim)}`);
+
+  /*
+    AND IT IS TEXTURED RATHER THAN ROUND. The single's rim is a circle, so its
+    radius is the same in every direction; the mass's is cut into, so it is
+    not. Reading the difference of the two spreads is what makes this a check
+    with a sign in it rather than a number nobody can calibrate.
+  */
+  const spreadOf = (rim) => Math.max(...rim) - Math.min(...rim);
+  ok("A PLAIN CANOPY IS ROUND, to within a pixel of drawing",
+    spreadOf(soloRim) < 3, `${spreadOf(soloRim)}px of variation`);
+  ok("AND THE MASS EDGE IS CUT INTO — the texture reached the screen",
+    spreadOf(massRim) > spreadOf(soloRim) + 2 &&
+      // And by something like the depth asked for, rather than by a pixel of
+      // luck: a canopy bites 10% of its radius, so half that is a floor no
+      // wobble in the sampling can reach.
+      spreadOf(massRim) > Math.max(...soloRim) * 0.05,
+    `${spreadOf(massRim)} against ${spreadOf(soloRim)} on the plain circle, ` +
+      `radius ${Math.max(...soloRim)}`);
+
+  // Off the plan, and the table's own spread back, so nothing downstream
+  // inherits a 50ft shade tree.
+  await plantBtn.click();
+  await page.waitForTimeout(300);
+  ok("back to Remove to clear the big trees", (await plantMode()) === "delete");
+  await tapAt(edgeSolo);
+  await page.waitForTimeout(300);
+  await tapAt(edgeMass);
+  await page.waitForTimeout(400);
+  ok("the big trees are off the plan again",
+    (await plantCount()) === wereThere,
+    `${wereThere} at the start, ${await plantCount()} now`);
+  await armPlant(page);
+  await page.waitForTimeout(300);
+  await symbolPanel.click();
+  await page.waitForTimeout(300);
+  await page.click('button:text-is("Reset all")');
+  await page.waitForTimeout(400);
+  await symbolPanel.click();
+  await page.waitForTimeout(300);
+  ok("and the spread override is put back",
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("qe-settings") ?? "{}");
+      return Object.keys(s?.plantSymbols ?? {}).length === 0;
+    }));
+
   // Back to the take-off's own tool and column for what follows.
   await page.click('button[aria-label="Select"]');
   await page.waitForTimeout(200);

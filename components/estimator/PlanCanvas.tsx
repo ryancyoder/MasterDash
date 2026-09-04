@@ -46,6 +46,10 @@ import {
   type PlantStampKind,
 } from "@/lib/estimator/plantStamp";
 import {
+  EDGE_MIN_R,
+  edgeLoop,
+  edgePoints,
+  edgeProfileOf,
   massGroups,
   massLabelAt,
   massOutline,
@@ -1913,17 +1917,40 @@ export default function PlanCanvas({
       const face = plantFace(lead);
 
       /*
+        THE EDGE CARRIES THE PLANT, now that the middle is empty.
+
+        A cloud for a canopy, a sawtooth for a conifer, a broken line for a
+        mat: the edge treatment is what tells the categories apart once the
+        interior texture has gone, which is how a hand-drafted plan does it.
+        See `EDGE_PROFILES`. Nothing is drawn textured below `EDGE_MIN_R` —
+        a 10% lobe on a 5px symbol is a furry line, not a conifer.
+      */
+      const profile = edgeProfileOf(face.stamp);
+      const textured = group[0].r >= EDGE_MIN_R && profile.lobes > 0;
+
+      /*
         The fill is ONE path of every disc, filled once.
 
         Filling them separately would double the wash wherever two overlap and
         the mass would read as a contour map of its own crowding. The nonzero
         winding rule over one path is the union, at one weight, for free.
+
+        It is built from the same shaped loops the outline is stroked from, or
+        the wash would show outside the line — which would hand back exactly
+        the overstatement the inward-only texture exists to avoid.
       */
       ctx.save();
       ctx.beginPath();
       for (const d of group) {
-        ctx.moveTo(d.x + d.r, d.y);
-        ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+        if (textured) {
+          const loop = edgeLoop(d, profile);
+          ctx.moveTo(loop[0].x, loop[0].y);
+          for (const pt of loop) ctx.lineTo(pt.x, pt.y);
+          ctx.closePath();
+        } else {
+          ctx.moveTo(d.x + d.r, d.y);
+          ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+        }
       }
       ctx.fillStyle = face.color;
       ctx.globalAlpha = 0.14;
@@ -1933,15 +1960,24 @@ export default function PlanCanvas({
       // And the outline: only the rim that is not inside another of its own.
       ctx.beginPath();
       for (const arc of massOutline(group)) {
-        ctx.moveTo(
-          arc.x + arc.r * Math.cos(arc.from),
-          arc.y + arc.r * Math.sin(arc.from),
-        );
-        ctx.arc(arc.x, arc.y, arc.r, arc.from, arc.to);
+        if (textured) {
+          const pts = edgePoints(arc, profile);
+          ctx.moveTo(pts[0].x, pts[0].y);
+          for (const pt of pts) ctx.lineTo(pt.x, pt.y);
+        } else {
+          ctx.moveTo(
+            arc.x + arc.r * Math.cos(arc.from),
+            arc.y + arc.r * Math.sin(arc.from),
+          );
+          ctx.arc(arc.x, arc.y, arc.r, arc.from, arc.to);
+        }
       }
       ctx.strokeStyle = face.color;
       ctx.lineWidth = 2;
       ctx.lineCap = "round";
+      // A mat has no crowns to draw an edge from; a broken line says the area
+      // is planted without inventing a canopy line for it.
+      if (profile.dash && group[0].r >= EDGE_MIN_R) ctx.setLineDash(profile.dash);
       ctx.shadowColor = "rgba(0,0,0,0.55)";
       ctx.shadowBlur = 3;
       ctx.stroke();

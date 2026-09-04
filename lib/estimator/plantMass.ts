@@ -55,6 +55,8 @@ const TAU = Math.PI * 2;
  */
 const TOUCH_PX = 0.5;
 const ARC_EPS = 1e-9;
+/** Near enough to be the same circle: see the duplicate rule in `massOutline`. */
+const SAME_PX = 1e-6;
 
 /**
  * The groups: same key, and overlapping — directly or through a chain.
@@ -114,6 +116,27 @@ export function massOutline(group: MassDisc[]): MassArc[] {
       const d = Math.hypot(other.x - disc.x, other.y - disc.y);
       // Apart, or touching at a point: nothing of this rim is inside.
       if (d >= disc.r + other.r) continue;
+      /*
+        TWO PLANTS ON EXACTLY THE SAME SPOT ARE NOT INSIDE EACH OTHER, and
+        that is not a hypothetical: dropping one onto another lands both on
+        one pixel, and the same pixel is the same lat/lng.
+
+        Read literally, "inside" is true BOTH WAYS for identical circles, so
+        each disc excused itself and the mass drew no outline whatsoever — a
+        wash with nothing round it. The duplicate is settled by id, which is
+        arbitrary but stable, so exactly one of them draws the rim they share.
+        Found by the rendered check, not by the maths: the ink reading said
+        "less than a single plant", which was true, and true for the wrong
+        reason.
+      */
+      const identical = d <= SAME_PX && Math.abs(disc.r - other.r) <= SAME_PX;
+      if (identical) {
+        if (disc.id > other.id) {
+          swallowed = true;
+          break;
+        }
+        continue;
+      }
       // This one is inside that one: the whole rim is hidden.
       if (d + disc.r <= other.r) {
         swallowed = true;
@@ -208,4 +231,135 @@ export function massLabelAt(group: MassDisc[]): { x: number; y: number } {
     top = Math.min(top, d.y - d.r);
   }
   return { x: sx / group.length, y: top };
+}
+
+// --- The edge, and what it says about the plant -----------------------------
+
+/**
+ * THE OUTLINE CARRIES THE PLANT'S CHARACTER, because nothing else is left to.
+ *
+ * Removing the interior line work is what makes a mass readable, but it also
+ * throws away the one thing that told the categories apart: a lobed cloud for
+ * a canopy tree, a sawtooth for a conifer, blades for grasses (plantStamp.ts
+ * says so in as many words). So the boundary takes it on. A mass of arborvitae
+ * reads as a spiky blob and a mass of maples as a cloud, which is exactly how
+ * a hand-drafted plan does it — the edge treatment IS the species notation
+ * once the middle is empty.
+ *
+ * IT ONLY EVER BITES INWARD. The circle is drawn at the spread the plant will
+ * reach, and that is a claim about ground: a lobe bulging past it would say
+ * the planting covers more than it does, systematically, on every mass. So the
+ * true rim is the outer limit and the texture is cut out of the inside. The
+ * cost is honest and small — a mass reads a few percent tighter than the bare
+ * circle did.
+ *
+ * NOTHING HERE IS RANDOM. The phase comes from the angle, so the lobes belong
+ * to the circle rather than to the frame: they hold still under a pan, and a
+ * plant dragged across the map carries its own edge with it. A jitter reseeded
+ * per frame would shimmer.
+ */
+export type EdgeShape = "scallop" | "saw" | "flat";
+
+export interface EdgeProfile {
+  /** Lobes around a full turn. Fixed per kind, so they scale with the plant. */
+  lobes: number;
+  /** How deep they bite, as a fraction of the radius. */
+  depth: number;
+  shape: EdgeShape;
+  /** A broken line instead of a shaped one — a mat rather than a canopy. */
+  dash?: [number, number];
+}
+
+/**
+ * Below this the texture is not drawn at all.
+ *
+ * A 10% lobe on a 5px symbol is half a pixel: it does not read as a conifer,
+ * it reads as a furry line. The floor is the same reasoning plantStamp.ts uses
+ * to drop its interior texture on small stamps.
+ */
+export const EDGE_MIN_R = 11;
+
+export const EDGE_PROFILES: Record<string, EdgeProfile> = {
+  // A cloud. Few, deep, round — the canopy of a big deciduous tree.
+  shade_tree: { lobes: 11, depth: 0.1, shape: "scallop" },
+  ornamental_tree: { lobes: 9, depth: 0.09, shape: "scallop" },
+  // Spikes. The one edge that is unmistakable at a glance, and the reason a
+  // conifer mass never needs a label to be recognised.
+  evergreen_tree: { lobes: 20, depth: 0.14, shape: "saw" },
+  // A mound: shallow scallops, more of them than a tree has.
+  shrub: { lobes: 8, depth: 0.08, shape: "scallop" },
+  // Fine and many, which is what a stand of grasses looks like in outline.
+  grasses: { lobes: 26, depth: 0.07, shape: "saw" },
+  perennial: { lobes: 7, depth: 0.07, shape: "scallop" },
+  // A mat has no canopy edge to speak of. A broken line says "this area is
+  // planted" without pretending the boundary is a row of crowns.
+  ground_cover: { lobes: 0, depth: 0, shape: "flat", dash: [2, 3] },
+};
+
+/** The profile for a stamp kind, or a plain rim for anything unknown. */
+export function edgeProfileOf(kind: string): EdgeProfile {
+  return EDGE_PROFILES[kind] ?? { lobes: 0, depth: 0, shape: "flat" };
+}
+
+/**
+ * How far inside the rim the edge sits at one angle, as a fraction of r.
+ *
+ * Zero at a lobe's own cusp and `depth` at its deepest, never negative — see
+ * the note above about which side of the line the texture is allowed on.
+ */
+export function edgeInset(profile: EdgeProfile, angle: number): number {
+  if (profile.lobes <= 0 || profile.depth <= 0) return 0;
+  // The phase of this angle within its lobe, in [0, 1).
+  const u = ((angle * profile.lobes) / TAU) % 1;
+  const p = u < 0 ? u + 1 : u;
+  if (profile.shape === "saw") {
+    // A tooth: on the rim at the cusp, falling straight away to the notch.
+    return profile.depth * (1 - Math.abs(2 * p - 1));
+  }
+  // A scallop: round, cusped on the rim, deepest between.
+  return (profile.depth * (1 - Math.cos(TAU * p))) / 2;
+}
+
+/**
+ * One arc as points, with the texture cut into it.
+ *
+ * Points rather than an `arc()` call, because a shaped edge is not a circle
+ * any more. The resolution is per LOBE rather than per pixel: a cusp that
+ * lands between two samples is a cusp nobody can see, and sampling by screen
+ * distance would put a hundred points on a big smooth rim for nothing.
+ */
+export function edgePoints(
+  arc: MassArc,
+  profile: EdgeProfile,
+): { x: number; y: number }[] {
+  const span = arc.to - arc.from;
+  const perTurn = Math.max(48, profile.lobes * 8);
+  const steps = Math.max(2, Math.ceil((span / TAU) * perTurn));
+  const out: { x: number; y: number }[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const a = arc.from + (span * i) / steps;
+    const r = arc.r * (1 - edgeInset(profile, a));
+    out.push({ x: arc.x + r * Math.cos(a), y: arc.y + r * Math.sin(a) });
+  }
+  return out;
+}
+
+/**
+ * A whole disc as a closed textured loop — what the FILL is built from.
+ *
+ * The fill has to be the same shape as the line or the wash shows outside it,
+ * which would put back the very overstatement the inward-only rule exists to
+ * avoid. Filling the textured discs as one path under the nonzero rule gives
+ * the union of them, and the union's boundary is the textured arcs that get
+ * stroked. (They part company by at most a lobe's depth right at a crossing,
+ * where one disc's notch is under its neighbour — invisible, and inward.)
+ */
+export function edgeLoop(
+  disc: MassDisc,
+  profile: EdgeProfile,
+): { x: number; y: number }[] {
+  return edgePoints(
+    { x: disc.x, y: disc.y, r: disc.r, from: 0, to: TAU },
+    profile,
+  );
 }

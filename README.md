@@ -901,6 +901,94 @@ carries a call-out in the plant's own colour above its canopy — the reading wa
 what was actually being measured was the letters. The wash needed no such care:
 14% of #22c55e over the canvas's own #0b0b0d cannot pass a green test.
 
+#### And the mass edge carries the plant
+
+Taking the interior line work out is what makes a mass readable, but it also
+throws away the one thing that told the categories apart — plantStamp.ts says
+it plainly: *a lobed cloud for a shade tree, a sawtooth for a conifer, blades
+for grasses*. With the middle empty the boundary takes that on, which is how a
+hand-drafted plan does it: a mass of arborvitae reads as a spiky blob and a
+mass of maples as a cloud, and neither needs its label to be recognised.
+
+| kind | edge | lobes | depth |
+| --- | --- | --- | --- |
+| Shade tree | cloud scallops | 11 | 10% |
+| Ornamental | smaller scallops | 9 | 9% |
+| Evergreen | sawtooth | 20 | 14% |
+| Shrub | shallow mound scallops | 8 | 8% |
+| Grasses | fine teeth | 26 | 7% |
+| Perennial | small scallops | 7 | 7% |
+| Ground cover | a broken line | — | — |
+
+**It only ever bites INWARD, and that is the decision worth defending.** The
+circle is drawn at the spread the plant will reach, which makes it a claim
+about ground; a lobe bulging past it would say the planting covers more than it
+does — not occasionally but systematically, on every mass, at every zoom. So
+the true rim is the outer limit and the texture is cut out of the inside. The
+cost is real and small: a mass reads a few percent tighter than the bare circle
+did. The classic drafted look puts the lobes half in and half out, and that is
+what was given up for it.
+
+**The fill is built from the same shaped loops**, not from the plain circles.
+Fill the circles and the wash shows outside the line, which hands back exactly
+the overstatement the inward rule exists to avoid. Each disc becomes one closed
+wobbled loop and they are filled as one path under the nonzero rule — the union
+of the textured discs, whose boundary is the textured arcs being stroked. The
+two part company by at most a lobe's depth right at a crossing, where one
+disc's notch sits under its neighbour: invisible, and inward.
+
+**The lobes belong to the plant, not to the screen.** The count per full turn
+is fixed per kind, so they scale with the canopy: zoom in and a shade tree's
+eleven lobes get bigger, rather than the tree growing more of them and changing
+character on the way in. A ground cover has no crown edge to draw at all — a
+mat is a broken line, which says the area is planted without inventing a row of
+crowns for it.
+
+**Nothing is random.** The phase comes from the angle, so the edge belongs to
+the circle: it holds still under a pan, and a plant dragged across the map
+carries its own edge with it. A jitter reseeded per frame would shimmer, and
+this app redraws on every frame of a drag.
+
+**And there is a floor.** Below 11px radius the texture is not drawn at all: a
+10% lobe on a 5px symbol is half a pixel, and what that reads as is not a
+conifer but a furry line. Same reasoning plantStamp.ts uses to drop its
+interior texture on small stamps.
+
+**Tested both halves again.** `test:plan` pins the geometry: no point of any
+profile reaches past the true rim, a canopy's edge really is cut into (an
+honesty check that would pass against a plain circle otherwise), a conifer's
+edge is deeper than a canopy's, each kind keeps its own lobe count at 40px and
+at 400px, the points are identical between two calls, and the edge translates
+with the circle. Three mutations turn it red: letting the texture ride outward
+(2 checks), giving the conifer the canopy's profile (1), and doubling the lobe
+frequency (3).
+
+`test:board-ui` reads it off the canvas, with the single plant's own circle as
+the ruler: rays from the centre find the outermost green pixel, and **the mass
+edge never reaches past the plain canopy** while **the plain canopy is round to
+within a pixel and the mass's is not**. It is drawn at a 50ft spread through
+the override panel, because at the ~20px canopy this map draws by default a 10%
+lobe is two pixels — not a reading, the noise on one.
+
+**And it found a real bug on its first run, which is the whole argument for
+reading the canvas.** Two plants on EXACTLY the same spot each decided they
+were inside the other — read literally, "this circle is inside that one" is
+true both ways for identical circles — so both excused themselves from the
+outline and the mass drew a wash with nothing round it. That is not a
+contrived case: dropping one plant onto another lands both on one pixel, and
+one pixel is one lat/lng. The duplicate is settled by id now, arbitrary but
+stable, so exactly one of them draws the rim they share.
+
+Worth noting what did NOT catch it: the massing check one section above, which
+reads "two massed draw less ink than one alone". With no outline at all that
+was *true* — and true for the wrong reason. It took a check that went looking
+for the boundary itself.
+
+**Not built:** per-cultivar variation (the edge is the category's, so two
+different boxwoods mass identically — which is right, since the mass is one
+species by definition), a hatch or stipple inside a ground-cover mass, and the
+leader line the label still wants.
+
 #### A plant moves only in the Plant tool, and the symbols are yours to set
 
 **A plant used to be grabbable in Select**, alongside the corners and the pins.
