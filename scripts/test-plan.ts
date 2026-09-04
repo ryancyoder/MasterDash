@@ -86,6 +86,12 @@ import {
   wedgeIconAt,
 } from "../lib/estimator/toolRing.ts";
 import {
+  MULTI_TAP_MS,
+  MULTI_TAP_SLOP_PX,
+  multiTapAction,
+  multiTapMoved,
+} from "../lib/estimator/multiTap.ts";
+import {
   pendingTakeoffs,
   photoTakeoffLabel,
 } from "../lib/estimator/pendingTakeoff.ts";
@@ -1377,6 +1383,71 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   ok("and it still reaches the take-off Upright draws",
     (takeoffProjection(off)?.shapes.length ?? 0) === 1,
     JSON.stringify(takeoffProjection(off)?.shapes.length ?? 0));
+}
+
+// --- Two fingers is undo, three is redo -------------------------------------
+//
+// The rule that separates a tap from the pinch it shares its fingers with. It
+// is here rather than in the canvas for the same reason the ring's angles are:
+// a rule with numbers in it can be checked without a browser, and the failure
+// it guards against is silent — a zoom that ends by undoing the last thing
+// anybody drew.
+
+{
+  console.log("\n--- the undo gesture ---");
+
+  const tap = (over: Partial<Parameters<typeof multiTapAction>[0]> = {}) =>
+    multiTapAction({ max: 2, moved: false, heldMs: 120, ...over });
+
+  ok("TWO FINGERS TAPPED IS UNDO", tap() === "undo", `${tap()}`);
+  ok("AND THREE IS REDO", tap({ max: 3 }) === "redo", `${tap({ max: 3 })}`);
+
+  /*
+    ONE FINGER IS NOT A GESTURE, and that is the important half of the count.
+    A single tap belongs to whatever tool is up — it plants, picks or erases —
+    and stealing it for undo would make the plan unusable.
+  */
+  ok("one finger is left to the tool that is up", tap({ max: 1 }) === null);
+  // Four is a hand, and a hand on the glass is somebody holding the iPad.
+  ok("and four is a hand resting, not a gesture", tap({ max: 4 }) === null);
+
+  /*
+    A FINGER THAT TRAVELLED IS A PINCH, WHATEVER ELSE IT LOOKED LIKE. This is
+    the one that matters: two fingers ARE the map's zoom, so every zoom ends
+    with exactly the finger count this gesture is watching for.
+  */
+  ok("A PINCH IS NEVER AN UNDO", tap({ moved: true }) === null);
+  ok("nor is a three-finger drag a redo", tap({ max: 3, moved: true }) === null);
+
+  /*
+    AND A HAND SET DOWN AND LIFTED LATER IS NOT A TAP. Reading a plan with a
+    hand on the glass is ordinary; undoing the last edit when it comes off is
+    not.
+  */
+  ok("a rest is not a tap", tap({ heldMs: MULTI_TAP_MS + 1 }) === null);
+  ok("but the whole budget is available",
+    tap({ heldMs: MULTI_TAP_MS }) === "undo");
+  // Two fingers do not land together and do not lift together; through a work
+  // glove they can be a good fraction of a second apart.
+  ok("and a slow, deliberate two-finger tap still counts",
+    tap({ heldMs: 450 }) === "undo");
+  // A clock that runs backwards is a broken reading, not a fast tap.
+  ok("a negative hold is refused rather than treated as instant",
+    tap({ heldMs: -5 }) === null);
+
+  /*
+    THE SLOP IS MEASURED FROM WHERE THE FINGER LANDED, not from the last
+    frame. A pinch made of many small steps never moves far between two moves,
+    so a per-frame test would call a slow zoom a tap.
+  */
+  const at = (x: number, y: number) => ({ x, y });
+  ok("a thumb's wobble is still still",
+    !multiTapMoved(at(100, 100), at(100 + MULTI_TAP_SLOP_PX, 100)));
+  ok("and a pixel past it is not",
+    multiTapMoved(at(100, 100), at(100 + MULTI_TAP_SLOP_PX + 1, 100)));
+  ok("measured as a distance, not per axis",
+    multiTapMoved(at(0, 0), at(10, 10)) === (Math.hypot(10, 10) > MULTI_TAP_SLOP_PX),
+    `${Math.hypot(10, 10).toFixed(1)}px against ${MULTI_TAP_SLOP_PX}`);
 }
 
 // --- The tool ring, summoned by hovering a pencil -----------------------------

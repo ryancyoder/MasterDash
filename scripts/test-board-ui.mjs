@@ -2848,6 +2848,110 @@ try {
     (await planted()).plants.length === beforeFinger);
 
   /*
+    7c-vii-5c. TWO FINGERS TAPPED IS UNDO, THREE IS REDO.
+
+    scripts/test-plan.ts pins the rule — what a count, a distance and a
+    duration add up to — and cannot see whether any of it reaches the glass.
+    This dispatches real touch points through CDP, because Playwright's own
+    `page.touchscreen` taps with one finger and this gesture is entirely about
+    how many there are.
+
+    THE PINCH CHECK IS THE ONE THAT MATTERS. Two fingers ARE the map's zoom, so
+    every zoom on this app ends with exactly the finger count being watched
+    for. A gesture that undid the last edit at the end of a pinch would be
+    unusable and would look like a bug in the plan, not in the input.
+  */
+  const fingersDown = async (pts) => {
+    const down = [];
+    for (const p of pts) {
+      down.push({ x: p.x, y: p.y, id: down.length + 1 });
+      await cdpTouch.send("Input.dispatchTouchEvent", {
+        type: "touchStart",
+        touchPoints: down.map((q) => ({ ...q })),
+      });
+    }
+    return down;
+  };
+  const fingersTap = async (pts, holdMs = 60) => {
+    await fingersDown(pts);
+    await page.waitForTimeout(holdMs);
+    await cdpTouch.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await page.waitForTimeout(350);
+  };
+  /** Where the fingers land: clear ground, and far enough apart to be two. */
+  const fingersAt = (n, spread = 60) =>
+    Array.from({ length: n }, (_, i) => ({
+      x: fingerAt.x + i * spread,
+      y: fingerAt.y,
+    }));
+
+  // Something to undo. The pencil plants it, since a finger will not.
+  await penDownAt(fingerAt.x, fingerAt.y - 90);
+  await page.waitForTimeout(400);
+  const withPlant = (await planted()).plants.length;
+  ok("there is an edit on the plan to step back from",
+    withPlant === beforeFinger + 1,
+    `${beforeFinger} before, ${withPlant} after`);
+
+  await fingersTap(fingersAt(2));
+  ok("TWO FINGERS TAPPED UNDOES THE LAST EDIT",
+    (await planted()).plants.length === withPlant - 1,
+    `${withPlant} before the tap, ${(await planted()).plants.length} after`);
+
+  await fingersTap(fingersAt(3));
+  ok("AND THREE FINGERS PUT IT BACK",
+    (await planted()).plants.length === withPlant,
+    `${(await planted()).plants.length} after three fingers`);
+
+  /*
+    AND A PINCH IS NOT AN UNDO — the same two fingers, moved.
+
+    OUT AND BACK IN ONE GESTURE, which does two jobs. It leaves the map where
+    it found it, so every check further down this page still reads the view it
+    was written for — a pinch that only widened zoomed the plan and took six
+    later checks with it. And it lands the fingers back on the pixels they
+    started from, which is the case an implementation that compared start to
+    END would call still. Travel has to be tracked as it happens, and this is
+    what says so.
+  */
+  const pinchFrom = fingersAt(2, 40);
+  const down = await fingersDown(pinchFrom);
+  const nudge = async (i) => {
+    down[0].x = pinchFrom[0].x - i * 6;
+    down[1].x = pinchFrom[1].x + i * 6;
+    await cdpTouch.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: down.map((q) => ({ ...q })),
+    });
+  };
+  for (let i = 1; i <= 6; i++) await nudge(i);
+  for (let i = 5; i >= 0; i--) await nudge(i);
+  await cdpTouch.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  await page.waitForTimeout(350);
+  ok("A PINCH LEAVES THE PLAN ALONE",
+    (await planted()).plants.length === withPlant,
+    `${(await planted()).plants.length} plants after pinching`);
+
+  // And one finger is still the tool's own tap, not a gesture.
+  await fingersTap(fingersAt(1));
+  ok("and one finger undoes nothing either",
+    (await planted()).plants.length === withPlant,
+    `${(await planted()).plants.length} plants after one finger`);
+
+  // Put the plan back to what the checks below were written for.
+  await page.locator('button[aria-label="Undo the last change to the plan"]').click();
+  await page.waitForTimeout(400);
+  ok("and the plan is back to where this section found it",
+    (await planted()).plants.length === beforeFinger,
+    `${beforeFinger} expected, ${(await planted()).plants.length} now`);
+
+  /*
     7c-vii-6. THE TOOL RING, SUMMONED BY HOVERING A PENCIL.
 
     The Pencil's own double-tap is delivered to native code only — WebKit

@@ -1598,6 +1598,63 @@ cards while the column was on Plants. They say which tab they need now. A page
 that has just reloaded opens on the take-off, so anything reading the plant
 column has to open it first.
 
+#### Two fingers is undo, three is redo
+
+Tap the plan with two fingers and the last change comes off; three puts it
+back. The gesture the iPad already teaches, reachable with the hand that is
+already holding the thing — and the buttons are on a row that scrolls sideways
+on a phone, so the one control you reach for after a mistake is the one that
+has scrolled off.
+
+**The pinch is what it has to survive.** Two fingers ARE the map's zoom, so
+every zoom on this app ends with exactly the finger count being watched for. A
+gesture that undid the last edit at the end of a pinch would be unusable, and
+it would look like a bug in the plan rather than in the input. Three numbers
+separate them, in `multiTap.ts`:
+
+- **`max` is the peak simultaneous count**, not a running total, so a rolling
+  hand — thumb down, index down, thumb up, middle down — reads as the two
+  fingers it ever had rather than as three.
+- **`MULTI_TAP_SLOP_PX` (12) is measured from where each finger LANDED**, not
+  from the last frame. A pinch made of many small steps never moves far
+  between two moves, so a per-frame test calls a slow zoom a tap. Once the
+  gesture has moved it stays moved, whatever the fingers do on the way back.
+- **`MULTI_TAP_MS` (600) is generous on purpose.** Two fingers do not land
+  together and do not lift together — through a work glove they can be a good
+  fraction of a second apart. What it is really guarding is a *rest*: a hand
+  set on the glass while reading the plan and lifted later is not a tap.
+
+**Touch only.** A pencil has one tip and a mouse one cursor, so neither can
+make the gesture and neither is given a meaning for it. The pencil is the
+marking instrument and the fingers are how the plan is moved about; undo
+belongs with the fingers. And **not while a layer is being placed** — two
+fingers on an imported plan is its own rotate-and-scale, and a plan somebody is
+halfway through aligning is the last thing that should quietly step backwards.
+
+**Read before anything else on the release**, because every branch of
+`handlePointerUp` consumes it for something — a placement committed, a pinch
+cleaned up, a tap on the plan — and a release that has been spent cannot be
+recognised afterwards. The pinch state is then cleared by hand, or the next
+single finger would be measured against a gesture that had ended.
+
+**Checked at both ends, and the pinch check is the one that earns its keep.**
+`test:plan` pins the rule without a browser — one finger is left to the tool
+that is up, four is a hand resting, a negative hold is refused rather than
+treated as instant. `test:board-ui` dispatches real touch points through CDP,
+because Playwright's own touchscreen taps with one finger and this gesture is
+entirely about how many there are. Its pinch goes **out and back in one
+gesture**, which does two jobs: it leaves the map where it found it, so the
+rest of the page still reads the view it was written for (a pinch that only
+widened zoomed the plan and took six later checks with it), and it lands the
+fingers back on the pixels they started from — the case an implementation that
+compared start to END would call still. Measuring the slop per frame turns it
+red; swapping undo and redo turns four red.
+
+**Needs a real iPad.** iPadOS has its own three-finger gestures — swipe for
+undo and redo system-wide, tap for the edit menu in a text field — and what is
+unproven is whether a three-finger tap on a canvas with nothing editable under
+it reaches the page at all, or is swallowed the way the Pencil's double-tap is.
+
 #### The tool ring, summoned by hovering a pencil
 
 Hold an Apple Pencil over the map with the **Plant** tool up and the symbol it

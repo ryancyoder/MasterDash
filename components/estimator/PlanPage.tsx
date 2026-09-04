@@ -2410,6 +2410,17 @@ export default function PlanPage({
             not the Green Velvet boxwood armed three categories ago.
           */
           onPickPlant={(itemId) => setPlantPick({ itemId })}
+          /*
+            TWO FINGERS TAPPED IS UNDO, THREE IS REDO.
+
+            The same two functions the buttons above call, reached with the
+            hand that is already holding the plan. The tool row scrolls
+            sideways on a phone and the one control you want after a mistake
+            is the one that has scrolled off; this is the gesture the iPad has
+            already taught everybody.
+          */
+          onUndo={() => undoPlan()}
+          onRedo={() => redoPlan()}
           selectedPlantId={selectedPlantId}
           onSelectPlant={pickPlant}
           plantName={plantName}

@@ -20,6 +20,7 @@ import {
 } from "@/lib/estimator/geo";
 import { smoothOutline } from "@/lib/estimator/curve";
 import { PLANT_GROUPS } from "@/lib/estimator/tree";
+import { multiTapAction, multiTapMoved } from "@/lib/estimator/multiTap";
 import {
   RING_HOVER_MS,
   RING_INNER_PX,
@@ -498,6 +499,8 @@ export default function PlanCanvas({
   plantName,
   plantPickId,
   onPickPlant,
+  onUndo,
+  onRedo,
   selectedPlantId,
   onSelectPlant,
   onPlacePlant,
@@ -620,6 +623,16 @@ export default function PlanCanvas({
   onRemovePlant: (id: string, stroke?: string) => void;
   /** What a tap does while the Plant tool is up. See `PlantMode`. */
   plantMode: PlantMode;
+  /**
+   * Two fingers tapped, and three.
+   *
+   * The canvas counts the fingers and `multiTap.ts` says what they add up to;
+   * what undo IS belongs to the page, exactly as `onPlacePlant` and the rest
+   * do. Optional, so a canvas mounted somewhere with no plan behind it — the
+   * review pane — simply has no gesture rather than a broken one.
+   */
+  onUndo?: () => void;
+  onRedo?: () => void;
   /** One write per drag, on release — the same rule a corner follows. */
   onMovePlant: (id: string, at: LatLng) => void;
   /**
@@ -793,6 +806,20 @@ export default function PlanCanvas({
   >(null);
 
   const pointersRef = useRef(new Map<number, Pt>());
+  /*
+    WHAT THE FINGERS ADDED UP TO, kept across the whole gesture.
+
+    `pressRef` cannot answer this: it follows the FIRST finger and is thrown
+    away the moment a second lands, which is exactly the case being measured.
+    `max` is the peak simultaneous count, so a rolling hand reads as the two
+    fingers it ever had rather than as three.
+  */
+  const multiRef = useRef<{
+    at: number;
+    max: number;
+    moved: boolean;
+    from: Map<number, Pt>;
+  } | null>(null);
   const gestureRef = useRef<{ lastDist: number; lastMid: Pt } | null>(null);
   /** Where a press started, so a release can tell a tap from a pan. */
   const pressRef = useRef<{ x: number; y: number; moved: boolean } | null>(null);
@@ -2784,6 +2811,24 @@ function isPlantInput(type: string): boolean {
     }
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
+    /*
+      COUNTING THE FINGERS, for the undo gesture. Touch only: a pencil has one
+      tip and a mouse one cursor, so neither can make this gesture and neither
+      should be given a meaning for it. See `multiTap.ts`.
+    */
+    if (e.pointerType === "touch") {
+      if (pointersRef.current.size === 1) {
+        multiRef.current = { at: e.timeStamp, max: 1, moved: false, from: new Map() };
+      }
+      const m = multiRef.current;
+      if (m) {
+        m.max = Math.max(m.max, pointersRef.current.size);
+        m.from.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+    } else {
+      multiRef.current = null;
+    }
+
     // Two fingers always pinch, whatever the tool — abandoning any drag the
     // first finger had started, so a zoom can never reshape a bed.
     if (pointersRef.current.size === 2) {
@@ -3134,6 +3179,20 @@ function isPlantInput(type: string): boolean {
       pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
 
+    /*
+      A FINGER THAT TRAVELS IS NOT A TAP, and it is measured against where that
+      finger LANDED rather than against the last frame. A pinch made of many
+      small steps never moves far between two moves, so a per-frame test would
+      call a slow zoom a tap; the distance from the start cannot be fooled that
+      way. It latches: once the gesture has moved it stays moved, whatever the
+      fingers do on the way back.
+    */
+    const m = multiRef.current;
+    if (m && !m.moved) {
+      const from = m.from.get(e.pointerId);
+      if (from && multiTapMoved(from, { x: e.clientX, y: e.clientY })) m.moved = true;
+    }
+
     const g = gestureRef.current;
     if (g && pointersRef.current.size >= 2) {
       const [a, b] = [...pointersRef.current.values()];
@@ -3320,6 +3379,42 @@ function isPlantInput(type: string): boolean {
     pointersRef.current.delete(e.pointerId);
     e.currentTarget.releasePointerCapture?.(e.pointerId);
 
+    /*
+      TWO FINGERS TAPPED IS UNDO, THREE IS REDO — decided on the LAST finger
+      up, because until then the count is not final.
+
+      It is read before anything else in this handler for one reason: every
+      branch below consumes the release for something (a placement committed,
+      a pinch cleaned up, a tap on the plan), and a gesture that has already
+      been spent cannot be recognised afterwards. Nothing below is skipped
+      though — the pinch state still has to be cleared by hand here, or the
+      next single finger would be measured against a gesture that ended.
+
+      NOT WHILE A LAYER IS BEING PLACED. Two fingers on an imported plan is
+      its own rotate-and-scale, and a plan somebody is halfway through
+      aligning is the last thing that should quietly step backwards.
+    */
+    const tap = multiRef.current;
+    if (tap && pointersRef.current.size === 0) {
+      multiRef.current = null;
+      const action = alignRef.current
+        ? null
+        : multiTapAction({
+            max: tap.max,
+            moved: tap.moved,
+            heldMs: e.timeStamp - tap.at,
+          });
+      if (action) {
+        gestureRef.current = null;
+        pressRef.current = null;
+        dragRef.current = null;
+        setDragNodes(null);
+        if (action === "undo") onUndo?.();
+        else onRedo?.();
+        return;
+      }
+    }
+
     // One write per gesture, on release. The placement is left on screen
     // until the parent hands it back as the layer's own georef, so the plan
     // never flicks back to where it was for a frame.
@@ -3419,6 +3514,9 @@ function isPlantInput(type: string): boolean {
 
   function handlePointerCancel(e: React.PointerEvent<HTMLCanvasElement>) {
     pointersRef.current.delete(e.pointerId);
+    // A cancelled touch is the browser taking the gesture away — a palm, a
+    // system swipe. Whatever it was, it was not a tap.
+    multiRef.current = null;
     if (pointersRef.current.size === 0) {
       gestureRef.current = null;
       alignRef.current = null;
