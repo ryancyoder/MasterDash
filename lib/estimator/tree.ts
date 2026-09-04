@@ -23,18 +23,39 @@ import type { CatalogItem, TileNode } from "./types";
 
 /** Plant categories at L2, each opening its slice of the 962-row plant list. */
 /**
- * The six plant categories, and the catalog item each one buys.
+ * The plant categories, and the catalog item each one buys.
  *
  * Exported because the plan's plant take-off arms from exactly this list: the
  * symbol you place on the map and the tile you tap in the grid have to be the
- * same six things, or the two ways of putting a shrub on a job would drift
- * into two different vocabularies.
+ * same things, or the two ways of putting a shrub on a job would drift into
+ * two different vocabularies.
+ *
+ * THE ORDER IS THE SIZE ORDER, and grasses belong where Ryan put them: after
+ * the shrubs and before the perennials. That is how a plant list is read on a
+ * planting plan and how a nursery order is written — biggest thing first,
+ * down to the ground covers — so a category out of that sequence is a category
+ * nobody finds. It is also, not coincidentally, the order `ASSEMBLY_ROLES`
+ * has listed for the landscape bed since the catalog was first synced:
+ * shrub, ornamental_grass, perennial, ground_cover. The role was declared long
+ * before the tile existed.
+ *
+ * THE PLANT LIST HAS NO GRASSES IN IT, and that is worth stating plainly
+ * rather than discovering in a yard. All 962 rows carry one of five types
+ * (tree, shrub, perennial, groundcover, bulb) and not one ornamental grass is
+ * among them — no Miscanthus, no Panicum, no Calamagrostis, nothing; the only
+ * grass-shaped thing on the list is five Liriope filed under perennials. So
+ * this category opens on its generic tile alone until somebody adds grass rows
+ * upstream, which is a `plants` table change plus a line in the group map in
+ * `scripts/sync-catalog.mjs`. That is a sound stopping point rather than a
+ * broken one — every level here commits something, and "Any Grasses" prices
+ * the job exactly as "Any Shrub" does.
  */
 export const PLANT_GROUPS: { itemId: string; group: string; label: string }[] = [
   { itemId: "mat:shade_tree", group: "shade_tree", label: "Shade Tree" },
   { itemId: "mat:ornamental_tree", group: "ornamental_tree", label: "Ornamental" },
   { itemId: "mat:evergreen_tree", group: "evergreen_tree", label: "Evergreen" },
   { itemId: "mat:shrub", group: "shrub", label: "Shrub" },
+  { itemId: "mat:grasses", group: "grasses", label: "Grasses" },
   { itemId: "mat:perennial", group: "perennial", label: "Perennial" },
   { itemId: "mat:ground_cover", group: "ground_cover", label: "Ground Cover" },
 ];

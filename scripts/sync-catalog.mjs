@@ -231,9 +231,19 @@ const plants = (
           : (r.height_in ?? 0) >= SHADE_MIN_IN
             ? "shade_tree"
             : "ornamental_tree"
-        : { shrub: "shrub", groundcover: "ground_cover", perennial: "perennial", bulb: "perennial" }[
-            r.type
-          ] ?? "other";
+        : {
+            shrub: "shrub",
+            groundcover: "ground_cover",
+            perennial: "perennial",
+            bulb: "perennial",
+            // No row carries either of these today — the 962 rows are all
+            // tree/shrub/perennial/groundcover/bulb and hold not one
+            // ornamental grass. The tile exists, so the mapping is here for
+            // the day somebody types the type in rather than the day somebody
+            // notices the folder is empty.
+            grass: "grasses",
+            ornamental_grass: "grasses",
+          }[r.type] ?? "other";
 
     return {
       id: r.id,

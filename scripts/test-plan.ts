@@ -42,6 +42,8 @@ import {
   massOutline,
 } from "../lib/estimator/plantMass.ts";
 import { PLANT_STAMPS } from "../lib/estimator/plantStamp.ts";
+import { PLANT_GROUPS } from "../lib/estimator/tree.ts";
+import { getItem } from "../lib/estimator/catalog.ts";
 import {
   buildProposal,
   effectiveTaps,
@@ -893,6 +895,73 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   ok("and one out of range comes back inside it", bad[0]?.w === CALLOUT_MAX_W);
 }
 
+// --- The plant categories --------------------------------------------------
+//
+// ADDING A CATEGORY IS MEANT TO BE A ROW, and this is what makes that true
+// rather than hoped. `PLANT_GROUPS` is the single vocabulary — the tile you
+// tap in the grid, the wedge the pencil picks off the ring, and the symbol
+// that lands on the map are all read from it — but four other tables have to
+// agree with it or a category half exists: a catalog item to price it, a
+// spread to draw it at, a stamp to draw, and an edge profile for when a
+// planting of them masses.
+//
+// Grasses is the case in point. Its spread (3ft), its stamp and its edge were
+// all written months before the tile was, so adding the tile really was one
+// row — and the only reason that held is that nothing here was left to be
+// noticed in a yard.
+
+{
+  console.log("\n--- the plant categories ---");
+
+  ok("the categories run big to small, the way a plant list is read",
+    PLANT_GROUPS.map((g) => g.group).join(",") ===
+      "shade_tree,ornamental_tree,evergreen_tree,shrub,grasses,perennial,ground_cover",
+    PLANT_GROUPS.map((g) => g.group).join(","));
+
+  // Ryan's placement, and the one the assembly's own roles have listed since
+  // the catalog was first synced.
+  const at = (g: string) => PLANT_GROUPS.findIndex((x) => x.group === g);
+  ok("AND GRASSES SITS BETWEEN SHRUBS AND PERENNIALS",
+    at("grasses") === at("shrub") + 1 && at("grasses") === at("perennial") - 1,
+    `shrub ${at("shrub")}, grasses ${at("grasses")}, perennial ${at("perennial")}`);
+
+  ok("no category is listed twice",
+    new Set(PLANT_GROUPS.map((g) => g.itemId)).size === PLANT_GROUPS.length);
+
+  for (const g of PLANT_GROUPS) {
+    /*
+      A tile with no catalog item behind it does not render badly — `tree.ts`
+      does `getItem(itemId)!` and then reads a glyph off undefined, so the
+      whole tile tree throws AT IMPORT and every check in this file goes with
+      it. Which means this line cannot go red on its own: mutation-tested by
+      deleting the grasses row from the catalog snapshot, the suite does not
+      report a failure, it crashes before the first PASS.
+
+      It is kept because that is a loud failure rather than a quiet one — the
+      sweep names a test that produced no checks at all — and because it
+      states the requirement in the one place somebody adding a category will
+      read. It is a label on a crash, not a guard against it.
+    */
+    ok(`${g.label} has a catalog item to buy`, Boolean(getItem(g.itemId)),
+      g.itemId);
+    // Not the shrub fallback by accident: a category drawn at somebody else's
+    // size is a plan that lies about whether the planting fits.
+    ok(`${g.label} has a spread of its own`,
+      PLANT_SPREAD_FT[g.itemId] !== undefined, g.itemId);
+    ok(`${g.label} has a stamp of its own`,
+      stampFor(g.itemId) === g.group, stampFor(g.itemId));
+    ok(`${g.label} has an edge for when it masses`,
+      Boolean(edgeProfileOf(g.group)), g.group);
+  }
+
+  // The itemId is the group with the catalog prefix on it, every time. The
+  // plant list is filtered by `group` and the price is looked up by `itemId`,
+  // so a mismatch opens the wrong plants under the right tile.
+  ok("and every group names its own item",
+    PLANT_GROUPS.every((g) => g.itemId === `mat:${g.group}`),
+    JSON.stringify(PLANT_GROUPS.filter((g) => g.itemId !== `mat:${g.group}`)));
+}
+
 // --- How big a plant is drawn ----------------------------------------------
 //
 // A planting plan draws a plant at the spread it will reach, because the whole
@@ -1310,13 +1379,20 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
 //
 // The angles are the whole risk. A ring that picks the wedge NEXT to the one
 // under the tip looks entirely right and plants the wrong thing, and no
-// screenshot would catch it — so every one of the six is checked by aiming at
-// its own middle and at both of its edges.
+// screenshot would catch it — so every wedge is checked by aiming at its own
+// middle and at both of its edges.
+//
+// N COMES FROM `PLANT_GROUPS`, not from a number typed here. It was 6 until
+// Grasses was added and the step went from 60° to 51.43°: a hard-coded six
+// would have gone on passing, in perfect detail, about a ring the app had
+// stopped drawing. A test that survives the change it should have caught is
+// worse than no test, because it is believed.
 
 {
   console.log("\n--- the tool ring ---");
 
-  const N = 6;
+  const N = PLANT_GROUPS.length;
+  const STEP = 360 / N;
   const mid = (RING_INNER_PX + RING_OUTER_PX) / 2;
   /** A point at `deg` clockwise from the top, `r` out from the centre. */
   const at = (deg: number, r = mid) => ({
@@ -1328,19 +1404,19 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   const p0 = at(0);
   ok("straight up is the first wedge", wedgeAt(p0.dx, p0.dy, N) === 0);
   for (let i = 0; i < N; i++) {
-    const c = at(i * 60);
-    ok(`wedge ${i} owns its own middle`, wedgeAt(c.dx, c.dy, N) === i,
-      `${wedgeAt(c.dx, c.dy, N)}`);
+    const c = at(i * STEP);
+    ok(`wedge ${i} (${PLANT_GROUPS[i].label}) owns its own middle`,
+      wedgeAt(c.dx, c.dy, N) === i, `${wedgeAt(c.dx, c.dy, N)}`);
     // Just inside each edge, which is where an off-by-half-a-step lands.
-    const lo = at(i * 60 - 29);
-    const hi = at(i * 60 + 29);
+    const lo = at(i * STEP - (STEP / 2 - 1));
+    const hi = at(i * STEP + (STEP / 2 - 1));
     ok(`and both sides of it`,
       wedgeAt(lo.dx, lo.dy, N) === i && wedgeAt(hi.dx, hi.dy, N) === i,
       `${wedgeAt(lo.dx, lo.dy, N)} and ${wedgeAt(hi.dx, hi.dy, N)} for ${i}`);
   }
-  // And the seam: 30 degrees round is the boundary between 0 and 1.
-  const seamLo = at(29.5);
-  const seamHi = at(30.5);
+  // And the seam: half a step round is the boundary between 0 and 1.
+  const seamLo = at(STEP / 2 - 0.5);
+  const seamHi = at(STEP / 2 + 0.5);
   ok("THE SEAM IS WHERE IT LOOKS",
     wedgeAt(seamLo.dx, seamLo.dy, N) === 0 && wedgeAt(seamHi.dx, seamHi.dy, N) === 1,
     `${wedgeAt(seamLo.dx, seamLo.dy, N)} then ${wedgeAt(seamHi.dx, seamHi.dy, N)}`);

@@ -41,10 +41,11 @@ export type PlantStampKind =
  * 962-row plant list has no spread column today, and `upright_objects` already
  * stores a measured one for a plant somebody actually shot in a yard.
  *
- * `grasses` has no category in this app yet: the plant list's 962 rows fall
- * into six groups and ornamental grasses sit inside `perennial`. The figure is
- * here so that the day a grasses category exists it draws at 3ft rather than
- * at a default nobody chose.
+ * `grasses` now HAS a category — a tile between Shrub and Perennial, which is
+ * where a plant list reads it — and this figure is what made that a one-line
+ * change rather than a feature. What the category does not have is any plants:
+ * the 962-row list holds no ornamental grass at all, so `mat:grasses` is a
+ * generic drawn at 3ft until rows exist upstream. See `PLANT_GROUPS`.
  */
 export const PLANT_SPREAD_FT: Record<string, number> = {
   "mat:shade_tree": 20,

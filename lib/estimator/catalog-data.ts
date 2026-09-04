@@ -96,6 +96,7 @@ export const MATERIALS: MaterialRow[] = [
   { id: "solid_drain_pipe", name: "4\" Solid Drain Pipe", category: "drainage", unit: "roll", costPerUnit: 108, unitsPerLoad: null, autoDelivery: false, roundTo: null },
   { id: "grid_wall_reinforcement", name: "Grid (Wall Reinforcement)", category: "hardscape", unit: "roll", costPerUnit: 1400, unitsPerLoad: null, autoDelivery: false, roundTo: null },
   { id: "hf_grand_ledge", name: "HF Grand Ledge", category: "hardscape", unit: "pallet", costPerUnit: 711, unitsPerLoad: null, autoDelivery: false, roundTo: null },
+  { id: "grasses", name: "Ornamental Grass", category: "plants", unit: "ea", costPerUnit: 18, unitsPerLoad: null, autoDelivery: false, roundTo: null },
 ];
 
 export const EQUIPMENT: EquipmentRow[] = [

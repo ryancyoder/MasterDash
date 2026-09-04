@@ -1903,7 +1903,7 @@ try {
   const armed = () =>
     page.evaluate(() => {
       const names = ["Shade Tree", "Ornamental", "Evergreen", "Shrub",
-        "Perennial", "Ground Cover"];
+        "Grasses", "Perennial", "Ground Cover"];
       for (const n of names) {
         const b = document.querySelector(`button[aria-label="${n}"][aria-pressed="true"]`);
         if (b) return n;
@@ -1961,9 +1961,31 @@ try {
   await page.waitForTimeout(250);
   ok("the plan has a Plant tool beside Area and Linear",
     (await page.locator('button[aria-label="Plant"]').count()) === 1);
-  ok("and it arms with the same six categories the grid holds",
-    (await page.locator('button:has-text("Shade Tree")').count()) >= 1 &&
-      (await page.locator('button:has-text("Perennial")').count()) >= 1);
+  /*
+    THE SUB-TOOLBAR HOLDS EVERY CATEGORY THE GRID DOES, and it is checked by
+    name rather than by count. A count says "seven buttons" and passes just as
+    well when one of them is the wrong seven — which is exactly the failure
+    adding Grasses could have caused, since the tile, the wedge and the symbol
+    are three separate readings of one list.
+  */
+  const CATEGORIES = ["Shade Tree", "Ornamental", "Evergreen", "Shrub",
+    "Grasses", "Perennial", "Ground Cover"];
+  const missing = [];
+  for (const n of CATEGORIES) {
+    if ((await page.locator(`button[aria-label="${n}"]`).count()) < 1) missing.push(n);
+  }
+  ok("and it arms with the same categories the grid holds",
+    missing.length === 0, `missing ${missing.join(", ")}`);
+  // Ryan's order, read off the toolbar itself: grasses go after the shrubs and
+  // before the perennials, which is how a plant list is written.
+  const barOrder = await page.evaluate((names) =>
+    [...document.querySelectorAll("button[aria-label]")]
+      .map((b) => b.getAttribute("aria-label"))
+      .filter((l) => names.includes(l)), CATEGORIES);
+  ok("AND GRASSES IS BETWEEN SHRUB AND PERENNIAL ON THE BAR",
+    barOrder.indexOf("Grasses") === barOrder.indexOf("Shrub") + 1 &&
+      barOrder.indexOf("Grasses") === barOrder.indexOf("Perennial") - 1,
+    barOrder.join(" · "));
 
   // Two taps, two plants. No pending state, no Finish — a plant is one point
   // and it is complete the moment it exists, which is the whole difference
@@ -2961,9 +2983,79 @@ try {
   ok("A PENCIL HELD STILL OVER THE MAP BRINGS THE RING UP",
     openInk > mouseInk + 400, `${mouseInk} without, ${openInk} with`);
 
-  // Six wedges, and the pick has to be the one under the tip. Straight UP is
-  // the first category; the maths is pinned in scripts/test-plan.ts, and this
-  // is the half that says the ring on screen agrees with it.
+  /*
+    AND SEVEN LABELS STILL FIT IN IT.
+
+    A seventh category narrows every wedge from 60° to 51.4° WITHOUT making
+    the ring any bigger — it is a fixed 92px whatever is in it — and the two
+    that end up either side of the bottom sit at the same height, which is the
+    one adjacency where two labels can run into each other. Nothing above
+    would notice: the picking is exact either way, and a ring whose bottom two
+    words had merged into one smear would pass every check on this page.
+
+    So this reads the RENDERED canvas: a band across the row those two labels
+    are drawn on, and how close the right edge of the left word gets to the
+    left edge of the right one. Counting RUNS of ink would not do it — at
+    14px the gaps between letters are blank columns too, so "Shrub" is five
+    runs, not one — but the two words sit either side of the ring's own
+    centre line, so the nearest ink on each side of it is exactly the question.
+  */
+  const labelRuns = await page.evaluate(([x, y]) => {
+    const c = document.querySelector("canvas[data-plan-canvas]");
+    const rect = c.getBoundingClientRect();
+    const k = c.width / rect.width;
+    const cx = (x - rect.left) * k;
+    const cy = (y - rect.top) * k;
+    const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    // The icons ride 66% of the way out from a 34px hole to a 92px rim, and a
+    // label sits 16px under its icon. Wedges 3 and 4 of seven are either side
+    // of the bottom at the same height: -cos(3·2pi/7)·iconR below the centre.
+    // Canvas y grows downward, hence the sign.
+    const iconR = 34 + (92 - 34) * 0.66;
+    const rowY = cy + (-Math.cos((3 * 2 * Math.PI) / 7) * iconR + 16) * k;
+    const litAt = (px) => {
+      for (let py = Math.round(rowY - 9 * k); py <= Math.round(rowY + 9 * k); py++) {
+        const i = (py * c.width + px) * 4;
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        // Pale ink: bright and near-grey, which the green stamps are not.
+        if (r > 150 && g > 150 && b > 150 && Math.max(r, g, b) - Math.min(r, g, b) < 45) {
+          return true;
+        }
+      }
+      return false;
+    };
+    let left = null;
+    let right = null;
+    let leftInk = 0;
+    let rightInk = 0;
+    for (let px = Math.round(cx - 92 * k); px <= Math.round(cx + 92 * k); px++) {
+      if (!litAt(px)) continue;
+      if (px < cx) { left = px; leftInk++; } else if (right === null) { right = px; rightInk++; }
+      else rightInk++;
+    }
+    return {
+      gapPx: left === null || right === null ? null : (right - left) / k,
+      leftInk,
+      rightInk,
+    };
+  }, [ringHome.x, ringHome.y]);
+  ok("AND THE TWO LABELS EITHER SIDE OF THE BOTTOM DO NOT RUN INTO EACH OTHER",
+    labelRuns.leftInk > 20 && labelRuns.rightInk > 20 && labelRuns.gapPx >= 4,
+    JSON.stringify(labelRuns));
+
+  // One wedge per category, and the pick has to be the one under the tip.
+  // Straight UP is the first; the maths is pinned in scripts/test-plan.ts, and
+  // this is the half that says the ring on screen agrees with it.
+  //
+  // The angles below are DERIVED from the category list rather than typed.
+  // They were typed once — 60° apart, because there were six — and adding
+  // Grasses moved every wedge but the first without moving a single number
+  // here. One of them still landed on the category it named, by luck, which is
+  // the kind of pass that teaches you nothing.
+  const wedgePt = (i, r = 62) => ({
+    x: ringHome.x + Math.sin((i * 2 * Math.PI) / CATEGORIES.length) * r,
+    y: ringHome.y - Math.cos((i * 2 * Math.PI) / CATEGORIES.length) * r,
+  });
   ok("Shrub is what is armed before the ring is used", (await armed()) === "Shrub",
     await armed());
 
@@ -3018,16 +3110,35 @@ try {
     (await planted()).plants.length === 2,
     JSON.stringify((await planted()).plants));
 
-  // Round the ring the other way: bottom-left is the fifth of six.
+  /*
+    THE NEW WEDGE IS REACHABLE, which is the one thing a seventh category can
+    quietly fail at: the list grows, the bar grows with it, and the ring — a
+    fixed 92px across whatever is in it — hands the tip a slice that is either
+    too thin to hit or sitting where its neighbour used to be.
+
+    Grasses is wedge 4 of seven: bottom-left, between Shrub and Perennial.
+  */
+  const grassAt = wedgePt(CATEGORIES.indexOf("Grasses"));
   await penMove(ringHome.x, ringHome.y);
   await page.waitForTimeout(120);
   await penMove(ringHome.x + 1, ringHome.y + 1);
   await page.waitForTimeout(1400);
-  const px = ringHome.x + Math.sin((-120 * Math.PI) / 180) * 62;
-  const py = ringHome.y - Math.cos((-120 * Math.PI) / 180) * 62;
-  await penMove(px, py);
+  await penMove(grassAt.x, grassAt.y);
   await page.waitForTimeout(200);
-  await penDown(px, py);
+  await penDown(grassAt.x, grassAt.y);
+  await page.waitForTimeout(400);
+  ok("THE RING OFFERS GRASSES, AND THE TIP CAN REACH IT",
+    (await armed()) === "Grasses", await armed());
+
+  // Round the ring the other way, to the wedge past it.
+  const perenAt = wedgePt(CATEGORIES.indexOf("Perennial"));
+  await penMove(ringHome.x, ringHome.y);
+  await page.waitForTimeout(120);
+  await penMove(ringHome.x + 1, ringHome.y + 1);
+  await page.waitForTimeout(1400);
+  await penMove(perenAt.x, perenAt.y);
+  await page.waitForTimeout(200);
+  await penDown(perenAt.x, perenAt.y);
   await page.waitForTimeout(400);
   ok("AND THE WEDGE UNDER THE TIP IS THE ONE PICKED, all the way round",
     (await armed()) === "Perennial", await armed());

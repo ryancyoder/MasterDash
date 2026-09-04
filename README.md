@@ -609,7 +609,7 @@ stands — so the plant tool has no pending state, no Finish button and no
 minimum number of corners. One tap is a whole plant.
 
 **A placement commits the same `TileCommit` a tile does**, and that is the
-whole design. The six categories on the plan's plant row are exactly the six
+whole design. The categories on the plan's plant row are exactly the ones
 in the grid's Plants folder (`PLANT_GROUPS`, now exported for that reason),
 and a symbol is stored as `itemId` plus an optional `variantId` — the same
 `itemId::variantId` key a tapped tile writes. Three Green Velvet boxwood placed
@@ -762,12 +762,31 @@ CATEGORY's default rather than any one cultivar's:
 | Perennial | 1.5 ft |
 | Ground cover | 1 ft |
 
-**There is no grasses category in this app yet**, and the 3ft figure is in the
-table anyway. The plant list's 962 rows fall into six groups — ornamental
-grasses sit inside `perennial` — so adding one means a new priced item in
-Supabase, which is a decision rather than a line of code. The figure is written
-down so that the day the category exists it draws at 3ft instead of at a
-default nobody chose.
+**Grasses got its category, and writing that figure down first is why it was
+one row.** The spread, the stamp and the mass edge were all in place months
+before the tile was, so adding the category came to a line in `PLANT_GROUPS`, a
+line in the glyph table and a priced item in Supabase — nothing to notice later
+in a yard. It sits between Shrub and Perennial, which is the order a plant list
+is read in and, as it turns out, the order `assembly_roles` has listed for the
+landscape bed since the catalog was first synced: *shrub, ornamental_grass,
+perennial, ground_cover*. The role was declared long before the tile was.
+
+**What the category does NOT have is any plants, and that is worth saying
+plainly rather than discovering in a yard.** All 962 rows carry one of five
+types — tree, shrub, perennial, groundcover, bulb — and not one ornamental
+grass is among them. No Miscanthus, no Panicum, no Calamagrostis; the only
+grass-shaped thing on the list is five Liriope filed under perennials, and
+lilyturf is not a grass. So the folder opens on **Any Grasses** alone until
+rows exist upstream, which is a `plants` table change plus a line in the group
+map in `scripts/sync-catalog.mjs` (both `grass` and `ornamental_grass` already
+map to it, so it is the data that is missing, not the plumbing). That is a
+sound stopping point rather than a broken one: every level of the tree commits
+something, and *Any Grasses* prices a job exactly as *Any Shrub* does.
+
+**The unit cost is a placeholder.** $18, sitting between a perennial at 12
+and a shrub at 32, because a category with no price cannot be tapped and a
+number nobody chose is worse than one flagged as chosen badly. It is one field
+in `materials`; correct it there and re-run `sync-catalog`.
 
 **The honesty problem moves rather than disappearing.** The circle is now a
 claim about a canopy — specifically about the *specified* spread for the
@@ -1251,7 +1270,7 @@ is deliberately not remembered across a trip to Select: coming back to a tool
 that is silently still in Remove is how a tap meant to plant a tree takes one
 off instead. Cycling within the tool is the only way into the other two.
 
-**The ring and the ghost belong to Plant alone.** A menu of six categories
+**The ring and the ghost belong to Plant alone.** A menu of categories
 offered over a plant you are about to remove answers a question nobody asked,
 and a preview of what is about to go down is meaningless when nothing is. So
 the hover does nothing in the other two states.
@@ -1315,7 +1334,7 @@ The arming happens in the tap handler rather than an effect. That is what
 of a tap, not of a render.
 
 **One list, not two.** The column shipped with the picker as one list of the
-six categories and a bill of what was placed as a second, directly underneath —
+categories and a bill of what was placed as a second, directly underneath —
 in a column narrow enough that they read as one list drawn twice. The named
 cultivars made it worse: *Arborvitae Mr. Bowling Ball* sat on the bill beside
 *Shrub* as though it were a seventh category, when it is three of the eleven
@@ -1356,9 +1375,25 @@ column has to open it first.
 
 Hold an Apple Pencil over the map with the **Plant** tool up and the symbol it
 is about to plant is drawn under the tip, at the ground size it will really be.
-Hold still for a second and the six categories come to the tip: Shade Tree,
-Ornamental, Evergreen, Shrub, Perennial, Ground Cover. Slide onto one, touch
-down, and it is armed — and the ghost under the tip is that one from then on.
+Hold still for a second and the categories come to the tip: Shade Tree,
+Ornamental, Evergreen, Shrub, Grasses, Perennial, Ground Cover. Slide onto one,
+touch down, and it is armed — and the ghost under the tip is that one from then
+on.
+
+**A seventh wedge was the first thing to test when Grasses arrived.** The ring
+is a fixed 92px whatever is in it, so a category does not make it bigger — it
+makes every slice narrower, 60° to 51.4°, and it moves every wedge but the
+first. Two things follow, and only one of them is arithmetic. The picking is
+exact by construction and `scripts/test-plan.ts` now takes its wedge count from
+`PLANT_GROUPS` rather than from a 6 typed into the test — a hard-coded six
+would have gone on passing, in perfect detail, about a ring the app had stopped
+drawing. The other is the *rendering*, which no amount of angle checking can
+see: seven wedges puts two labels either side of the bottom at the same height,
+and *Shrub* and *Grasses* had 13px between them. `test-board-ui.mjs` reads that
+gap off the rendered canvas — the nearest pale ink on each side of the ring's
+own centre line — because a ring whose bottom two words had merged into one
+smear would pass every other check on the page. Widening those two labels by
+six characters closes the gap to 1px and turns it red.
 
 **The ghost is the point, and the ring is what it grew into.** A 20ft shade
 tree over a 12ft gap is a tree that does not fit, and hovering is the only
@@ -3226,6 +3261,12 @@ large fleet) and the generic small-equipment day ($255, the median). Markup
 defaults to **0%**, so "sell" equals cost until it is set — nothing is silently
 marked up.
 
+**Ornamental Grass ($18) is a fourth, and is not flagged** — it is a real
+`materials` row rather than a synthetic tile, so nothing on the proposal knows
+to doubt it. The number was chosen to sit between a perennial (12) and a shrub
+(32) because the category could not exist without one. Correct
+`materials.cost_per_unit` for `grasses` and re-run `sync-catalog`.
+
 ### Tile photography
 
 Tiles prefer a real photo and fall back to their glyph, which is also what
@@ -3263,6 +3304,17 @@ node scripts/sync-catalog.mjs
 Tile placement in `lib/estimator/tree.ts` is deliberate and per-item — which
 materials deserve a home tile is a judgement about how Ryan sells, and it is
 meant to be argued with.
+
+**The snapshot is generated, so a category added by hand here is a category
+that disappears at the next sync.** The Ornamental Grass row went into
+Supabase's `materials` first (sort_order 43, appended rather than renumbered,
+which keeps the regenerated diff to one line) and was then written into the
+snapshot in exactly the shape the script emits. `scripts/test-plan.ts` checks
+that every entry in `PLANT_GROUPS` resolves to a catalog item, a spread, a
+stamp and a mass edge — though be honest about that first one: `tree.ts` does
+`getItem(itemId)!` and reads a glyph off it, so a missing item throws at import
+and takes every check in the file with it. The line is a label on that crash,
+not a guard against it.
 
 
 ## Needs field testing
