@@ -4222,6 +4222,85 @@ try {
     `${spreadOf(massRim)} against ${spreadOf(soloRim)} on the plain circle, ` +
       `radius ${Math.max(...soloRim)}`);
 
+  /*
+    7c-x-c-5. AND A LONE CONIFER IS SERRATED TOO.
+
+    THIS IS THE CHECK THAT WAS MISSING, and its absence cost two rounds. The
+    edge above is the MASS edge: it only exists where two plants of a kind
+    overlap, and everything about it was verified — the geometry numerically,
+    the texture on the screen — while the thing Ryan was actually looking at,
+    one evergreen on its own, went on being a plain circle with a starburst
+    inside it. Twice reported, twice answered about masses.
+
+    So the conifer's sawtooth is its OUTLINE now, and this reads that outline
+    off the canvas with the shade tree's plain circle beside it as the ruler:
+    same zoom, same 80ft spread, same frame. Two things have to hold together
+    and neither means much alone — the rim varies (there are teeth) and it
+    never reaches further than the round one does (they are cut inward, so the
+    symbol still says exactly where the canopy stops).
+  */
+  await symbolPanel.click();
+  await page.waitForTimeout(300);
+  const evgSpread = page.locator('input[aria-label="Evergreen spread in feet"]');
+  ok("the panel offers the evergreen its own spread too",
+    (await evgSpread.count()) === 1);
+  await evgSpread.fill("80");
+  await page.waitForTimeout(400);
+  await symbolPanel.click();
+  await page.waitForTimeout(400);
+
+  await armPlant(page);
+  await page.waitForTimeout(200);
+  await page.click('button[aria-label="Evergreen"]');
+  await page.waitForTimeout(300);
+  const evgOff = fractionOff(0.2, 0.68);
+  const evgGround = await pointNow(evgOff);
+  ok("the ground for the conifer is clear before it goes down",
+    (await ringInk(evgGround, 70)) === 0, `${await ringInk(evgGround, 70)} green`);
+  await tapAt(evgOff);
+  await page.waitForTimeout(400);
+
+  /*
+    AND IT HAS TO BE PUT DOWN BEFORE IT IS MEASURED. A just-placed plant is
+    selected, and a selected stamp carries a highlight ring at r + 4 — which
+    reaches four pixels PAST the canopy and would answer the second question
+    below with the wrong shape entirely.
+  */
+  await plantBtn.click();
+  await page.waitForTimeout(250);
+  ok("and the tool is in Pick to put it down", (await plantMode()) === "select");
+  const evgClear = await pointNow(fractionOff(0.62, 0.72));
+  await page.mouse.click(evgClear.x, evgClear.y);
+  await page.waitForTimeout(400);
+  ok("nothing is picked while the conifer is read",
+    (await page.locator("aside >> text=/naming/i").count()) === 0);
+
+  const evgRim = (await rimRadii(await pointNow(evgOff), 160)).filter((r) => r > 0);
+  ok("the conifer is found, and drawn big enough to have an edge",
+    evgRim.length > 40 && Math.max(...evgRim) > 20,
+    `${evgRim.length} rays, ${Math.max(...evgRim)}px radius`);
+  ok("A LONE CONIFER'S OWN OUTLINE IS SERRATED, not a circle with a star in it",
+    spreadOf(evgRim) > spreadOf(soloRim) + 2 &&
+      spreadOf(evgRim) > Math.max(...evgRim) * 0.08,
+    `${spreadOf(evgRim)} against ${spreadOf(soloRim)} on the plain circle, ` +
+      `radius ${Math.max(...evgRim)}`);
+  ok("AND ITS TEETH ARE CUT INWARD — it still says where the canopy stops",
+    Math.max(...evgRim) <= Math.max(...soloRim) + 1,
+    `${Math.max(...evgRim)} against the round ${Math.max(...soloRim)}`);
+
+  // Off the plan again, and back to Pick, which is where the cleanup below
+  // expects to find the tool.
+  await plantBtn.click();
+  await page.waitForTimeout(250);
+  ok("to Remove to clear the conifer", (await plantMode()) === "delete");
+  await tapAt(evgOff);
+  await page.waitForTimeout(400);
+  await plantBtn.click();
+  await page.waitForTimeout(200);
+  await plantBtn.click();
+  await page.waitForTimeout(250);
+  ok("and back to Pick", (await plantMode()) === "select");
+
   // Off the plan, and the table's own spread back, so nothing downstream
   // inherits a 50ft shade tree.
   await plantBtn.click();

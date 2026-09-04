@@ -798,15 +798,45 @@ actually shot in a yard.
 
 **Line work, not colour.** Every plant category is the same green, so the
 texture is what tells them apart — a mono-line plan is how this has always been
-drawn. A lobed cloud with a second ring inside for a shade tree; a lighter
-crown with the branching showing through for an ornamental; the conifer
-sawtooth, which is the one plan convention everybody already reads; many
-shallow lobes for a shrub, dense and unmistakably not a tree at a glance, which
-is the pair that has to be told apart most often; blades out of a clump inside
-a dashed extent for grasses, because a grass has no edge and should not be
-drawn one; a small rosette for a perennial; and the lightest mark on the plan,
-a dashed ring, for a ground cover. An emoji at 6px is a smudge. A sawtooth at
-6px still reads as spiky.
+drawn. Branching under a see-through canopy for a shade tree; a ring of blossom
+clusters for an ornamental; the conifer sawtooth, which is the one plan
+convention everybody already reads; layered broken arcs for a shrub, dense and
+unmistakably not a tree at a glance, which is the pair that has to be told
+apart most often; blades out of a clump inside a dashed extent for grasses,
+because a grass has no edge and should not be drawn one; a small rosette for a
+perennial; and the lightest mark on the plan, a dashed ring with a stipple in
+it, for a ground cover. An emoji at 6px is a smudge. A sawtooth at 6px still
+reads as spiky.
+
+**The conifer is the one whose texture is its OUTLINE, and getting that wrong
+cost three rounds.** Every stamp was a plain circle with its mark inside — the
+right call for six of the seven, since a bed of scalloped rims is a hedge of
+squiggles and *where a canopy reaches* is the one thing a plan must be able to
+say. The sawtooth is the case that argument loses: it is a **silhouette**, all
+of its information is in the edge, and a starburst drawn inside a circle is a
+starburst inside a circle. Ryan reported it twice — *nothing unique for
+evergreens*, then *still not seeing sawtooth* — and both times the answer was
+about the MASS edge below, which only exists where two of a kind overlap. The
+thing being looked at, one evergreen on its own, went on being a circle.
+
+`RIM_TEXTURED` is that exception, and it is one entry long. What is not given
+up is the claim: the teeth are cut **inward** from the true radius with their
+tips exactly on it, so the symbol still reaches precisely as far as the canopy
+does — the same inward-only rule the mass edge follows, read from the same
+`EDGE_PROFILES` row, so a lone conifer and a row of them merged into one mass
+are serrated identically. Two opinions about what a conifer looks like is how
+they drift apart. The branching inside waits for `r ≥ 16`: at a 12px canopy
+twelve spokes into a 7px middle is a blot, and the serrated outline is already
+saying conifer on its own.
+
+**Rendering it is not the same as verifying it, and this is the third time that
+lesson has been paid for here** (the flow arrows, the outline crosshair, now
+this). The starburst was drawn correctly the whole time. What nobody had done
+was *look at it at the size it is actually drawn* — 13px in the tool ring, 14px
+in the symbols panel, and about 12px on a map at three pixels to the foot,
+where twelve spikes reaching to 0.9r merge with the rim into a small grey
+scribble. The fix came from rendering all seven kinds across seven map scales
+and reading the sheet.
 
 **A floor, and it says so.** A ground cover is a foot across; over a whole yard
 that is a third of a pixel — invisible, and worse, untappable, so a bed of them
@@ -823,6 +853,14 @@ symbol grows when the map zooms in and shrinks on the way back out. That last
 pair is what the old fixed-size disc cannot do — against a build with the
 radius pinned at 13px it reports **1001 then 1012**, flat. A shade tree shrunk
 to a shrub's 6ft turns 3 checks red.
+
+**And the conifer's own outline is read off the canvas**, with a shade tree at
+the same 80ft spread beside it as the ruler in the same frame: the rim varies
+(there are teeth) and it never reaches further than the round one does (they
+are cut inward). Neither half means much alone. Put the evergreen back on a
+plain circle and the first goes red at 2px of variation against the ruler's
+2.5; draw the teeth at 1.15 × the radius and the second goes red at 64px
+against the round 56.5.
 
 #### Overlapping plants of one kind are drawn as one mass
 

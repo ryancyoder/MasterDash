@@ -189,6 +189,8 @@ export const PLANT_GRAB_MIN_PX = 18;
 
 // --- The line work ---------------------------------------------------------
 
+import { edgeDrawn, edgeLoop, edgeProfileOf } from "./plantMass";
+
 const TAU = Math.PI * 2;
 
 /**
@@ -241,26 +243,54 @@ function circle(
   ctx.restore();
 }
 
-/** A closed zig-zag inside the rim: the conifer's star, kept off the edge. */
-function starburst(
+/**
+ * WHICH KINDS CARRY THEIR TEXTURE ON THE RIM RATHER THAN INSIDE IT.
+ *
+ * One, and the exception is the point. Every stamp used to be a plain circle
+ * with its mark inside, and the argument for that still holds for six of the
+ * seven: a bed of scalloped rims is a hedge of squiggles, and where a canopy
+ * REACHES is the one thing a plan has to be able to say.
+ *
+ * The conifer is the case that argument loses. Its sawtooth is the single plan
+ * convention every reader already knows, and it is a SILHOUETTE — the whole
+ * information is in the outline. Put it inside a circle and what reaches the
+ * screen is a starburst in a hoop, which is why this shipped twice with an
+ * evergreen nobody could pick out. Ryan said so twice.
+ *
+ * What is NOT given up is the claim. The teeth are cut INWARD from the true
+ * radius, tips exactly on it, so the symbol still reaches precisely as far as
+ * the canopy does — the same inward-only rule the massed edge follows, and
+ * from the same description, so a lone conifer and a row of them merged into
+ * one mass are serrated identically. Two opinions about what a conifer looks
+ * like is how they drift apart.
+ */
+const RIM_TEXTURED: PlantStampKind[] = ["evergreen_tree"];
+
+/**
+ * The outline, textured or plain, as a path — NOT stroked or filled here.
+ *
+ * The fill has to be the same shape as the line, or the wash shows outside the
+ * notches and puts back the overstatement the inward-only rule exists to
+ * avoid. That is the same reason `edgeLoop` exists on the mass side.
+ */
+function rimPath(
   ctx: CanvasRenderingContext2D,
+  kind: PlantStampKind,
   x: number,
   y: number,
-  outer: number,
-  inner: number,
-  teeth: number,
-) {
-  ctx.beginPath();
-  for (let i = 0; i < teeth * 2; i++) {
-    const th = (i / (teeth * 2)) * TAU - Math.PI / 2;
-    const rr = i % 2 === 0 ? outer : inner;
-    const px = x + Math.cos(th) * rr;
-    const py = y + Math.sin(th) * rr;
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
+  r: number,
+): boolean {
+  const profile = edgeProfileOf(kind);
+  if (!RIM_TEXTURED.includes(kind) || !edgeDrawn(profile, r)) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    return false;
   }
+  const pts = edgeLoop({ id: kind, key: kind, x, y, r }, profile);
+  ctx.beginPath();
+  pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
   ctx.closePath();
-  ctx.stroke();
+  return true;
 }
 
 /** Small circles around a radius: blossom, or a rosette of leaves. */
@@ -395,21 +425,30 @@ export function drawPlantStamp(
     return;
   }
 
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, TAU);
-  ctx.fill();
-
   /*
-    THE CIRCLE, ALWAYS, AT EXACTLY THE CLAIMED RADIUS.
+    THE OUTLINE, ALWAYS, REACHING EXACTLY AS FAR AS THE CLAIM.
 
     Not part of the switch: the outline is what every one of these has in
     common and what the symbol is FOR — where this canopy reaches. Drawing it
     once here is what makes that literally true of all seven rather than true
     of however many the switch remembered to close.
+
+    A conifer's is serrated rather than round (see `RIM_TEXTURED`), and the
+    fill is built from the same path so the wash cannot show outside the
+    notches. Everything else is a circle, as it was.
   */
-  circle(ctx, x, y, r, kind === "ground_cover" || kind === "grasses"
-    ? [Math.max(2, r * 0.34), Math.max(2, r * 0.26)]
-    : []);
+  const serrated = rimPath(ctx, kind, x, y, r);
+  ctx.fill();
+  if (serrated) {
+    ctx.save();
+    ctx.setLineDash([]);
+    ctx.stroke();
+    ctx.restore();
+  } else {
+    circle(ctx, x, y, r, kind === "ground_cover" || kind === "grasses"
+      ? [Math.max(2, r * 0.34), Math.max(2, r * 0.26)]
+      : []);
+  }
 
   /*
     Below this the texture is a blot rather than a mark. A symbol too small to
@@ -441,9 +480,13 @@ export function drawPlantStamp(
       ringOfDiscs(ctx, x, y, r * 0.52, r * 0.23, 7);
       break;
     case "evergreen_tree":
-      // The conifer star, INSIDE the rim rather than as the rim. The
-      // convention everybody already reads, without giving up the circle.
-      starburst(ctx, x, y, r * 0.9, r * 0.4, 12);
+      // The sawtooth is the rim now, so what goes inside is the branching
+      // under it — short, one spoke per tooth, and stopping well clear of the
+      // notches. A second ring of teeth in here is what made the old symbol a
+      // scribble. It waits for room: at a 12px canopy twelve spokes into a
+      // 7px middle is a blot, and the serrated outline is already saying
+      // conifer on its own.
+      if (r >= 16) radial(ctx, x, y, r * 0.12, r * 0.55, 12);
       break;
     case "shrub":
       // Layered foliage: broken arcs, offset ring to ring. Dense and rounded,
