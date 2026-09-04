@@ -279,6 +279,11 @@ export function massLabelAt(group: MassDisc[]): { x: number; y: number } {
  * to the circle rather than to the frame: they hold still under a pan, and a
  * plant dragged across the map carries its own edge with it. A jitter reseeded
  * per frame would shimmer.
+ *
+ * THE COUNT BELONGS TO THE PLANT — except where it belongs to the screen, and
+ * knowing which is which is the whole of `pitchPx` below. A scallop count is a
+ * shape (a cloud HAS nine lobes); a saw pitch is a texture (hatching is
+ * recognised by how close the strokes are, whatever it is drawn round).
  */
 export type EdgeShape = "scallop" | "saw" | "flat";
 
@@ -290,6 +295,49 @@ export interface EdgeProfile {
   shape: EdgeShape;
   /** A broken line instead of a shaped one — a mat rather than a canopy. */
   dash?: [number, number];
+  /**
+   * A tooth every this many SCREEN pixels, instead of a fixed count.
+   *
+   * A SHAPE AND A TEXTURE WANT OPPOSITE THINGS, and this is the difference.
+   * A cloud has nine lobes; that is what a cloud is, and the lobes have to
+   * scale with the canopy or it stops being one. A conifer's mass border is
+   * not a shape — it is hatching run round a boundary — and hatching is
+   * recognised by its PITCH. Fix the count on one of those and the pitch
+   * changes with the zoom; fix the pitch and the count does.
+   *
+   * The comment above this file used to state the fixed count as the rule for
+   * everything ("the lobes belong to the plant, not to the screen"), and the
+   * failure it caused is worth recording: the conifer's border was set by
+   * copying the sixteen teeth grasses used, and it did not look like the
+   * grasses border at all. It could not — a grass clump is 3ft across and an
+   * evergreen 8ft, so at one working zoom the same sixteen teeth are 5.9px
+   * apart on one and 15.7px apart on the other. Copying the count copied the
+   * wrong half of the description.
+   */
+  pitchPx?: number;
+}
+
+/**
+ * The count a pitch works out to, clamped.
+ *
+ * The floor is what keeps the small end honest: below about a 6px radius the
+ * eight teeth it insists on are under `MIN_LOBE_PX` of rim apiece, so
+ * `edgeDrawn` refuses them and the border is drawn plain — the same answer as
+ * before, arrived at from the pitch rather than from a second rule.
+ *
+ * The ceiling is a cost bound rather than a drawing decision: `edgePoints`
+ * samples eight times a tooth, so an unbounded count on a mass of eleven
+ * plants would put tens of thousands of points into a path that is rebuilt on
+ * every frame of a drag. 128 covers every zoom the map reaches (an 8ft canopy
+ * at 25px to the foot is a 100px radius and 97 teeth) and bites only past it.
+ */
+export const MIN_TEETH = 8;
+export const MAX_TEETH = 128;
+
+export function resolveEdge(profile: EdgeProfile, r: number): EdgeProfile {
+  if (!profile.pitchPx || profile.pitchPx <= 0 || !(r > 0)) return profile;
+  const want = Math.round((TAU * r) / profile.pitchPx);
+  return { ...profile, lobes: Math.min(MAX_TEETH, Math.max(MIN_TEETH, want)) };
 }
 
 /**
@@ -337,12 +385,20 @@ export const EDGE_PROFILES: Record<string, EdgeProfile> = {
     name, and grasses no longer needs them, since a stand of them does not
     mass.
 
-    ONE COST, STATED: sixteen teeth need more rim than twelve, so an evergreen
-    mass now needs a 12.7px canopy before its border is textured rather than a
-    9.6px one — about 3.2 pixels to the foot instead of 2.4. Zoomed to a bed,
-    where a hedge is actually laid out, it is far past either.
+    AND IT IS SET BY PITCH, NOT BY COUNT — see `pitchPx`. Copying grasses'
+    sixteen teeth did NOT copy the grasses border, and could not: a clump is
+    3ft across and an evergreen 8ft, so at ten pixels to the foot those same
+    sixteen teeth are 5.9px apart on the grass and 15.7px apart on the conifer.
+    One is a fine hatch, the other a coarse zigzag. 6.5px is what a grasses
+    mass measured across the zooms it was ever drawn at, and holding the pitch
+    means the border looks the same on a bed of three and a hedge of eleven.
+
+    It also retires a cost this profile used to carry. With a fixed sixteen the
+    border went plain below a 12.7px canopy; the pitch gives it twelve teeth at
+    that size and keeps going down to about 6px, where the eight-tooth floor
+    finally falls under `MIN_LOBE_PX`.
   */
-  evergreen_tree: { lobes: 16, depth: 0.16, shape: "saw" },
+  evergreen_tree: { lobes: 16, depth: 0.16, shape: "saw", pitchPx: 6.5 },
   // A mound: shallow scallops, fewer than a tree's and not as deep.
   shrub: { lobes: 7, depth: 0.12, shape: "scallop" },
   // NO GRASSES ROW: a stand of them does not mass at all — see

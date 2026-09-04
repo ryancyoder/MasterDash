@@ -966,6 +966,24 @@ draws far LESS than one, because both symbols are gone and a single outline is
 drawn in their place. Letting grasses mass again turns it red at **1434 for
 two against 1929 for one**.
 
+**The conifer's MASS border is counted on the rendered rim**, and this is the
+check that would have caught the mistake above. Every existing check on that
+border passed while it was wrong, because they all read the profile *row* —
+byte-identical to the one that had been copied — rather than the rim that got
+drawn. So a second conifer is dragged onto the first and the teeth on the far
+side of the union are counted: a 6.5px pitch gives about two dozen over that
+arc, the fixed sixteen gives eight. Restoring the fixed count turns it red at
+**8 teeth at 22.0px apart**.
+
+Two details in that probe are load-bearing, and both were found by it reporting
+nonsense first. The neighbour is placed **above**, so the arc read is the lower
+half — the mass call-out is drawn over the top in the plant's own colour, and a
+ray through lettering reported a 77px rim on a 56px canopy. And the teeth are
+counted **with hysteresis** rather than as local minima: half a pixel of
+anti-aliasing makes a minimum test fire everywhere, and the first version
+counted a coarse sixteen-tooth border as two dozen teeth and passed against the
+very build it was written to catch.
+
 **And the conifer's own outline is read off the canvas**, with a shade tree at
 the same 80ft spread beside it as the ruler in the same frame: the rim varies
 by at least a third of its radius (it is a pointed star) and it never reaches
@@ -1097,15 +1115,37 @@ border for something that never merges is data nothing reads.
 
 **Evergreen is the one row that is NOT the stamp's own shape.** A lone conifer
 is a deep pointed star (12 points, 58%, in `RIM_PROFILES`); this is the border
-its *mass* carries, and it is the fine saw that used to be the grasses row —
-asked for by name, and free for the taking since grasses no longer mass. A mass
-boundary runs for hundreds of pixels round a whole hedge — it is a texture, not
-a symbol, and the star's notches on it read as a row of starfish. **It costs one
-thing:** sixteen teeth need more rim than twelve, so an evergreen mass is
-textured from a 12.7px canopy rather than a 9.6px one — about 3.2 pixels to the
-foot instead of 2.4. Zoomed to a bed, where a hedge is actually laid out, it is
-far past either; zoomed to the whole property the mass is a smudge anyway. The
-lone stamp, which is what is looked at most, is unaffected.
+its *mass* carries, and it is the fine saw grasses used to have — asked for by
+name, and free for the taking since grasses no longer mass. A mass boundary
+runs for hundreds of pixels round a whole hedge — it is a texture, not a
+symbol, and the star's notches on it read as a row of starfish.
+
+**And it is set by tooth PITCH, not by tooth count, which reverses the rule
+stated at the top of `plantMass.ts`.** That rule — *the lobes belong to the
+plant, not to the screen* — held that a count taken from a screen distance
+would grow lobes as you zoomed in, so a mass would change character on the way
+in. It is right about a cloud, which HAS nine lobes. It is wrong about
+hatching, which is recognised by how close its strokes are and by nothing else.
+
+The failure is worth stating exactly, because every check passed while it was
+wrong. The border was set by copying the sixteen teeth grasses carried — and it
+did not look like the grasses border at all. It could not: a grass clump is
+**3ft** across and an evergreen **8ft**, so at ten pixels to the foot those same
+sixteen teeth are **5.9px apart on one and 15.7px on the other**. One is a fine
+hatch, the other a coarse zigzag. *Copying the count copied the wrong half of
+the description.*
+
+So `pitchPx` is 6.5 — what a grasses mass measured across the zooms it was ever
+drawn at — and the count is whatever that comes to: 12 teeth on a 12px canopy,
+97 on a 100px one. `MIN_TEETH` and `MAX_TEETH` bound it. The floor of eight is
+what still refuses a border below about a 6px radius, arrived at from the pitch
+rather than from a second rule; the ceiling of 128 is a cost bound, since
+`edgePoints` samples eight times a tooth and an unbounded count on a mass of
+eleven plants is tens of thousands of points in a path rebuilt on every frame
+of a drag.
+
+It also **retired a cost the fixed count carried**: the border used to go plain
+below a 12.7px canopy, and is now textured down to about 6px.
 
 **The conifer's figure is the THIRD set, and the first two are the lesson.**
 Both were chosen on paper — 20 teeth at 14%, then 12 at 26% — and both were

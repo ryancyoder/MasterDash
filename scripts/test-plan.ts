@@ -41,6 +41,9 @@ import {
   massLabelAt,
   massOutline,
   massesTogether,
+  resolveEdge,
+  MIN_TEETH,
+  MAX_TEETH,
 } from "../lib/estimator/plantMass.ts";
 import { PLANT_STAMPS } from "../lib/estimator/plantStamp.ts";
 import { PLANT_GROUPS } from "../lib/estimator/tree.ts";
@@ -1688,14 +1691,22 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     `${deepest("ground_cover")} deep`);
 
   /*
-    THE LOBES BELONG TO THE PLANT, NOT TO THE SCREEN.
+    A SCALLOP COUNT BELONGS TO THE PLANT; A SAW PITCH BELONGS TO THE SCREEN.
 
-    A count that came from a screen distance would grow lobes as you zoomed
-    in, so a mass would change character on the way in. Counted here as the
-    inward troughs around a full turn, at two very different sizes.
+    This block used to state the first half as the rule for everything — a
+    count from a screen distance would grow lobes as you zoomed in, so a mass
+    would change character on the way in. True of a cloud, which HAS nine
+    lobes, and false of hatching, which is recognised by how close its strokes
+    are. Fixing the count on a saw border does not hold its character, it holds
+    its shape while the tooth size runs away with the zoom — which is exactly
+    how the conifer border ended up not looking like the grasses one it was
+    copied from. Both halves are checked below.
+
+    Counted as the inward troughs around a full turn, at two very different
+    sizes.
   */
   const troughs = (kind: string, r: number) => {
-    const pts = edgePoints(arcOf(r), edgeProfileOf(kind));
+    const pts = edgePoints(arcOf(r), resolveEdge(edgeProfileOf(kind), r));
     const rad = pts.map((p) => Math.hypot(p.x, p.y));
     let n = 0;
     // The loop closes, so the last point repeats the first; walk it as a ring.
@@ -1704,13 +1715,48 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     }
     return n;
   };
-  for (const kind of ["shade_tree", "evergreen_tree", "shrub"]) {
+  for (const kind of ["shade_tree", "shrub"]) {
     ok(`${kind} keeps its own lobe count at any size`,
       troughs(kind, 40) === edgeProfileOf(kind).lobes &&
         troughs(kind, 400) === edgeProfileOf(kind).lobes,
       `${troughs(kind, 40)} at 40px, ${troughs(kind, 400)} at 400px, ` +
         `${edgeProfileOf(kind).lobes} asked for`);
   }
+
+  /*
+    AND THE CONIFER'S MASS BORDER IS THE OTHER KIND: its tooth PITCH is what
+    holds still, and the count is whatever that comes to.
+
+    This is the half that copying sixteen teeth from grasses got wrong. A grass
+    clump is 3ft across and an evergreen 8ft, so at ten pixels to the foot the
+    same sixteen teeth are 5.9px apart on one and 15.7px apart on the other —
+    a fine hatch against a coarse zigzag. Holding the pitch is what makes the
+    two look alike, which is what was asked for.
+  */
+  const pitchAt = (r: number) => (2 * Math.PI * r) / troughs("evergreen_tree", r);
+  // Read at two radii a map really reaches — a 20px canopy is an 8ft conifer
+  // at five pixels to the foot, a 100px one is the same tree at twenty-five.
+  // Past that the cost ceiling takes over and the pitch coarsens on purpose.
+  ok("a conifer mass holds its TOOTH SIZE rather than its tooth count",
+    Math.abs(pitchAt(20) - 6.5) < 0.6 && Math.abs(pitchAt(100) - 6.5) < 0.6,
+    `${pitchAt(20).toFixed(1)}px at r=20, ${pitchAt(100).toFixed(1)}px at r=100`);
+  ok("so the count grows with the mass instead",
+    troughs("evergreen_tree", 100) > troughs("evergreen_tree", 20) * 4,
+    `${troughs("evergreen_tree", 20)} teeth at r=20, ` +
+      `${troughs("evergreen_tree", 100)} at r=100`);
+  /*
+    THE CEILING IS A COST BOUND, not a drawing decision: eight samples a tooth
+    on a mass of eleven plants is tens of thousands of points in a path that is
+    rebuilt on every frame of a drag. It bites well past any zoom the map
+    reaches.
+  */
+  ok("and the count is bounded at both ends",
+    resolveEdge(edgeProfileOf("evergreen_tree"), 2).lobes === MIN_TEETH &&
+      resolveEdge(edgeProfileOf("evergreen_tree"), 4000).lobes === MAX_TEETH,
+    `${resolveEdge(edgeProfileOf("evergreen_tree"), 2).lobes} and ` +
+      `${resolveEdge(edgeProfileOf("evergreen_tree"), 4000).lobes}`);
+  ok("a profile with no pitch is handed back untouched",
+    resolveEdge(edgeProfileOf("shade_tree"), 40) === edgeProfileOf("shade_tree"));
 
   /*
     AND NOTHING IS RANDOM. A jitter reseeded per frame would shimmer under a
@@ -1808,8 +1854,8 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
       Math.max(...PLANT_STAMPS.map((k) => edgeProfileOf(k).depth)),
     `${RIM_PROFILES.evergreen_tree?.depth} against ` +
       `${Math.max(...PLANT_STAMPS.map((k) => edgeProfileOf(k).depth))}`);
-  ok("AND ITS MASS BORDER IS THE FINE SAW, sixteen teeth at 16%",
-    edgeProfileOf("evergreen_tree").lobes === 16 &&
+  ok("AND ITS MASS BORDER IS THE FINE SAW — a 6.5px tooth, 16% deep",
+    edgeProfileOf("evergreen_tree").pitchPx === 6.5 &&
       edgeProfileOf("evergreen_tree").depth === 0.16,
     JSON.stringify(edgeProfileOf("evergreen_tree")));
   // Both are saw teeth, so the two surfaces are still recognisably one plant.
@@ -1822,27 +1868,27 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     more circle than nine lobes and far less than sixteen. Below it the canvas
     draws the plain arc rather than a serration nobody can see.
   */
-  ok("a canopy is textured before a conifer mass is",
+  ok("a canopy is textured before a perennial mass is",
     edgeDrawn(edgeProfileOf("shade_tree"), 9) &&
-      !edgeDrawn(edgeProfileOf("evergreen_tree"), 9),
-    `${((2 * Math.PI * 9) / 9).toFixed(1)}px and ` +
-      `${((2 * Math.PI * 9) / 16).toFixed(1)}px per lobe at r=9`);
+      !edgeDrawn(edgeProfileOf("perennial"), 3),
+    `${((2 * Math.PI * 9) / 9).toFixed(1)}px per lobe at r=9`);
   ok("and nothing is textured on a symbol too small to hold one lobe",
-    PLANT_STAMPS.every((k) => !edgeDrawn(edgeProfileOf(k), 4)));
+    PLANT_STAMPS.every((k) => !edgeDrawn(resolveEdge(edgeProfileOf(k), 4), 4)));
   /*
-    AND WHAT THE FINER BORDER COSTS, WRITTEN DOWN RATHER THAN DISCOVERED.
+    AND THE PITCH RETIRED A COST THE FIXED COUNT CARRIED.
 
-    Sixteen teeth need more rim than twelve, so an evergreen MASS is textured
-    from a 12.7px canopy rather than a 9.6px one — about 3.2 pixels to the
-    foot instead of 2.4. Below that its border is drawn plain. Zoomed to a bed,
-    where a hedge is actually laid out, it is far past either; zoomed to the
-    whole property the mass is a smudge anyway. The lone stamp is unaffected,
-    which is the half that is looked at most.
+    With a flat sixteen teeth an evergreen mass went plain below a 12.7px
+    canopy — 3.2 pixels to the foot — which was written down here as the price
+    of the finer border. The pitch gives it twelve teeth at that size instead
+    and keeps going down to about 6px, where the eight-tooth floor finally
+    falls under `MIN_LOBE_PX` and the border is drawn plain.
   */
-  ok("an evergreen MASS needs a bigger canopy than it did for its border",
-    !edgeDrawn(edgeProfileOf("evergreen_tree"), 12) &&
-      edgeDrawn(edgeProfileOf("evergreen_tree"), 13),
-    `${((2 * Math.PI * 12) / 16).toFixed(2)}px per tooth at r=12`);
+  const evgAt = (r: number) => edgeDrawn(resolveEdge(edgeProfileOf("evergreen_tree"), r), r);
+  ok("an evergreen mass is textured at a yard zoom now, not just at a bed one",
+    evgAt(12) && evgAt(9),
+    `r=12 ${evgAt(12)}, r=9 ${evgAt(9)}`);
+  ok("and it still goes plain when there is no room for a tooth",
+    !evgAt(5), `r=5 ${evgAt(5)}`);
   ok("while a lone conifer keeps its star at that size",
     edgeDrawn(RIM_PROFILES.evergreen_tree!, 12));
 

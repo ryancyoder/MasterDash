@@ -53,6 +53,7 @@ import {
   edgeProfileOf,
   massGroups,
   massesTogether,
+  resolveEdge,
   massLabelAt,
   massOutline,
   type MassDisc,
@@ -1934,7 +1935,11 @@ export default function PlanCanvas({
         See `EDGE_PROFILES`. Nothing is drawn textured below `EDGE_MIN_R` —
         a 10% lobe on a 5px symbol is a furry line, not a conifer.
       */
-      const profile = edgeProfileOf(face.stamp);
+      // Resolved against the size it is actually drawn at, because a saw
+      // border is set by its tooth PITCH rather than by a count — see
+      // `pitchPx`. One resolve per group: every disc in a group shares a key,
+      // so they share a spread and a radius.
+      const profile = resolveEdge(edgeProfileOf(face.stamp), group[0].r);
       const textured = edgeDrawn(profile, group[0].r);
 
       /*

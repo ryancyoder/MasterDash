@@ -4189,6 +4189,14 @@ try {
     (await page.locator("aside >> text=/naming/i").count()) === 0);
 
   const soloRim = (await rimRadii(await pointNow(edgeSolo), 160)).filter((r) => r > 0);
+  /*
+    THE RULER FOR EVERYTHING BELOW: the shade tree's own radius at this zoom,
+    with its spread overridden to 80ft. The conifer and the grass clump are
+    given the same 80ft, so this one number is what each of them claims — read
+    off the drawing rather than computed from the map's transform, which is the
+    thing under test everywhere else on this page.
+  */
+  const trueR = Math.max(...soloRim);
   const massRim = (await rimRadii(await pointNow(edgeMass), 160)).filter((r) => r > 0);
   ok("both canopies are found, and drawn big enough to have an edge",
     soloRim.length > 40 && massRim.length > 40 && Math.max(...soloRim) > 20,
@@ -4296,13 +4304,140 @@ try {
     Math.max(...evgRim) <= Math.max(...soloRim) + 1,
     `${Math.max(...evgRim)} against the round ${Math.max(...soloRim)}`);
 
+  /*
+    7c-x-c-5b. AND TWO OF THEM MASS INTO A FINE BORDER, NOT A COARSE ONE.
+
+    THIS IS THE CHECK THAT WOULD HAVE CAUGHT THE LAST MISTAKE. The conifer's
+    mass border was set by copying the sixteen teeth grasses carried, and it
+    did not look like the grasses border at all — it could not, because a
+    grass clump is 3ft across and an evergreen 8ft, so the same sixteen teeth
+    are 5.9px apart on one and 15.7px apart on the other. Every check on it
+    passed: they all read the profile ROW, which was byte-identical to the one
+    that had been copied, rather than the rim that got drawn.
+
+    So this counts the teeth on the RENDERED boundary. It reads the far side of
+    the first canopy — the arc away from its neighbour, which is that disc's
+    own rim rather than the union's crossing — and counts the inward troughs
+    round it. At this radius a 6.5px pitch is about two dozen; the fixed
+    sixteen would be seven over the same arc.
+  */
+  await armPlant(page);
+  await page.waitForTimeout(200);
+  const evgSpare = fractionOff(0.44, 0.68);
+  const beforeMass = await plantCount();
+  await tapAt(evgSpare);
+  await page.waitForTimeout(400);
+  ok("a second conifer went down beside the first",
+    (await plantCount()) === beforeMass + 1,
+    `${beforeMass} before, ${await plantCount()} after`);
+  await plantBtn.click();
+  await page.waitForTimeout(250);
+  const evgFrom = await pointNow(evgSpare);
+  const evgAt2 = await pointNow(evgOff);
+  await page.mouse.move(evgFrom.x, evgFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(evgAt2.x, evgAt2.y - trueR * 0.9, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  await page.mouse.click(evgClear.x, evgClear.y);
+  await page.waitForTimeout(400);
+
+  /** Inward troughs on the far arc of a canopy, and their pitch in pixels. */
+  const rimTeeth = (pt, maxR) =>
+    page.evaluate(([x, y, r]) => {
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const rect = c.getBoundingClientRect();
+      const k = c.width / rect.width;
+      const cx = (x - rect.left) * k;
+      const cy = (y - rect.top) * k;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      const green = (px, py) => {
+        if (px < 0 || py < 0 || px >= c.width || py >= c.height) return false;
+        const i = (Math.round(py) * c.width + Math.round(px)) * 4;
+        return d[i + 1] > 120 && d[i + 1] - d[i] > 40 && d[i + 1] - d[i + 2] > 25;
+      };
+      /*
+        THE LOWER HALF ONLY, and the neighbour is put ABOVE for that reason.
+
+        Two things live up there and both would be measured instead of the
+        rim: the union's crossing with the other canopy, and the mass call-out,
+        which is drawn over the top in the plant's own colour. A ray through
+        lettering reads as a rim 20px further out — which is exactly what the
+        first version of this did, reporting a 77px radius on a 56px canopy.
+      */
+      const FROM = 0;
+      const TO = Math.PI;
+      const N = 420;
+      const rad = [];
+      for (let n = 0; n <= N; n++) {
+        const a = FROM + ((TO - FROM) * n) / N;
+        let found = 0;
+        for (let rr = r * k; rr >= 2; rr -= 0.5) {
+          if (green(cx + rr * Math.cos(a), cy + rr * Math.sin(a))) { found = rr / k; break; }
+        }
+        rad.push(found);
+      }
+      /*
+        COUNTED WITH HYSTERESIS, not as local minima.
+
+        The first version of this looked for a sample lower than its
+        neighbour, and half a pixel of anti-aliasing along the rim is enough
+        to make that fire everywhere: it counted a coarse sixteen-tooth border
+        as two dozen teeth and passed against the very build it was written to
+        catch. So the rim's own peak-to-trough amplitude sets two thresholds a
+        long way apart, and a tooth is a trip from below the low one to above
+        the high one. Noise cannot cross a nine-pixel gap.
+      */
+      const seen = rad.filter((v) => v > 0);
+      const lo = Math.min(...seen);
+      const hi = Math.max(...seen);
+      const amp = hi - lo;
+      const up = lo + amp * 0.7;
+      const down = lo + amp * 0.3;
+      let state = "";
+      let troughs = 0;
+      for (const v of rad) {
+        if (v <= 0) continue;
+        if (v >= up) {
+          if (state === "lo") troughs++;
+          state = "hi";
+        } else if (v <= down) state = "lo";
+      }
+      const arcPx = (TO - FROM) * hi;
+      return {
+        troughs,
+        pitchPx: troughs ? arcPx / troughs : 0,
+        r: hi,
+        ampPx: Number(amp.toFixed(1)),
+      };
+    }, [pt.x, pt.y, maxR]);
+
+  const teeth = await rimTeeth(evgAt2, 160);
+  ok("the massed pair is found and its far rim read",
+    teeth.r > 20 && teeth.troughs > 0, JSON.stringify(teeth));
+  /*
+    A 6.5px pitch over this arc is two dozen teeth or so; the fixed sixteen
+    that shipped would be seven. Fifteen is a line neither can be on the wrong
+    side of by accident, and the pitch is reported so the figure can be read
+    rather than merely passed.
+  */
+  ok("A CONIFER MASS IS FINELY TOOTHED, not a coarse zigzag",
+    teeth.troughs >= 15 && teeth.pitchPx < 11,
+    `${teeth.troughs} teeth at ${teeth.pitchPx.toFixed(1)}px apart ` +
+      `on a ${teeth.r}px rim`);
+
   // Off the plan again, and back to Pick, which is where the cleanup below
   // expects to find the tool.
   await plantBtn.click();
   await page.waitForTimeout(250);
-  ok("to Remove to clear the conifer", (await plantMode()) === "delete");
+  ok("to Remove to clear the conifers", (await plantMode()) === "delete");
+  await penDownAt(evgAt2.x, evgAt2.y - trueR * 0.9);
+  await page.waitForTimeout(300);
   await tapAt(evgOff);
   await page.waitForTimeout(400);
+  ok("and both conifers are gone",
+    (await plantCount()) === beforeMass - 1,
+    `${beforeMass - 1} expected, ${await plantCount()} now`);
   await plantBtn.click();
   await page.waitForTimeout(200);
   await plantBtn.click();
@@ -4408,7 +4543,6 @@ try {
       return { ringLit: lit / N, maxRunDeg: (best * 360) / N, core };
     }, [pt.x, pt.y, ringR, inR, outR]);
 
-  const trueR = Math.max(...soloRim);
   const clump = await clumpShape(await pointNow(grsOff), trueR, 0.2, 0.5);
   /*
     A DASHED RING IS STILL A RING, and it is what this replaced — so what is
