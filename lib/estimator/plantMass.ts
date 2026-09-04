@@ -295,24 +295,30 @@ export const EDGE_PROFILES: Record<string, EdgeProfile> = {
   shade_tree: { lobes: 9, depth: 0.14, shape: "scallop" },
   ornamental_tree: { lobes: 8, depth: 0.13, shape: "scallop" },
   /*
-    SPIKES, AND THEY HAVE TO BE BIG ONES — 0.58, which is nearly four times
-    any other profile and is a POINTED STAR rather than a serration: the
-    notches cut to 42% of the radius, so what is drawn is twelve real points
-    with valleys between them.
+    FINE TEETH, AND THIS IS THE ONE PROFILE THAT IS DELIBERATELY NOT THE
+    STAMP'S OWN SHAPE.
 
-    That is the figure Ryan picked off a sheet of four, and picking it off a
-    sheet is the point. This edge was set twice from reasoning about tooth
-    sizes in pixels — 20 teeth at 14%, then 12 at 26% — and reported as
-    unrecognisable both times. A conifer is not a circle with a nibbled rim.
-    It is a spiky thing, and how spiky is a question only a drawing answers.
+    A lone conifer is a deep pointed star — twelve points cutting to 42% of
+    the radius, in `RIM_PROFILES` over in plantStamp.ts. This is a different
+    job. A mass boundary is not a symbol; it runs for hundreds of pixels round
+    a whole hedge, and the same 58% notches on it read as a row of starfish
+    rather than as one planting.
 
-    ONE PROFILE, TWO SURFACES, and this depth was checked on both before it
-    was taken: a lone conifer stamp is this outline, and a hedge of them
-    massed is the same teeth cut into the union boundary. A run of five at
-    0.58 still reads as one continuous mass rather than as a row of stars,
-    which is the thing that would have argued for a second, shallower figure.
+    Sharing one description between the two surfaces was the rule here, and
+    the argument for it was real — two opinions about what a conifer looks
+    like is how they drift apart. Ryan looked at both on the plan and asked
+    for the finer border, which settles it: the rule was a guess about how it
+    would read, and this is a reading of it. The two shapes are still both
+    saw teeth, so they are recognisably the same plant.
+
+    Same figures as grasses, which is what was asked for by name.
+
+    ONE COST, STATED: sixteen teeth need more rim than twelve, so an evergreen
+    mass now needs a 12.7px canopy before its border is textured rather than a
+    9.6px one — about 3.2 pixels to the foot instead of 2.4. Zoomed to a bed,
+    where a hedge is actually laid out, it is far past either.
   */
-  evergreen_tree: { lobes: 12, depth: 0.58, shape: "saw" },
+  evergreen_tree: { lobes: 16, depth: 0.16, shape: "saw" },
   // A mound: shallow scallops, fewer than a tree's and not as deep.
   shrub: { lobes: 7, depth: 0.12, shape: "scallop" },
   // Finer and sharper, which is what a stand of grasses looks like in outline

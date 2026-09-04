@@ -855,13 +855,22 @@ evergreens*, then *still not seeing sawtooth* — and both times the answer was
 about the MASS edge below, which only exists where two of a kind overlap. The
 thing being looked at, one evergreen on its own, went on being a circle.
 
-`RIM_TEXTURED` is that exception, and it is one entry long. What is not given
+`RIM_PROFILES` is that exception, and it is one entry long. What is not given
 up is the claim: the points are cut **inward** from the true radius with their
 tips exactly on it, so the symbol still reaches precisely as far as the canopy
-does — the same inward-only rule the mass edge follows, read from the same
-`EDGE_PROFILES` row, so a lone conifer and a row of them merged into one mass
-are serrated identically. Two opinions about what a conifer looks like is how
-they drift apart.
+does — the same inward-only rule the mass border follows.
+
+**The two surfaces disagree on purpose, and that is a reversal.** The stamp
+and the mass border were read from one `EDGE_PROFILES` row, on the argument
+that two opinions about what a conifer looks like is how they drift apart. A
+real argument — and a *guess* about how the two would read. Ryan looked at both
+on the plan and asked for the finer border on the mass, which settles it: a
+symbol and a texture are different jobs. Twelve points cutting to 42% of the
+radius **is** one conifer; the same notches run round a whole hedge read as a
+row of starfish rather than as one planting. So the stamp keeps its star and
+the mass takes the fine saw grasses carries. Both are saw teeth, so they are
+still recognisably the same plant, and `test:plan` pins both halves — the split
+is exactly the kind of thing somebody later mistakes for a bug and "fixes".
 
 **And nothing goes inside it.** The notches cut to 42% of the radius, so the
 star IS the symbol — there is barely a middle left to fill, and every version
@@ -878,10 +887,14 @@ outline itself; D, the shallow serration then on `main`. He picked C, so
 `depth` is **0.58** — nearly four times any other profile, and a pointed star
 rather than a serration.
 
-The same sheet is what settled sharing one profile between the two surfaces. A
-run of five massed at 0.58 still reads as one continuous outline rather than as
-a row of separate stars, which is the only thing that would have argued for a
-second, shallower figure for masses.
+**And the mass border went the other way, which is the part I got wrong.** The
+same sheet was used to argue for sharing one profile between the two surfaces:
+a run of five massed at 0.58 still reads as one continuous outline, so nothing
+seemed to demand a second figure. Ryan looked at it in the app and asked for
+the finer border, and that is the reading that counts — a row of six at 58%
+reads as starfish however defensible the geometry is. The mass now carries
+grasses' 16 teeth at 16%; see *And the mass edge carries the plant* below for
+the figures and the one thing it costs.
 
 **Rendering it is not the same as verifying it, and this is the third time that
 lesson has been paid for here** (the flow arrows, the outline crosshair, now
@@ -1037,11 +1050,22 @@ mass of maples as a cloud, and neither needs its label to be recognised.
 | --- | --- | --- | --- |
 | Shade tree | cloud scallops | 9 | 14% |
 | Ornamental | smaller scallops | 8 | 13% |
-| Evergreen | a pointed star | 12 | 58% |
+| Evergreen | fine teeth | 16 | 16% |
 | Shrub | shallow mound scallops | 7 | 12% |
 | Grasses | fine teeth | 16 | 16% |
 | Perennial | small scallops | 6 | 10% |
 | Ground cover | a broken line | — | — |
+
+**Evergreen is the one row that is NOT the stamp's own shape.** A lone conifer
+is a deep pointed star (12 points, 58%, in `RIM_PROFILES`); this is the border
+its *mass* carries, and it is deliberately the same fine saw as grasses. A mass
+boundary runs for hundreds of pixels round a whole hedge — it is a texture, not
+a symbol, and the star's notches on it read as a row of starfish. **It costs one
+thing:** sixteen teeth need more rim than twelve, so an evergreen mass is
+textured from a 12.7px canopy rather than a 9.6px one — about 3.2 pixels to the
+foot instead of 2.4. Zoomed to a bed, where a hedge is actually laid out, it is
+far past either; zoomed to the whole property the mass is a smudge anyway. The
+lone stamp, which is what is looked at most, is unaffected.
 
 **The conifer's figure is the THIRD set, and the first two are the lesson.**
 Both were chosen on paper — 20 teeth at 14%, then 12 at 26% — and both were

@@ -189,7 +189,7 @@ export const PLANT_GRAB_MIN_PX = 18;
 
 // --- The line work ---------------------------------------------------------
 
-import { edgeDrawn, edgeLoop, edgeProfileOf } from "./plantMass";
+import { edgeDrawn, edgeLoop, type EdgeProfile } from "./plantMass";
 
 const TAU = Math.PI * 2;
 
@@ -257,14 +257,23 @@ function circle(
  * screen is a starburst in a hoop, which is why this shipped twice with an
  * evergreen nobody could pick out. Ryan said so twice.
  *
- * What is NOT given up is the claim. The teeth are cut INWARD from the true
+ * What is NOT given up is the claim. The points are cut INWARD from the true
  * radius, tips exactly on it, so the symbol still reaches precisely as far as
- * the canopy does — the same inward-only rule the massed edge follows, and
- * from the same description, so a lone conifer and a row of them merged into
- * one mass are serrated identically. Two opinions about what a conifer looks
- * like is how they drift apart.
+ * the canopy does — the same inward-only rule the massed edge follows.
+ *
+ * THE FIGURES ARE THE STAMP'S OWN, THOUGH, AND NO LONGER THE MASS PROFILE'S.
+ * They were shared, on the argument that two opinions about what a conifer
+ * looks like is how they drift apart — a real argument, and a guess about how
+ * the two would read. Ryan looked at both on the plan and asked for a finer
+ * border on the mass, which settles it: a symbol and a texture are different
+ * jobs. Twelve points cutting to 42% of the radius IS one conifer; the same
+ * notches run round a whole hedge read as a row of starfish. Both are saw
+ * teeth, so they are still recognisably the same plant — see `EDGE_PROFILES`
+ * in plantMass.ts for the other half and what it costs.
  */
-const RIM_TEXTURED: PlantStampKind[] = ["evergreen_tree"];
+export const RIM_PROFILES: Partial<Record<PlantStampKind, EdgeProfile>> = {
+  evergreen_tree: { lobes: 12, depth: 0.58, shape: "saw" },
+};
 
 /**
  * The outline, textured or plain, as a path — NOT stroked or filled here.
@@ -280,8 +289,8 @@ function rimPath(
   y: number,
   r: number,
 ): boolean {
-  const profile = edgeProfileOf(kind);
-  if (!RIM_TEXTURED.includes(kind) || !edgeDrawn(profile, r)) {
+  const profile = RIM_PROFILES[kind];
+  if (!profile || !edgeDrawn(profile, r)) {
     ctx.beginPath();
     ctx.arc(x, y, r, 0, TAU);
     return false;

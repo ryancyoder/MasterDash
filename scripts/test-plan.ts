@@ -64,6 +64,7 @@ import {
   spreadFtFor,
   stampFor,
   stampRadius,
+  RIM_PROFILES,
 } from "../lib/estimator/plantStamp.ts";
 import {
   SHAPE_PALETTE,
@@ -1670,7 +1671,9 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   /*
     THE KINDS ARE TOLD APART BY THEIR EDGES, which is the whole feature: the
     interior texture used to do this and there is no interior any more. A
-    conifer bites deeper than a canopy and does it with far more teeth.
+    conifer bites deeper than a canopy and does it with far more teeth —
+    sixteen against nine. These are the MASS borders; a lone conifer's rim is
+    its own, much deeper figure, pinned further down.
   */
   ok("A CONIFER'S EDGE IS DEEPER THAN A CANOPY'S",
     deepest("evergreen_tree") > deepest("shade_tree"),
@@ -1753,7 +1756,7 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   const WORKING_PX_PER_FT = 3;
   const radiusOf = (kind: string) =>
     ((PLANT_SPREAD_FT[`mat:${kind}`] ?? 6) / 2) * WORKING_PX_PER_FT;
-  for (const kind of ["shade_tree", "ornamental_tree", "evergreen_tree", "shrub"]) {
+  for (const kind of ["shade_tree", "ornamental_tree", "shrub"]) {
     const profile = edgeProfileOf(kind);
     const r = radiusOf(kind);
     const lobePx = (2 * Math.PI * r) / profile.lobes;
@@ -1774,12 +1777,32 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
       !edgeDrawn(edgeProfileOf(kind), radiusOf(kind)),
       `${radiusOf(kind)}px`);
   }
-  ok("AND A CONIFER BITES DEEPEST OF ALL — it is the smallest tree and the " +
-    "one that most needs telling at a glance",
-    edgeProfileOf("evergreen_tree").depth >
-      Math.max(...PLANT_STAMPS.filter((k) => k !== "evergreen_tree")
-        .map((k) => edgeProfileOf(k).depth)),
-    `${edgeProfileOf("evergreen_tree").depth} deep`);
+  /*
+    THE CONIFER IS THE ONE KIND WHOSE TWO SURFACES DISAGREE ON PURPOSE, and
+    both halves are pinned here because the split is the thing somebody will
+    later mistake for a bug and "fix".
+
+    Its STAMP is a deep pointed star — twelve points cutting to 42% of the
+    radius — and that is the deepest thing drawn anywhere, because on one
+    plant the star is the whole symbol. Its MASS BORDER is the fine saw
+    grasses carries, because a boundary running round a whole hedge is a
+    texture rather than a symbol, and 58% notches on it read as a row of
+    starfish. Ryan looked at both on the plan and asked for exactly this.
+  */
+  ok("a lone conifer's own rim bites deeper than any mass border",
+    (RIM_PROFILES.evergreen_tree?.depth ?? 0) >
+      Math.max(...PLANT_STAMPS.map((k) => edgeProfileOf(k).depth)),
+    `${RIM_PROFILES.evergreen_tree?.depth} against ` +
+      `${Math.max(...PLANT_STAMPS.map((k) => edgeProfileOf(k).depth))}`);
+  ok("AND ITS MASS BORDER IS THE ONE GRASSES CARRIES, which is what was asked for",
+    JSON.stringify(edgeProfileOf("evergreen_tree")) ===
+      JSON.stringify(edgeProfileOf("grasses")),
+    `${JSON.stringify(edgeProfileOf("evergreen_tree"))} against ` +
+      `${JSON.stringify(edgeProfileOf("grasses"))}`);
+  // Both are saw teeth, so the two surfaces are still recognisably one plant.
+  ok("and both surfaces are teeth rather than scallops",
+    RIM_PROFILES.evergreen_tree?.shape === "saw" &&
+      edgeProfileOf("evergreen_tree").shape === "saw");
 
   /*
     THE FLOOR IS PER PROFILE, not one radius for every kind: twelve teeth need
@@ -1792,8 +1815,22 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     `${(2 * Math.PI * 9) / 9}px and ${(2 * Math.PI * 9) / 16}px per lobe at r=9`);
   ok("and nothing is textured on a symbol too small to hold one lobe",
     PLANT_STAMPS.every((k) => !edgeDrawn(edgeProfileOf(k), 4)));
-  ok("while an evergreen at an ordinary yard zoom IS",
-    edgeDrawn(edgeProfileOf("evergreen_tree"), 12));
+  /*
+    AND WHAT THE FINER BORDER COSTS, WRITTEN DOWN RATHER THAN DISCOVERED.
+
+    Sixteen teeth need more rim than twelve, so an evergreen MASS is textured
+    from a 12.7px canopy rather than a 9.6px one — about 3.2 pixels to the
+    foot instead of 2.4. Below that its border is drawn plain. Zoomed to a bed,
+    where a hedge is actually laid out, it is far past either; zoomed to the
+    whole property the mass is a smudge anyway. The lone stamp is unaffected,
+    which is the half that is looked at most.
+  */
+  ok("an evergreen MASS needs a bigger canopy than it did for its border",
+    !edgeDrawn(edgeProfileOf("evergreen_tree"), 12) &&
+      edgeDrawn(edgeProfileOf("evergreen_tree"), 13),
+    `${((2 * Math.PI * 12) / 16).toFixed(2)}px per tooth at r=12`);
+  ok("while a lone conifer keeps its star at that size",
+    edgeDrawn(RIM_PROFILES.evergreen_tree!, 12));
 
   /*
     AND THE TIPS ARE SAMPLED EXACTLY.
@@ -1805,7 +1842,7 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     the points, on the rim.
   */
   const partial = { x: 0, y: 0, r: 40, from: 0.37, to: 2.9 };
-  const conifer = edgeProfileOf("evergreen_tree");
+  const conifer = RIM_PROFILES.evergreen_tree!;
   const cusps = edgePoints(partial, conifer)
     .filter((p) => Math.abs(Math.hypot(p.x, p.y) - 40) < 1e-9).length;
   ok("EVERY TOOTH TIP IS LANDED ON EXACTLY, even on a partial arc",
