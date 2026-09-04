@@ -209,24 +209,6 @@ const TAU = Math.PI * 2;
  * legend is what names it.
  */
 
-/** Lines out of the middle: branches, or blades. */
-function radial(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  from: number,
-  to: number,
-  count: number,
-  offset = 0,
-) {
-  ctx.beginPath();
-  for (let i = 0; i < count; i++) {
-    const th = (i / count) * TAU + offset;
-    ctx.moveTo(x + Math.cos(th) * from, y + Math.sin(th) * from);
-    ctx.lineTo(x + Math.cos(th) * to, y + Math.sin(th) * to);
-  }
-  ctx.stroke();
-}
 
 function circle(
   ctx: CanvasRenderingContext2D,
@@ -302,67 +284,8 @@ function rimPath(
   return true;
 }
 
-/** Small circles around a radius: blossom, or a rosette of leaves. */
-function ringOfDiscs(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  at: number,
-  rr: number,
-  count: number,
-  offset = 0,
-) {
-  for (let i = 0; i < count; i++) {
-    const th = (i / count) * TAU + offset;
-    ctx.beginPath();
-    ctx.arc(x + Math.cos(th) * at, y + Math.sin(th) * at, rr, 0, TAU);
-    ctx.stroke();
-  }
-}
 
-/** Broken concentric arcs: layered foliage, seen from above. */
-function arcRing(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  at: number,
-  count: number,
-  offset = 0,
-) {
-  const span = TAU / count;
-  for (let i = 0; i < count; i++) {
-    const from = i * span + offset + span * 0.16;
-    ctx.beginPath();
-    ctx.arc(x, y, at, from, from + span * 0.68);
-    ctx.stroke();
-  }
-}
 
-/**
- * Scattered dots, and DETERMINISTIC ones.
- *
- * A golden-angle spiral — the way a sunflower packs its seeds — which is what
- * an evenly scattered stipple actually looks like, and unlike `Math.random()`
- * it draws the same mark every frame. A stipple that shimmered as the map
- * redrew would be unusable, and a test could not count it.
- */
-function stipple(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  r: number,
-  count: number,
-  dot: number,
-) {
-  const GOLDEN = 2.39996322972865332;
-  for (let i = 1; i <= count; i++) {
-    const th = i * GOLDEN;
-    const rr = r * Math.sqrt(i / (count + 1));
-    ctx.beginPath();
-    ctx.arc(x + Math.cos(th) * rr, y + Math.sin(th) * rr, dot, 0, TAU);
-    ctx.fill();
-  }
-}
 
 /**
  * A clump of ornamental grass, drawn from Ryan's own reference for one.
@@ -481,116 +404,39 @@ export function drawPlantStamp(
   }
 
   /*
-    THE OUTLINE, ALWAYS, REACHING EXACTLY AS FAR AS THE CLAIM.
+    THE OUTLINE IS THE WHOLE SYMBOL. THERE IS NOTHING INSIDE IT.
 
-    Not part of the switch: the outline is what every one of these has in
-    common and what the symbol is FOR — where this canopy reaches. Drawing it
-    once here is what makes that literally true of all seven rather than true
-    of however many the switch remembered to close.
+    This is the last of four rounds, and it is the shortest the drawing has
+    ever been. Branching under a canopy, blossom clusters, layered arcs, a
+    rosette, a stipple — all gone. `EDGE_PROFILES` says what a plant's
+    boundary looks like, both surfaces read it, and a single plant is simply
+    the shape you would see if it were one of eleven massed together.
 
-    A conifer's is serrated rather than round (see `RIM_TEXTURED`), and the
-    fill is built from the same path so the wash cannot show outside the
-    notches. Everything else is a circle, as it was.
+    That is not only Ryan's preference, it is the only version of this that
+    cannot drift. An interior and an outline are two descriptions of the same
+    plant, and every round of this went wrong at the seam between them: a
+    plain circle against a scalloped mass, a starburst inside a hoop, a deep
+    star against a fine saw. One description has no seam.
+
+    The one exception is grasses, and it is the exception that proves the
+    rule: a clump does not mass, so there IS no group outline for its symbol
+    to match, and its ticks are the whole mark rather than something inside
+    one.
   */
-  if (kind === "grasses") {
-    /*
-      A CLUMP OF GRASS HAS NO OUTLINE AND NO WASH, which is the whole of what
-      Ryan's reference says and the reverse of what was drawn here before. The
-      dashed ring was a compromise — a way to state the extent while admitting
-      the edge is not real — and the drawing simply does not have one. The
-      reach of the ticks is the extent, exactly as the conifer's points are,
-      and a circular wash would put the ring back by another route.
-
-      Its floor is its own, too, and lower than the shared one: the ticks ARE
-      the symbol, so there is nothing to fall back to. A 3ft clump is under
-      11px of radius at any zoom short of standing in the bed, and a category
-      that spent almost all of its life as a plain dot would have been drawn
-      for nothing.
-    */
-    if (r >= 7) {
-      grassClump(ctx, x, y, r);
-      ctx.restore();
-      return;
-    }
+  if (kind === "grasses" && r >= 7) {
+    grassClump(ctx, x, y, r);
   } else {
-    const serrated = rimPath(ctx, kind, x, y, r);
+    const textured = rimPath(ctx, kind, x, y, r);
     ctx.fill();
-    if (serrated) {
-      ctx.save();
-      ctx.setLineDash([]);
+    if (textured) {
       ctx.stroke();
-      ctx.restore();
     } else {
+      // A mat's broken line is the one profile with no shape to it; below the
+      // texture floor every kind falls back to this plain circle.
       circle(ctx, x, y, r, kind === "ground_cover"
         ? [Math.max(2, r * 0.34), Math.max(2, r * 0.26)]
         : []);
     }
-  }
-
-  /*
-    Below this the texture is a blot rather than a mark. A symbol too small to
-    hold its own line work shows its outline and its middle, which is the
-    honest amount of information at that size — the thing to fix is the zoom.
-  */
-  if (r < 11) {
-    ctx.beginPath();
-    ctx.arc(x, y, Math.max(1, r * 0.2), 0, TAU);
-    ctx.fillStyle = opts.selected ? "#22c55e" : opts.color;
-    ctx.fill();
-    ctx.restore();
-    return;
-  }
-
-  ctx.fillStyle = opts.selected ? "#22c55e" : opts.color;
-
-  switch (kind) {
-    case "shade_tree":
-      // BRANCHING, which is the deciduous plan symbol everybody draws: limbs
-      // out of a trunk, longer and shorter, under a canopy you see through.
-      radial(ctx, x, y, r * 0.16, r * 0.84, 6);
-      radial(ctx, x, y, r * 0.16, r * 0.5, 6, Math.PI / 6);
-      circle(ctx, x, y, r * 0.6);
-      break;
-    case "ornamental_tree":
-      // Blossom: a ring of clusters inside a light crown. An ornamental is
-      // read by what it does in flower, and it is the tree you see under.
-      ringOfDiscs(ctx, x, y, r * 0.52, r * 0.23, 7);
-      break;
-    case "evergreen_tree":
-      /*
-        THE BRANCHING IS BACK, and it has to be.
-
-        While the rim was a deep pointed star the star was the whole symbol and
-        anything inside it was a scribble. A fine 16% saw is a much quieter
-        edge — near enough a shrub's shallow scallops at a glance — so the
-        inside is once more what says conifer: spokes to a trunk, which is how
-        a needled tree is drawn on every plan that has ever had one.
-      */
-      radial(ctx, x, y, r * 0.1, r * 0.72, 12);
-      break;
-    case "shrub":
-      // Layered foliage: broken arcs, offset ring to ring. Dense and rounded,
-      // and unmistakably not a tree at a glance — the pair that has to be
-      // told apart most often.
-      arcRing(ctx, x, y, r * 0.72, 7);
-      arcRing(ctx, x, y, r * 0.42, 5, 0.4);
-      break;
-    case "grasses":
-      // Unreachable: a clump is drawn and returned above, because the ticks
-      // are its outline rather than something inside one. Kept so the switch
-      // still names every kind — an unlisted one would draw a bare circle and
-      // nobody would notice which.
-      break;
-    case "perennial":
-      // A rosette. Small, and read in groups rather than one at a time.
-      ringOfDiscs(ctx, x, y, r * 0.42, r * 0.34, 6, 0.3);
-      break;
-    case "ground_cover":
-      // Stipple inside a dashed extent — the textbook groundcover hatch. The
-      // lightest mark on the plan, because it is a mat rather than a thing
-      // with a trunk.
-      stipple(ctx, x, y, r * 0.82, 16, Math.max(0.8, r * 0.07));
-      break;
   }
 
   if (opts.selected) {

@@ -2046,8 +2046,16 @@ try {
   await wheelZoom(3, true);
   await page.waitForTimeout(700);
   const inkZoomed = await plantGreen();
+  /*
+    THE BAR IS LOWER THAN IT WAS, and the reason is worth writing down. A
+    symbol is its outline and nothing else now — no branching, no blossom, no
+    stipple — so its ink is a PERIMETER rather than an area, and the same zoom
+    moves it a good deal less than it used to. What the check is for is
+    unchanged: a ground-scaled symbol grows, and the fixed 13px disc this
+    replaced does not move the number at all.
+  */
   ok("AND THEY GROW WHEN THE MAP ZOOMS IN, because they are ground-scaled",
-    inkZoomed > inkBefore * 1.25, `${inkBefore} then ${inkZoomed}`);
+    inkZoomed > inkBefore * 1.15, `${inkBefore} then ${inkZoomed}`);
   await wheelZoom(3, false);
   await page.waitForTimeout(700);
   const inkBack = await plantGreen();
@@ -2938,12 +2946,39 @@ try {
     x: ringCanvas.x + ringCanvas.width * 0.78,
     y: ringCanvas.y + ringCanvas.height * 0.2,
   };
+  /** How far out from a point plant-green reaches, in page pixels. */
+  const ghostReach = (pt, maxR = 60) =>
+    page.evaluate(([x, y, r]) => {
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const rect = c.getBoundingClientRect();
+      const k = c.width / rect.width;
+      const cx = (x - rect.left) * k;
+      const cy = (y - rect.top) * k;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let far = 0;
+      for (let n = 0; n < 180; n++) {
+        const a = (Math.PI * 2 * n) / 180;
+        for (let rr = r * k; rr >= 1; rr -= 0.5) {
+          const px = Math.round(cx + rr * Math.cos(a));
+          const py = Math.round(cy + rr * Math.sin(a));
+          if (px < 0 || py < 0 || px >= c.width || py >= c.height) continue;
+          const i = (py * c.width + px) * 4;
+          if (d[i + 1] > 120 && d[i + 1] - d[i] > 40 && d[i + 1] - d[i + 2] > 25) {
+            if (rr / k > far) far = rr / k;
+            break;
+          }
+        }
+      }
+      return far;
+    }, [pt.x, pt.y, maxR]);
+
   const ghostBefore = await ringInk(ghostAt, 45);
   await penMove(ghostAt.x, ghostAt.y);
   await page.waitForTimeout(120);
   await penMove(ghostAt.x + 1, ghostAt.y);
   await page.waitForTimeout(500);
   const ghostShrub = await ringInk(ghostAt, 45);
+  const shrubReach = await ghostReach(ghostAt);
   ok("A HOVERING PENCIL SHOWS WHAT IT IS ABOUT TO PLANT",
     ghostBefore === 0 && ghostShrub > 12,
     `${ghostBefore} bare, ${ghostShrub} hovering`);
@@ -3078,10 +3113,20 @@ try {
   await page.waitForTimeout(120);
   await penMove(ghostAt.x + 1, ghostAt.y);
   await page.waitForTimeout(400);
-  const ghostTree = await ringInk(ghostAt, 45);
+  /*
+    MEASURED AS REACH, NOT AS INK, and that had to change with the symbols.
+
+    A stamp is now its outline and nothing else, so ink is a perimeter — and
+    worse, at this zoom a 6ft shrub is under the scale floor and is drawn as a
+    solid dot while a 20ft tree is a thin ring. The dot carries MORE ink than
+    the tree, which says nothing about either. How far the mark reaches is the
+    thing the check was always about: a tree at its own ground size covers a
+    great deal more of the map than a shrub does.
+  */
+  const treeReach = await ghostReach(ghostAt);
   ok("AND THE GHOST IS THE SYMBOL THAT IS ARMED, AT ITS OWN SIZE",
-    ghostTree > ghostShrub * 2,
-    `${ghostShrub} for a 6ft shrub, ${ghostTree} for a 20ft tree`);
+    treeReach > shrubReach * 1.8,
+    `${shrubReach}px for a 6ft shrub, ${treeReach}px for a 20ft tree`);
 
   /*
     OUT OF RANGE, AND IT GOES WITH THE PENCIL.
@@ -4020,31 +4065,28 @@ try {
     ((await page.textContent("aside")) ?? "").slice(0, 120));
 
   /*
-    THE CHECK WITH A SIGN IN IT: TWO MASSED DRAW LESS INK THAN ONE ALONE.
+    WHAT INK CAN AND CANNOT SEE HERE, stated because it used to see more.
 
-    A plant on its own is a circle AND its texture — for a shade tree, twelve
-    branches and an inner ring. Two of the same plant on the same spot are ONE
-    union outline and two ticks: the texture of both is interior line work and
-    it is gone. So the pair must read LIGHTER than the single, which cannot
-    happen by accident.
+    This check read "two massed draw LESS than one alone", and it was true
+    while a plant on its own carried interior line work — twelve branches and
+    an inner ring for a shade tree — which massing threw away. There is no
+    interior any more: a symbol is its outline and nothing else. And these two
+    are COINCIDENT, deliberately, so that "they overlap" cannot depend on a
+    radius nobody measured — which means the massed pair and the un-massed one
+    would ink the very same pixels. Ink cannot tell them apart, and mutation
+    testing says so: turning massing off for shade trees leaves this whole
+    section green.
 
-    MEASURED BELOW THE CENTRE, and that is not a fudge. The mass carries a
-    call-out — `2 · Shade Tree`, in the plant's own colour, above the top of
-    the canopy — and a box centred on the mass measures those letters as line
-    work: they are what the convention ADDS, not what it removes, and they
-    swamped the reading at 431 against 277 while the outline underneath was
-    doing exactly what it should. A box from the centre downward cannot reach
-    the label, and the wash cannot be mistaken for line work at all — 14% of
-    #22c55e over the canvas's own #0b0b0d is nowhere near green enough to
-    count.
+    So what is left here is that a single plant is drawn at all. The geometry
+    that only a MASS produces — the rim of one canopy buried inside its
+    neighbour, and not inked — needs two canopies that are near but not on top
+    of each other, and it is checked in 7c-x-c-4 below, where the spread
+    override makes the canopies big enough to read.
   */
   const below = (off) => pointNow({ dx: off.dx, dy: off.dy + 30 });
   const soloInk = await ringInk(await below(soloOff), 30);
-  const massInk = await ringInk(await below(massOff), 30);
-  ok("A SINGLE PLANT IS DRAWN WITH ITS TEXTURE UNDER IT",
+  ok("A SINGLE PLANT IS DRAWN WITH AN OUTLINE UNDER IT",
     soloInk > 20, `${soloInk} ink`);
-  ok("AND TWO MASSED DRAW LESS THAN ONE ALONE — the interior is gone",
-    massInk < soloInk, `${massInk} massed against ${soloInk} single`);
 
   /*
     AND THE TAKE-OFF IS UNTOUCHED, read after the drawing has massed them.
@@ -4409,7 +4451,7 @@ try {
   const evgAt2 = await pointNow(evgOff);
   await page.mouse.move(evgFrom.x, evgFrom.y);
   await page.mouse.down();
-  await page.mouse.move(evgAt2.x, evgAt2.y - trueR * 0.9, { steps: 10 });
+  await page.mouse.move(evgAt2.x, evgAt2.y - trueR * 1.4, { steps: 10 });
   await page.mouse.up();
   await page.waitForTimeout(500);
   await page.mouse.click(evgClear.x, evgClear.y);
@@ -4440,12 +4482,36 @@ try {
     `${loneTeeth.pitchPx.toFixed(1)}px per tooth alone, ` +
       `${teeth.pitchPx.toFixed(1)}px massed`);
 
+  /*
+    AND THE BURIED RIM IS GONE — which is the only thing on the drawing that a
+    mass does and two overlapping circles do not, now that a single symbol
+    wears the same edge as a group.
+
+    The second conifer sits 1.4 canopy-radii above the first, so the point one
+    radius straight up from the first is INSIDE the second and is where the
+    first's own rim would run. Massed, nothing is inked there: the interior
+    lines are what the convention removes. Un-massed, the first canopy draws
+    its whole circle and that rim is there to be found.
+
+    THE RULER IS IN THE SAME FRAME, and it is the shade tree standing alone at
+    the same 80ft spread: the same probe one radius above ITS centre has to
+    find a rim, or the check is only proving that the probe cannot see.
+  */
+  const buriedAt = { x: evgAt2.x, y: evgAt2.y - trueR };
+  const rulerAt = { x: (await pointNow(edgeSolo)).x, y: (await pointNow(edgeSolo)).y - trueR };
+  const buriedInk = await ringInk(buriedAt, 10);
+  const rulerInk = await ringInk(rulerAt, 10);
+  ok("the probe can see a rim where one is drawn",
+    rulerInk > 10, `${rulerInk} on the single canopy's own rim`);
+  ok("AND THE MASS BURIES THE RIM WHERE THE TWO CANOPIES CROSS",
+    buriedInk === 0, `${buriedInk} green inside the mass`);
+
   // Off the plan again, and back to Pick, which is where the cleanup below
   // expects to find the tool.
   await plantBtn.click();
   await page.waitForTimeout(250);
   ok("to Remove to clear the conifers", (await plantMode()) === "delete");
-  await penDownAt(evgAt2.x, evgAt2.y - trueR * 0.9);
+  await penDownAt(evgAt2.x, evgAt2.y - trueR * 1.4);
   await page.waitForTimeout(300);
   await tapAt(evgOff);
   await page.waitForTimeout(400);

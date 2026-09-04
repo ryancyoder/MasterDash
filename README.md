@@ -796,16 +796,15 @@ why it is the right one to make here; a per-plant spread is the obvious next
 step, and `upright_objects` already stores a measured one for a plant somebody
 actually shot in a yard.
 
-**Line work, not colour.** Every plant category is the same green, so the
-texture is what tells them apart — a mono-line plan is how this has always been
-drawn. Branching under a see-through canopy for a shade tree; a ring of blossom
-clusters for an ornamental; the conifer sawtooth, which is the one plan
-convention everybody already reads; layered broken arcs for a shrub, dense and
-unmistakably not a tree at a glance, which is the pair that has to be told
-apart most often; a ragged clump of blades for grasses,
-with no ring round it at all; a small rosette for a perennial; and the lightest
-mark on the plan, a dashed ring with a stipple in it, for a ground cover. An
-emoji at 6px is a smudge. A sawtooth at 6px still reads as spiky.
+**Line work, not colour.** Every plant category is the same green, so the shape
+is what tells them apart — a mono-line plan is how this has always been drawn.
+
+**AND THE SHAPE IS THE OUTLINE. THERE IS NOTHING INSIDE IT.** A cloud of nine
+lobes for a shade tree, a slightly finer crown for an ornamental, the conifer's
+sawtooth, mound scallops for a shrub, a six-lobed rosette outline for a
+perennial, a broken ring for a ground cover — and for grasses, which do not
+mass, the clump of ticks that is its own drawing. That is the whole symbol set.
+An emoji at 6px is a smudge; a sawtooth at 6px still reads as spiky.
 
 **The grass clump is drawn from Ryan's own reference for one** — a ring of fine
 ticks round a hollow middle, with a small cross at the centre and nothing else.
@@ -863,36 +862,45 @@ has no grasses row any more: a border for something that never masses is data
 nothing reads. The fine saw that was on it is the conifer's now, which is where
 it is actually drawn.
 
-**EVERY SYMBOL WEARS THE EDGE ITS OWN MASS WEARS.** One description of a
-plant's boundary — `EDGE_PROFILES` — read by both surfaces: a lone boxwood and
-eleven massed boxwood carry the same scallops, a lone conifer and a hedge of
-them the same teeth. The two can no longer disagree, and disagreeing is what
-every round of this was actually about.
+**EVERY SYMBOL WEARS THE EDGE ITS OWN MASS WEARS, AND WEARS NOTHING ELSE.**
+One description of a plant's boundary — `EDGE_PROFILES` — read by both
+surfaces, with no interior line work on either. A single plant is simply the
+shape you would see if it were one of eleven massed together.
 
-**It got here the long way, and the route is the lesson.** Every stamp was a
-plain circle with its mark inside, on the argument that a bed of scalloped rims
-is a hedge of squiggles and *where a canopy reaches* is the one thing a plan
-must be able to say. Then the conifer was cut out of that as a special case,
-because its sawtooth is a **silhouette** — all of the information is in the
-edge, and a starburst inside a circle is a starburst inside a circle. Then the
-conifer's own two surfaces were split, so one plant wore a deep pointed star
-and a hedge of them a fine saw. Ryan's answer to the whole business: *the
-single symbol should match the massing outline shape.*
+**It got here the long way, and the route is the whole lesson.** Every stamp
+was a plain circle with its mark inside, on the argument that a bed of
+scalloped rims is a hedge of squiggles. Then the conifer was cut out of that as
+a special case, because its sawtooth is a **silhouette** and a starburst inside
+a circle is a starburst inside a circle. Then the conifer's own two surfaces
+were split, so one plant wore a deep pointed star and a hedge of them a fine
+saw. Then the split was undone and every symbol took its mass's edge — while
+keeping its interior. Then Ryan, having watched four rounds of it: *I just like
+the massing outside borders. I don't even like the internal icons. I just want
+the simple shapes.*
 
-**The original objection is largely retired, which is what makes it possible.**
-A bed of overlapping rims was the failure case, and overlapping plants of one
-kind are **massed** now — one outline, not a dozen. What is left is a mixed
-bed, where a scalloped shrub crosses a lobed canopy, and at the depths in that
-table (10–16%) that reads as texture rather than as squiggle.
+**He is right, and not only about the drawing.** An interior and an outline are
+two descriptions of the same plant, and every round of this went wrong at the
+seam between them. One description has no seam. `drawPlantStamp` is a fill, a
+stroke and a selection ring; `radial`, `ringOfDiscs`, `arcRing` and `stipple`
+are gone, and 178 lines with them.
+
+**The original objection is retired, which is what makes it possible.** A bed
+of overlapping rims was the failure case, and overlapping plants of one kind
+are **massed** now — one outline, not a dozen. What is left is a mixed bed,
+where a scalloped shrub crosses a lobed canopy, and at 10–16% depth that reads
+as texture rather than as squiggle.
 
 What is **not** given up is the claim: every profile bites inward only, cusps
 exactly on the true radius, so a symbol still reaches precisely as far as the
 canopy does.
 
-**The conifer keeps its branching inside**, and has to. While its rim was a
-deep pointed star the star was the whole symbol and anything inside it was a
-scribble; a fine 16% saw is a much quieter edge — near enough a shrub's shallow
-scallops at a glance — so the inside is once more what says conifer.
+**Two categories now look alike at the same size**, and that is worth knowing
+rather than discovering: a shade tree is nine lobes at 14% and an ornamental
+eight at 13%, which on a plan are told apart by their spreads (20ft against
+12ft) but in the symbols panel, where everything is drawn at one radius, are
+near enough the same shape. Shrub against perennial is the same story at seven
+lobes and six. Differentiating them is a change to four numbers in
+`EDGE_PROFILES`.
 
 **Rendering it is not the same as verifying it, and this is the third time that
 lesson has been paid for here** (the flow arrows, the outline crosshair, now
@@ -944,6 +952,31 @@ moment before. Two clumps draw close to twice the line work; a massed pair
 draws far LESS than one, because both symbols are gone and a single outline is
 drawn in their place. Letting grasses mass again turns it red at **1434 for
 two against 1929 for one**.
+
+**Mutation testing found three checks that had lost their teeth**, which is the
+part of this change worth reading. Taking the interiors out did not break them
+— it made them unfalsifiable, which is worse. *Two massed draw less ink than
+one alone* was true because massing threw the interior away; with no interior,
+and with the pair deliberately COINCIDENT so that "they overlap" could not
+depend on an unmeasured radius, the massed and un-massed drawings ink the very
+same pixels. Turning massing off for shade trees left the whole section green.
+*The mass edge is cut into* no longer distinguished anything either, since a
+single canopy is cut into the same way now.
+
+So the massing check became the one thing that only a mass produces: **the rim
+of one canopy buried inside its neighbour, and not inked.** The second conifer
+sits 1.4 canopy-radii above the first, so the point one radius straight up from
+the first is inside the second and is where the first's own rim would run —
+nothing there when massed, 152 green pixels when not. The ruler is in the same
+frame: the same probe one radius above the lone shade tree's centre has to find
+a rim, or the check is only proving the probe cannot see.
+
+Two more had to be restated rather than repaired. *They grow when the map zooms
+in* now moves less, because ink is a perimeter rather than an area. And the
+ghost check is measured as **reach** instead of ink: at that zoom a 6ft shrub
+is under the scale floor and drawn as a solid dot while a 20ft tree is a thin
+ring, so the small one carries more ink than the big one — which says nothing
+about either.
 
 **A lone conifer and a massed one are counted on the RENDERED rim and compared
 to each other**, which is the check the whole business needed and never had.
