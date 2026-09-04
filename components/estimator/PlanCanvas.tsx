@@ -591,10 +591,13 @@ export default function PlanCanvas({
   /** A tap on open ground while the plant tool is armed. */
   onPlacePlant: (at: LatLng) => void;
   /**
-   * Take one off the plan. Sticky — see `PlantMode`: the tool stays in delete
-   * so a bed can be cleared with one tap per plant.
+   * Take one off the plan.
+   *
+   * `stroke` names the eraser stroke that took it, so everything one drag
+   * wipes comes back as a single undo. A removal outside a stroke passes
+   * nothing and is its own step.
    */
-  onRemovePlant: (id: string) => void;
+  onRemovePlant: (id: string, stroke?: string) => void;
   /** What a tap does while the Plant tool is up. See `PlantMode`. */
   plantMode: PlantMode;
   /** One write per drag, on release — the same rule a corner follows. */
@@ -684,6 +687,14 @@ export default function PlanCanvas({
     | { kind: "shape"; base: Record<string, LatLng>; startWorld: WorldPoint }
     | { kind: "pin"; pin: "survey" | "photo"; id: string }
     | { kind: "plant"; id: string }
+    /*
+      An eraser stroke. `from` is the last place the tip was read, so what
+      gets removed is everything the SEGMENT between two samples crossed —
+      a pointermove arrives every frame at best, and a hand moving at any
+      speed steps over whole plants between two of them. `stroke` names the
+      gesture, so the six shrubs a stroke takes off come back as one undo.
+    */
+    | { kind: "erase"; stroke: string; from: Pt }
     | { kind: "callout"; id: string }
     | { kind: "label"; shapeId: string; base: { dx: number; dy: number }; startWorld: WorldPoint }
     | { kind: "pan"; startX: number; startY: number; centre: WorldPoint }
@@ -2272,6 +2283,43 @@ export default function PlanCanvas({
     return null;
   }
 
+  /**
+   * Every plant the segment `a`→`b` touches, in the order they are drawn.
+   *
+   * The eraser's hit test, and it is a SEGMENT rather than a point for the
+   * reason the drag kind above gives: sampling only where the pointer events
+   * happen to land leaves a fast stroke skipping over plants it visibly went
+   * through, which reads as an eraser that misses. A press with `a === b` is
+   * the degenerate case and behaves exactly like `plantAt`, except that it
+   * returns everything under the tip rather than only the topmost — two
+   * shrubs drawn on top of each other are both things the tip touched.
+   */
+  function plantsAlong(a: Pt, b: Pt, t: Transform): PlacedPlant[] {
+    const ftPerPx =
+      (metresPerWorldUnit(toLatLng(viewRef.current.centre).lat) / t.scale) *
+      FEET_PER_METRE;
+    const vx = b.x - a.x;
+    const vy = b.y - a.y;
+    const len2 = vx * vx + vy * vy;
+    const hit: PlacedPlant[] = [];
+    for (const plant of plants) {
+      const c = toCanvas(toWorld(plant.at), t);
+      // The nearest point of the segment to this plant's centre, clamped to
+      // the segment's own ends so a stroke does not erase along its own
+      // infinite line.
+      const u = len2 === 0 ? 0 : Math.max(0, Math.min(1,
+        ((c.x - a.x) * vx + (c.y - a.y) * vy) / len2));
+      const { r } = stampRadius(plantFace(plant).spreadFt, ftPerPx);
+      if (
+        dist(c, { x: a.x + vx * u, y: a.y + vy * u }) <=
+        Math.max(PLANT_GRAB_MIN_PX, r)
+      ) {
+        hit.push(plant);
+      }
+    }
+    return hit;
+  }
+
   /** The call-out under a point, topmost first. */
   function calloutAt(cp: Pt, t: Transform): CalloutDraw | null {
     for (let i = callouts.length - 1; i >= 0; i--) {
@@ -2340,22 +2388,25 @@ function isPlantInput(type: string): boolean {
         if (plantMode === "plant") onSelectCallout(covered.id);
         return;
       }
-      const hit = plantAt(cp, t);
       if (plantMode === "delete") {
         /*
-          Deleting is AIMED, exactly as planting is, so it is held to the same
-          input rule: a pencil (or a mouse at a desk) and never a finger. A
-          thumb resting on the map while the other hand pans is how a shrub
-          nobody removed disappears — and a removal is worse than a stray
-          plant, which is visible the moment it lands.
+          Nothing happens here, and that is the whole of it.
 
-          Immediate, with no confirmation. Undo already takes it back, the
-          symbol vanishing is its own receipt, and a modal on every tap would
-          make clearing a bed of eleven shrubs eleven dialogs.
+          A PENCIL never reaches this line: its press starts an eraser stroke
+          and takes off what it landed on before any of this runs. So a tap
+          arriving in Remove came from a finger, and a finger in Remove takes
+          nothing off and picks nothing up.
+
+          Same rule as placing, and it matters more here — a thumb resting on
+          the map while the other hand pans is how a shrub nobody removed
+          disappears, and a removal is worse than a stray plant, which is
+          visible the moment it lands. There is no confirmation on the pencil's
+          own stroke either: Undo takes the whole stroke back at once, and a
+          modal per symbol would make clearing a bed eleven dialogs.
         */
-        if (hit && isPlantInput(pointerType)) onRemovePlant(hit.id);
         return;
       }
+      const hit = plantAt(cp, t);
       if (hit) {
         onSelectPlant(hit.id);
         return;
@@ -2518,6 +2569,21 @@ function isPlantInput(type: string): boolean {
     onSelectCallout(null);
   }
 
+  /**
+   * Take off everything between two samples of the eraser.
+   *
+   * A HELD-OPEN PHOTOGRAPH COVERS THE GROUND UNDER IT, so a sample landing on
+   * one erases nothing — the same rule every other tap in this tool follows,
+   * and it is what stops a stroke crossing a picture from quietly taking out a
+   * plant nobody could see. The caller moves the segment's start up to the tip
+   * either way, so the stroke resumes on the far side of the picture rather
+   * than reaching across it.
+   */
+  function eraseAt(a: Pt, b: Pt, t: Transform, stroke: string) {
+    if (calloutAt(b, t)) return;
+    for (const plant of plantsAlong(a, b, t)) onRemovePlant(plant.id, stroke);
+  }
+
   function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     /*
       THE RING TAKES THE PRESS BEFORE ANYTHING ELSE, and returns.
@@ -2603,11 +2669,39 @@ function isPlantInput(type: string): boolean {
       It stays SELECTABLE in Select, because tapping one to read its card or
       take it off the plan is not a change to where anything is.
     */
+    /*
+      REMOVE IS AN ERASER, NOT A TAP, and this is what makes it one.
+
+      The pencil takes the press outright and the map does not move under it:
+      dragging the tip across the plan takes off every symbol it touches, the
+      way a rubber does. Clearing a bed of eleven shrubs is one stroke.
+
+      IT RETURNS BEFORE THE PAN, which is the whole point. Falling through
+      would leave a pencil drag panning the map, so the plan would slide out
+      from under the very stroke that was erasing it. Fingers are unaffected —
+      they never reach here (see `isPlantInput`) and still pan and pinch, which
+      is how the plan is moved about mid-erase.
+
+      It does not consult the tap slop either: there is no tap here to protect.
+      The press takes off what is under it at once, which is also what makes a
+      single tap in Remove work through this same path.
+    */
+    if (tool === "plant" && plantMode === "delete" && isPlantInput(e.pointerType)) {
+      // Named off the event rather than off the clock: `Date.now()` is an
+      // impure call in a component body and the lint rule is right to refuse
+      // it. The pointer id and the event's own timestamp are as unique as a
+      // stroke needs to be, and they are already here.
+      const stroke = `${e.pointerId}:${e.timeStamp}`;
+      dragRef.current = { kind: "erase", stroke, from: cp };
+      eraseAt(cp, cp, transformNow(), stroke);
+      return;
+    }
+
     // Moving a plant is the same rule as placing one: a finger is panning the
     // map, and a plant that slid because a thumb rested on it is a plant
     // nobody moved on purpose.
-    // Not in delete: the tap there is a removal, and picking the symbol up
-    // first would slide it under the tip on the way to being taken off.
+    // Not in delete: the press there is an eraser stroke, and picking the
+    // symbol up first would slide it under the tip on the way off the plan.
     if (tool === "plant" && plantMode !== "delete" && isPlantInput(e.pointerType)) {
       const t = transformNow();
       const grabbed = plantAt(cp, t);
@@ -2953,6 +3047,19 @@ function isPlantInput(type: string): boolean {
 
     const drag = dragRef.current;
     if (!drag) return;
+
+    /*
+      The eraser runs ahead of the tap slop, because there is no tap under it
+      to protect: the press has already taken off whatever it landed on, and
+      the first ten pixels of a stroke are exactly where the plant beside the
+      one you meant is most likely to be.
+    */
+    if (drag.kind === "erase") {
+      const to = canvasPoint(e);
+      eraseAt(drag.from, to, transformNow(), drag.stroke);
+      drag.from = to;
+      return;
+    }
 
     /*
       NOTHING MOVES UNTIL THE FINGER REALLY HAS.

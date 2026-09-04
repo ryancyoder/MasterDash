@@ -704,7 +704,20 @@ export function setAssemblyHidden(assemblyId: string, hidden: boolean) {
   });
 }
 
+/**
+ * Draw the planting, or don't.
+ *
+ * SETTING IT TO WHAT IT ALREADY IS IS NOT AN EDIT, and that guard is not
+ * tidiness: arming the Plant tool shows the layer, so every tap of a button
+ * that is now a three-way toggle went through here and pushed an undo entry
+ * that changed nothing. Cycling the tool twice and then pressing undo undid
+ * one of those instead of the work — a dead press, and the user has no way to
+ * know how many of them stand between them and the thing they meant to take
+ * back. Found while mutation-testing the eraser, where an undo after two tool
+ * taps quietly restored the plan to itself.
+ */
 export function setPlantsHidden(hidden: boolean) {
+  if (getSnapshot().estimate.plan.plantsHidden === hidden) return;
   mutatePlan((plan) => ({ ...plan, plantsHidden: hidden }));
 }
 
@@ -839,11 +852,24 @@ export function setPlantVariant(
   }));
 }
 
-export function removePlant(id: string) {
-  mutatePlan((plan) => ({
-    ...plan,
-    plants: plan.plants.filter((p) => p.id !== id),
-  }));
+/**
+ * One off the plan.
+ *
+ * `stroke` names the eraser stroke that took it, so a drag that wipes six
+ * shrubs is ONE undo rather than six. It is the same coalescing a slider
+ * uses — the label holds the window open for as long as removals keep
+ * arriving — and it is the whole reason a stroke can be trusted: nobody
+ * pressing undo after an eraser stroke means "put back the last shrub of the
+ * six". A tap passes no stroke and is its own step.
+ */
+export function removePlant(id: string, stroke?: string) {
+  mutatePlan(
+    (plan) => ({
+      ...plan,
+      plants: plan.plants.filter((p) => p.id !== id),
+    }),
+    stroke ? `erase:${stroke}` : "",
+  );
 }
 
 /** Every plant of one species, gone at once — the way a card is cleared. */

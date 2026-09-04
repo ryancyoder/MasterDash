@@ -983,17 +983,60 @@ already drawn: there is nothing under the tip that a mis-aim could deform.
 
 **Remove is sticky, and that is the decision.** Clearing a bed of eleven shrubs
 is one mode, not eleven mode switches, so the tool stays in Remove until it is
-tapped on. There is no confirmation on the tap either — Undo already takes it
-back, and the symbol disappearing is its own receipt. The cost is a state you
-can be in without meaning to be, which is why the button is red for the
-duration and why the word is on it rather than only the colour: the three
-states are not equally recoverable, and one of them removes work.
+tapped on. There is no confirmation either — Undo already takes it back, and
+the symbol disappearing is its own receipt. The cost is a state you can be in
+without meaning to be, which is why the button is red for the duration and why
+the word is on it rather than only the colour: the three states are not equally
+recoverable, and one of them removes work.
+
+**And it is an ERASER, not a tap.** Drag the pencil across the plan and every
+symbol the tip touches comes off, the way a rubber works — clearing a bed is
+one stroke rather than eleven aimed taps.
+
+**Which means the map must not move under it**, and that is the load-bearing
+half: a pencil drag pans the map in every other state of this tool, so falling
+through to the pan would slide the plan out from under the very stroke that was
+erasing it. The eraser therefore takes the press outright and returns before
+the pan ever starts. Fingers are untouched — they never reach that branch — so
+the plan is still panned and pinched mid-erase with the other hand, which is
+the same division of labour the whole tool works to.
+
+**What comes off is what the SEGMENT crossed, not what the samples landed on.**
+A `pointermove` arrives once a frame at best, and a hand moving at any speed
+steps clean over a plant between two of them; hit-testing only the reported
+points is what makes an eraser feel like it misses. Each pair of samples is
+tested as a line, and the stroke's own trail is what is being asked about.
+
+**And a tap of the tool is not an edit.** Arming the Plant tool shows the
+planting layer, and setting that preference to what it already is used to push
+an undo entry that changed nothing — so cycling a three-way button twice and
+then pressing undo undid one of those instead of the work, with nothing on
+screen to say how many dead presses stood in the way. `setPlantsHidden` returns
+early when the value is unchanged. It surfaced while mutation-testing the
+eraser: with the erasing broken, undo restored the plan to itself and a check
+passed for the wrong reason.
+
+**And the whole stroke is one undo.** Nobody pressing undo after an eraser
+stroke means "put back the last shrub of the six", so the removals coalesce
+under the stroke's own name — the same 700ms window a slider's forty steps
+already use. A tap passes no stroke and stays its own step.
+
+**It does not consult the tap slop.** There is no tap underneath to protect:
+the press has already taken off what it landed on, and the first ten pixels of
+a stroke are exactly where the plant beside the one you meant is most likely to
+be.
 
 **A finger removes nothing.** Removing is aimed, exactly as planting is, so it
 is held to the same pencil-or-mouse rule — and a thumb that takes a shrub off
 is worse than one that plants a tree, because a stray plant is visible and a
-removed one is simply gone. The drag is off in Remove too: picking the symbol
-up first would slide it under the tip on the way to being taken off.
+removed one is simply gone. Moving a plant is off in Remove too: picking the
+symbol up first would slide it under the tip on the way off the plan.
+
+**A held-open photograph still covers the ground under it.** A sample landing
+on a call-out erases nothing and the stroke resumes on the far side of it,
+rather than reaching across — the same rule every other tap in this tool
+follows, and what stops a stroke passing over a picture from quietly taking out
+a plant nobody could see.
 
 **Reaching for the tool from anywhere else always lands on Plant.** The state
 is deliberately not remembered across a trip to Select: coming back to a tool

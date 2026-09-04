@@ -3645,6 +3645,167 @@ try {
     (await plantCount()) === wereThere,
     `${wereThere} at the start, ${await plantCount()} now`);
 
+
+  /*
+    7c-x-c-2. REMOVE IS AN ERASER, NOT A TAP.
+
+    Dragging the pencil across the plan takes off every symbol it touches, and
+    the map does NOT move under it — which is the half that makes the gesture
+    possible at all. A pencil drag pans the map in every other state of this
+    tool, so the plan would otherwise slide out from under the very stroke
+    that was erasing it.
+
+    Fingers are untouched and still pan and pinch: that is how the plan is
+    moved about mid-erase, and it is the same division of labour the whole
+    Plant tool works to (see `isPlantInput`).
+  */
+  /** Press, drag through the points given, and lift — all as a pencil. */
+  const penStroke = async (points) => {
+    const [first, ...rest] = points;
+    await cdp.send("Input.dispatchMouseEvent", {
+      type: "mousePressed", x: first.x, y: first.y, button: "left", buttons: 1,
+      clickCount: 1, pointerType: "pen", force: 0.5,
+    });
+    for (const pt of rest) {
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved", x: pt.x, y: pt.y, button: "none", buttons: 1,
+        pointerType: "pen", force: 0.5,
+      });
+      await page.waitForTimeout(60);
+    }
+    const last = points[points.length - 1];
+    await cdp.send("Input.dispatchMouseEvent", {
+      type: "mouseReleased", x: last.x, y: last.y, button: "left", buttons: 0,
+      clickCount: 1, pointerType: "pen", force: 0,
+    });
+    await page.waitForTimeout(350);
+  };
+
+  /*
+    THE RULER FIRST: the same pencil drag, in Plant, DOES pan the map.
+
+    Without it, "the map held still" is a claim that would pass against a
+    build where nothing responds to a pencil at all — and the bed's own middle
+    is what says where the map is looking, since it is drawn from lat/lng and
+    moves only when the view does.
+  */
+  await armPlant(page);
+  await page.waitForTimeout(300);
+  const panFrom = await pointNow(fractionOff(0.5, 0.1));
+  ok("the pan is started from empty ground",
+    (await ringInk(panFrom, 22)) === 0, `${await ringInk(panFrom, 22)} green`);
+  const bedBeforePan = await bedMiddle();
+  await penStroke([panFrom, { x: panFrom.x + 30, y: panFrom.y + 20 },
+    { x: panFrom.x + 60, y: panFrom.y + 40 }]);
+  const bedAfterPan = await bedMiddle();
+  ok("A PENCIL DRAG IN PLANT PANS THE MAP",
+    Math.abs(bedAfterPan.x - bedBeforePan.x - 60) < 6 &&
+      Math.abs(bedAfterPan.y - bedBeforePan.y - 40) < 6,
+    `${JSON.stringify(bedBeforePan)} then ${JSON.stringify(bedAfterPan)}`);
+  ok("and a drag plants nothing",
+    (await plantCount()) === wereThere, `${await plantCount()} on the plan`);
+  // And back, exactly: the pan is one-to-one in pixels, so an equal and
+  // opposite drag puts the view where the checks below expect it.
+  await penStroke([{ x: panFrom.x + 60, y: panFrom.y + 40 },
+    { x: panFrom.x + 30, y: panFrom.y + 20 }, panFrom]);
+  const bedBack = await bedMiddle();
+  ok("and dragging back puts the view where it was",
+    Math.abs(bedBack.x - bedBeforePan.x) < 3 &&
+      Math.abs(bedBack.y - bedBeforePan.y) < 3,
+    `${JSON.stringify(bedBeforePan)} then ${JSON.stringify(bedBack)}`);
+
+  // Three in a row for the stroke to cross, on ground checked empty.
+  const rowOffs = [
+    fractionOff(0.55, 0.16),
+    fractionOff(0.68, 0.16),
+    fractionOff(0.81, 0.16),
+  ];
+  for (let i = 0; i < rowOffs.length; i++) {
+    const pt = await pointNow(rowOffs[i]);
+    ok(`the ${i + 1} of three spots for the stroke is empty`,
+      (await ringInk(pt, 22)) === 0, `${await ringInk(pt, 22)} green`);
+    await tapAt(rowOffs[i]);
+    await page.waitForTimeout(250);
+  }
+  ok("three are planted for the stroke to cross",
+    (await plantCount()) === wereThere + 3,
+    `${await plantCount()} on the plan`);
+
+  // Into Remove: two taps on from Plant.
+  await plantBtn.click();
+  await page.waitForTimeout(200);
+  await plantBtn.click();
+  await page.waitForTimeout(300);
+  ok("and the tool is in Remove for the stroke",
+    (await plantMode()) === "delete", await plantMode());
+
+  /*
+    ONE STROKE, TWO SAMPLES, THREE PLANTS.
+
+    The press lands on BARE GROUND to the left of the row and there is exactly
+    one move, to bare ground on the right of it — so nothing is erased at any
+    point the pointer was actually reported at. What comes off is what the
+    SEGMENT between two samples crossed, which is the thing that matters in
+    the hand: a pointermove arrives once a frame at best and a hand moving at
+    any speed steps clean over a plant between two of them.
+  */
+  const rowY = (await pointNow(rowOffs[0])).y;
+  const strokeFrom = { x: (await pointNow(fractionOff(0.46, 0.16))).x, y: rowY };
+  const strokeTo = { x: (await pointNow(fractionOff(0.9, 0.16))).x, y: rowY };
+  ok("the stroke starts and ends on bare ground",
+    (await ringInk(strokeFrom, 22)) === 0 && (await ringInk(strokeTo, 22)) === 0,
+    `${await ringInk(strokeFrom, 22)} and ${await ringInk(strokeTo, 22)}`);
+  const bedBeforeErase = await bedMiddle();
+  await penStroke([strokeFrom, strokeTo]);
+  ok("A PENCIL DRAG IN REMOVE TAKES OFF EVERY SYMBOL IT CROSSES",
+    (await plantCount()) === wereThere,
+    `${wereThere + 3} before, ${await plantCount()} after`);
+  /*
+    AND THE MAP DID NOT MOVE UNDER IT — against the same drag panning the map
+    by 60 by 40 a few checks above.
+  */
+  const bedAfterErase = await bedMiddle();
+  ok("AND THE MAP HELD STILL WHILE IT DID",
+    Math.abs(bedAfterErase.x - bedBeforeErase.x) < 3 &&
+      Math.abs(bedAfterErase.y - bedBeforeErase.y) < 3,
+    `${JSON.stringify(bedBeforeErase)} then ${JSON.stringify(bedAfterErase)}`);
+
+  /*
+    AND THE WHOLE STROKE IS ONE UNDO.
+
+    Nobody pressing undo after an eraser stroke means "put back the last shrub
+    of the six", so the removals coalesce under the stroke's own name — the
+    same mechanism a slider's forty steps use.
+
+    THE TOOL IS CYCLED RIGHT ROUND FIRST, and that is a check in itself.
+    Arming the Plant tool shows the planting layer, so every tap of this
+    button went
+    through `setPlantsHidden` and pushed an undo entry that changed nothing —
+    dead presses standing between the user and the work they meant to take
+    back, with nothing on screen to say so. Found while mutation-testing this
+    very stroke: with the erasing broken, undo "restored" the plan to itself
+    and the check passed for the wrong reason.
+  */
+  // All the way round — Remove, plant, pick, Remove — so the stroke is still
+  // what the next one erases with and three dead entries stand behind it.
+  for (let i = 0; i < 3; i++) {
+    await plantBtn.click();
+    await page.waitForTimeout(200);
+  }
+  ok("the tool is cycled all the way round, back to Remove",
+    (await plantMode()) === "delete", await plantMode());
+  await page.locator('button[aria-label="Undo the last change to the plan"]').click();
+  await page.waitForTimeout(500);
+  ok("AND ONE UNDO PUTS THE WHOLE STROKE BACK, past three taps of the tool",
+    (await plantCount()) === wereThere + 3,
+    `${await plantCount()} on the plan`);
+
+  // Off again, so the plan carries what it did before this section.
+  await penStroke([strokeFrom, strokeTo]);
+  ok("and a second stroke clears them again",
+    (await plantCount()) === wereThere,
+    `${await plantCount()} on the plan`);
+
   // Back to the take-off's own tool and column for what follows.
   await page.click('button[aria-label="Select"]');
   await page.waitForTimeout(200);

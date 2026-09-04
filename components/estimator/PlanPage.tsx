@@ -227,7 +227,7 @@ const PLANT_MODE_UI: Record<
   delete: {
     word: "Remove",
     glyph: "✕",
-    hint: "Tap a symbol to take it off the plan · it stays in Remove · Undo puts it back",
+    hint: "Drag the pencil over symbols to take them off · fingers still pan · Undo puts the stroke back",
   },
 };
 
@@ -2419,8 +2419,8 @@ export default function PlanPage({
             describes a plant that is no longer on the plan, and a Remove
             button on a plant that has gone is a button that does nothing.
           */
-          onRemovePlant={(id) => {
-            removePlant(id);
+          onRemovePlant={(id, stroke) => {
+            removePlant(id, stroke);
             setSelectedPlantId((cur) => (cur === id ? null : cur));
           }}
           plantMode={plantMode}
