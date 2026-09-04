@@ -4409,11 +4409,70 @@ try {
   ok("AND ITS MIDDLE IS HOLLOW — the blades do not meet at a point",
     clump.core === 0, `${clump.core} green in the middle`);
 
+  /*
+    AND A SECOND ONE OVERLAPPING IT DOES NOT MASS.
+
+    Massing takes the interior line work out and draws the boundary of the
+    union instead. For eleven boxwood that is the whole point; for grasses it
+    throws the symbol away and leaves a plain blob, because a clump IS its
+    blades. Ryan drew four of them overlapping to show it — every ring
+    complete, the blades crossing where they meet, no boundary anywhere.
+
+    The ruler is the first clump, counted in the same box a moment earlier: two
+    of them draw close to twice the line work. A massed pair would draw far
+    LESS than one, since both symbols would be gone and a single outline drawn
+    in their place, so the difference has a sign in it rather than being a
+    number nobody can calibrate.
+  */
+  const grsPt = await pointNow(grsOff);
+  const inkOne = await ringInk(grsPt, 130);
+  const beforeSecond = await plantCount();
+  /*
+    THE SECOND ONE IS PLANTED CLEAR AND THEN DRAGGED IN, not tapped where it
+    is wanted. A tap inside a canopy PICKS the plant under it rather than
+    planting another — which is right, and is how an earlier version of this
+    check quietly measured one clump twice and called it two.
+  */
+  const grsSpare = fractionOff(0.44, 0.68);
+  await armPlant(page);
+  await page.waitForTimeout(200);
+  await tapAt(grsSpare);
+  await page.waitForTimeout(400);
+  ok("the second clump went down beside the first",
+    (await plantCount()) === beforeSecond + 1,
+    `${beforeSecond} before, ${await plantCount()} after`);
   await plantBtn.click();
   await page.waitForTimeout(250);
-  ok("to Remove to clear the clump", (await plantMode()) === "delete");
+  const grsFrom = await pointNow(grsSpare);
+  await page.mouse.move(grsFrom.x, grsFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(grsPt.x + trueR * 0.7, grsPt.y, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  await page.mouse.click(grsClear.x, grsClear.y);
+  await page.waitForTimeout(400);
+  const inkTwo = await ringInk(grsPt, 130);
+  ok("A BED OF GRASSES STAYS AS CLUMPS — overlapping them masses nothing",
+    inkTwo > inkOne * 1.5,
+    `${inkOne} for one, ${inkTwo} for two`);
+  /*
+    The first clump's middle is NOT checked again here, and that is the right
+    answer rather than a gap: the second clump's blades reach across it, which
+    is exactly what Ryan's drawing shows happening where two of them meet.
+    Hollowness is a property of one clump's own line work, and it was read
+    above on a clump standing alone.
+  */
+
+  await plantBtn.click();
+  await page.waitForTimeout(250);
+  ok("to Remove to clear the clumps", (await plantMode()) === "delete");
+  await penDownAt(grsPt.x + trueR * 0.7, grsPt.y);
+  await page.waitForTimeout(300);
   await tapAt(grsOff);
   await page.waitForTimeout(400);
+  ok("and both clumps are off the plan again",
+    (await plantCount()) === beforeSecond - 1,
+    `${beforeSecond - 1} expected, ${await plantCount()} now`);
   await plantBtn.click();
   await page.waitForTimeout(200);
   await plantBtn.click();

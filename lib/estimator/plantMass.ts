@@ -69,6 +69,28 @@ const SAME_PX = 1e-6;
  * Returns groups of at least two — a plant standing on its own is not a mass
  * and keeps its own symbol, texture and all.
  */
+/**
+ * KINDS THAT DO NOT MASS AT ALL, and grasses is the whole list.
+ *
+ * Massing removes the interior line work and draws the outer boundary of the
+ * union instead — the right answer for eleven boxwood, whose symbols would
+ * otherwise be a scribble, and the wrong one here. A grass clump IS its
+ * blades: take them out and what is left is a plain blob that says nothing
+ * about what is planted in it. Ryan drew four clumps overlapping to show it —
+ * every ring complete, the blades simply crossing where they meet, no boundary
+ * anywhere.
+ *
+ * That is not an exception to the massing rule so much as the rule reaching
+ * its limit. Hidden-line removal is worth it when the outline carries more
+ * information than the interiors do, and for a bed of grasses it carries less.
+ */
+const NEVER_MASSES = new Set(["grasses"]);
+
+/** Whether a stamp kind merges with its overlapping neighbours. */
+export function massesTogether(kind: string): boolean {
+  return !NEVER_MASSES.has(kind);
+}
+
 export function massGroups(discs: MassDisc[]): MassDisc[][] {
   const parent = discs.map((_, i) => i);
   const find = (i: number): number => {
@@ -311,7 +333,9 @@ export const EDGE_PROFILES: Record<string, EdgeProfile> = {
     would read, and this is a reading of it. The two shapes are still both
     saw teeth, so they are recognisably the same plant.
 
-    Same figures as grasses, which is what was asked for by name.
+    These are the figures that used to sit on the grasses row — asked for by
+    name, and grasses no longer needs them, since a stand of them does not
+    mass.
 
     ONE COST, STATED: sixteen teeth need more rim than twelve, so an evergreen
     mass now needs a 12.7px canopy before its border is textured rather than a
@@ -321,9 +345,10 @@ export const EDGE_PROFILES: Record<string, EdgeProfile> = {
   evergreen_tree: { lobes: 16, depth: 0.16, shape: "saw" },
   // A mound: shallow scallops, fewer than a tree's and not as deep.
   shrub: { lobes: 7, depth: 0.12, shape: "scallop" },
-  // Finer and sharper, which is what a stand of grasses looks like in outline
-  // — and the profile that needs the most room before it can be drawn at all.
-  grasses: { lobes: 16, depth: 0.16, shape: "saw" },
+  // NO GRASSES ROW: a stand of them does not mass at all — see
+  // `massesTogether` above — so a border for one would be data nothing reads.
+  // The fine saw that was here is the conifer's now, which is where it is
+  // actually drawn.
   perennial: { lobes: 6, depth: 0.1, shape: "scallop" },
   // A mat has no canopy edge to speak of. A broken line says "this area is
   // planted" without pretending the boundary is a row of crowns.

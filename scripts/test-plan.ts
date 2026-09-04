@@ -40,6 +40,7 @@ import {
   massGroups,
   massLabelAt,
   massOutline,
+  massesTogether,
 } from "../lib/estimator/plantMass.ts";
 import { PLANT_STAMPS } from "../lib/estimator/plantStamp.ts";
 import { PLANT_GROUPS } from "../lib/estimator/tree.ts";
@@ -1767,16 +1768,29 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   }
   /*
     AND THE SMALL ONES ARE LEFT PLAIN, which is the same judgement rather than
-    a gap in it: a perennial at 18 inches is a 2px symbol at that zoom and a
-    stand of grasses 4px. There is no edge to draw on either, and a serration
-    at that size is a furry line — the exact fault the conifer's own figures
-    had before they were coarsened.
+    a gap in it: a perennial at 18 inches is a 2px symbol at that zoom. There
+    is no edge to draw on it, and a serration at that size is a furry line —
+    the exact fault the conifer's own figures had before they were coarsened.
   */
-  for (const kind of ["perennial", "grasses"]) {
-    ok(`a ${kind} is too small for an edge at that zoom, and is left round`,
-      !edgeDrawn(edgeProfileOf(kind), radiusOf(kind)),
-      `${radiusOf(kind)}px`);
-  }
+  ok("a perennial is too small for an edge at that zoom, and is left round",
+    !edgeDrawn(edgeProfileOf("perennial"), radiusOf("perennial")),
+    `${radiusOf("perennial")}px`);
+
+  /*
+    AND GRASSES DO NOT MASS AT ALL, so they have no border to be too small for.
+
+    Massing takes the interior line work out and draws the boundary of the
+    union instead. For eleven boxwood that is the whole point; for a bed of
+    grasses it throws away the symbol and leaves a plain blob, because a grass
+    clump IS its blades. Ryan drew four of them overlapping — every ring
+    complete, the blades crossing where they meet, no boundary anywhere.
+  */
+  ok("A STAND OF GRASSES DOES NOT MASS", !massesTogether("grasses"));
+  ok("and everything else still does",
+    PLANT_STAMPS.filter((k) => k !== "grasses").every((k) => massesTogether(k)));
+  ok("so grasses carry no mass border at all",
+    edgeProfileOf("grasses").lobes === 0 && edgeProfileOf("grasses").depth === 0,
+    JSON.stringify(edgeProfileOf("grasses")));
   /*
     THE CONIFER IS THE ONE KIND WHOSE TWO SURFACES DISAGREE ON PURPOSE, and
     both halves are pinned here because the split is the thing somebody will
@@ -1794,11 +1808,10 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
       Math.max(...PLANT_STAMPS.map((k) => edgeProfileOf(k).depth)),
     `${RIM_PROFILES.evergreen_tree?.depth} against ` +
       `${Math.max(...PLANT_STAMPS.map((k) => edgeProfileOf(k).depth))}`);
-  ok("AND ITS MASS BORDER IS THE ONE GRASSES CARRIES, which is what was asked for",
-    JSON.stringify(edgeProfileOf("evergreen_tree")) ===
-      JSON.stringify(edgeProfileOf("grasses")),
-    `${JSON.stringify(edgeProfileOf("evergreen_tree"))} against ` +
-      `${JSON.stringify(edgeProfileOf("grasses"))}`);
+  ok("AND ITS MASS BORDER IS THE FINE SAW, sixteen teeth at 16%",
+    edgeProfileOf("evergreen_tree").lobes === 16 &&
+      edgeProfileOf("evergreen_tree").depth === 0.16,
+    JSON.stringify(edgeProfileOf("evergreen_tree")));
   // Both are saw teeth, so the two surfaces are still recognisably one plant.
   ok("and both surfaces are teeth rather than scallops",
     RIM_PROFILES.evergreen_tree?.shape === "saw" &&
@@ -1809,10 +1822,11 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     more circle than nine lobes and far less than sixteen. Below it the canvas
     draws the plain arc rather than a serration nobody can see.
   */
-  ok("a canopy is textured before a stand of grasses is",
+  ok("a canopy is textured before a conifer mass is",
     edgeDrawn(edgeProfileOf("shade_tree"), 9) &&
-      !edgeDrawn(edgeProfileOf("grasses"), 9),
-    `${(2 * Math.PI * 9) / 9}px and ${(2 * Math.PI * 9) / 16}px per lobe at r=9`);
+      !edgeDrawn(edgeProfileOf("evergreen_tree"), 9),
+    `${((2 * Math.PI * 9) / 9).toFixed(1)}px and ` +
+      `${((2 * Math.PI * 9) / 16).toFixed(1)}px per lobe at r=9`);
   ok("and nothing is textured on a symbol too small to hold one lobe",
     PLANT_STAMPS.every((k) => !edgeDrawn(edgeProfileOf(k), 4)));
   /*

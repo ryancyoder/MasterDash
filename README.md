@@ -840,9 +840,24 @@ the symbol, so there is nothing to fall back to, and a 3ft clump is under 11px
 of radius at any zoom short of standing in the bed. A category that spent
 almost all of its life as a plain dot would have been drawn for nothing.
 
-**A mass of them still gets an outline**, and that is not a contradiction. One
-clump has no edge to claim; a planted *area* of them does, and drawing its
-extent is the entire point of massing.
+**And a bed of them does not mass at all** — which reverses what shipped with
+the clump, and Ryan drew four of them overlapping to show it: every ring
+complete, the blades crossing where they meet, no boundary anywhere.
+
+The argument for massing them was that one clump has no edge to claim but a
+planted *area* of them does. What that missed is what massing actually does:
+it takes the interior line work OUT and draws the boundary of the union in its
+place. For eleven boxwood that is the whole point — eleven textured circles are
+a scribble and the outline carries more than the interiors do. For grasses it
+carries less, because a clump IS its blades; take them away and what is left is
+a plain blob that says nothing about what is planted in it. `massesTogether()`
+is that limit, and grasses is the whole list.
+
+They are dropped before `massGroups` rather than inside it, so a clump can
+never end up in a group it is then also drawn on top of. And `EDGE_PROFILES`
+has no grasses row any more: a border for something that never masses is data
+nothing reads. The fine saw that was on it is the conifer's now, which is where
+it is actually drawn.
 
 **The conifer is the one whose texture is its OUTLINE, and getting that wrong
 cost three rounds.** Every stamp was a plain circle with its mark inside — the
@@ -928,6 +943,16 @@ one both draw plenty of ink — so the checks sample a ring at the canopy radius
 middle. Under 30% of that ring may carry ink, and the middle must carry none.
 Put the dashed extent back and the first goes red at 68% inked; start the
 blades at the centre point and the second goes red with 164 pixels in the hub.
+
+**That it does not mass is read the same way, and this one has a sign in it.**
+A second clump is planted clear and dragged onto the first — a tap inside a
+canopy PICKS the plant under it rather than planting another, which is how an
+earlier version of the check measured one clump twice and called it two — then
+the ink in one box is compared with the ink the single clump drew there a
+moment before. Two clumps draw close to twice the line work; a massed pair
+draws far LESS than one, because both symbols are gone and a single outline is
+drawn in their place. Letting grasses mass again turns it red at **1434 for
+two against 1929 for one**.
 
 **And the conifer's own outline is read off the canvas**, with a shade tree at
 the same 80ft spread beside it as the ruler in the same frame: the rim varies
@@ -1052,13 +1077,16 @@ mass of maples as a cloud, and neither needs its label to be recognised.
 | Ornamental | smaller scallops | 8 | 13% |
 | Evergreen | fine teeth | 16 | 16% |
 | Shrub | shallow mound scallops | 7 | 12% |
-| Grasses | fine teeth | 16 | 16% |
 | Perennial | small scallops | 6 | 10% |
 | Ground cover | a broken line | — | — |
 
+**Grasses have no row, because they do not mass** — see the clump above. A
+border for something that never merges is data nothing reads.
+
 **Evergreen is the one row that is NOT the stamp's own shape.** A lone conifer
 is a deep pointed star (12 points, 58%, in `RIM_PROFILES`); this is the border
-its *mass* carries, and it is deliberately the same fine saw as grasses. A mass
+its *mass* carries, and it is the fine saw that used to be the grasses row —
+asked for by name, and free for the taking since grasses no longer mass. A mass
 boundary runs for hundreds of pixels round a whole hedge — it is a texture, not
 a symbol, and the star's notches on it read as a row of starfish. **It costs one
 thing:** sixteen teeth need more rim than twelve, so an evergreen mass is

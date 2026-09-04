@@ -52,6 +52,7 @@ import {
   edgePoints,
   edgeProfileOf,
   massGroups,
+  massesTogether,
   massLabelAt,
   massOutline,
   type MassDisc,
@@ -1893,8 +1894,15 @@ export default function PlanCanvas({
       Same plant only: a maple standing in a bed of boxwood keeps its own
       symbol, or the drawing would stop saying there are two different things
       there.
+
+      AND GRASSES NEVER MASS — `massesTogether` — because a grass clump IS its
+      blades and a massed one would be a plain blob. They are dropped here
+      rather than inside `massGroups`, so a clump can never end up in a group
+      it is then also drawn on top of.
     */
-    const discs: MassDisc[] = plants.map((plant) => {
+    const discs: MassDisc[] = plants
+      .filter((plant) => massesTogether(plantFace(plant).stamp))
+      .map((plant) => {
       const at = dragPlant && dragPlant.id === plant.id ? dragPlant.at : plant.at;
       const p = toCanvas(toWorld(at), t);
       const face = plantFace(plant);
