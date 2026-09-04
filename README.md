@@ -805,6 +805,102 @@ pair is what the old fixed-size disc cannot do — against a build with the
 radius pinned at 13px it reports **1001 then 1012**, flat. A shade tree shrunk
 to a shrub's 6ft turns 3 checks red.
 
+#### Overlapping plants of one kind are drawn as one mass
+
+The planting-plan convention, and the reason for it is legibility rather than
+style. Eleven boxwood at a 4ft spread in a 20ft bed are eleven overlapping
+canopies; drawn as eleven separate textured circles the bed is a scribble, and
+the one thing the drawing has to say — **how far the planting reaches** — is
+exactly what you cannot see in it. So the canopies are drawn overlapping and
+**the interior lines are removed**: what is left is the outer boundary of the
+union, the scalloped outline every planting plan uses, with `3 · Red Maple`
+written over it. Land F/X and Dynascape call it plant grouping or hidden-line
+removal; by hand it is simply not inking what is inside the outline.
+
+**The plain circle is what makes it cheap**, which is the second dividend of
+that decision (the first was legibility at a dozen overlapping rims — see
+above). The union of a set of circles needs no polygon library and no boolean
+geometry: a point on circle *i*'s rim is inside circle *j* when it is within
+*rj* of *Cj*, and the angles where that holds are **one interval** centred on
+the bearing from *Ci* to *Cj*, half-width `acos((d² + rᵢ² − rⱼ²) / 2·d·rᵢ)`.
+Take those intervals off the full turn and what is left is the part of that rim
+that is on the outside. `plantMass.ts` is angles and intervals and knows nothing
+about canvas, which is why it can be checked to the last decimal without a
+browser.
+
+**Same plant, overlapping, and transitive.** A maple standing in a bed of
+boxwood keeps its own symbol — grouping by proximity alone would stop the
+drawing saying there are two different things there. Within one species the
+grouping runs through chains: a run along a walk overlaps a-b, b-c, c-d, and
+what a person sees is one hedge, so it is one mass rather than three drawn over
+each other. Two canopies that merely *touch* are two plants: there is no
+interior line to remove, and the outline would be the two circles it already
+draws.
+
+**It engages on what is DRAWN overlapping, not on what overlaps in the yard**,
+and the two are the same question asked at the zoom you are looking at. Symbols
+are ground-scaled with a 5px floor, so at a wide view a bed of shrubs collides
+on screen and masses; zoom in far enough that the canopies separate and the
+symbols come back one at a time. That is the right way round: massing exists
+because overlapping circles are unreadable, so it should appear exactly when
+they overlap on the glass.
+
+**A tick where each plant stands.** The outline says how far the planting
+reaches; the ticks say how many there are and where. On this app that is not
+decoration — **the count is the take-off** — and it keeps every plant a thing
+you can see to pick, drag or take off with the eraser. The picked one gets its
+whole symbol back on top, because selecting is asking which of them you have
+hold of and a tick among twenty ticks does not answer that.
+
+**The fill is one path, filled once.** Filling each disc separately would
+double the wash wherever two overlap, and the mass would read as a contour map
+of its own crowding. One path of every circle under the nonzero winding rule is
+the union, at one weight, for free.
+
+**Massing changes the drawing and nothing else.** It is a convention about
+what is on the page; the count, the schedule and the proposal line are what
+they were. A convention that quietly merged two trees into one line would be
+worse than no convention at all, and that is a check of its own.
+
+**What is deliberately not built yet:** a real leader — a line with a shoulder
+out to clear text, rather than the label sitting over the top of the mass; the
+texture clipped to the union the way CAD massing draws it, which is richer on
+paper and denser than anything wants to be over satellite at working zoom; and
+a hatch for ground-cover masses, which is the one case where a plan usually
+does fill the shape. The hit radius is also untouched, so plants deep inside a
+mass still overlap each other for a tap exactly as they did before — the
+topmost wins.
+
+**Tested both halves, because this is where the flow-arrow lesson applies.**
+`test:plan` pins the geometry with no browser: that the run of one plant is one
+mass and transitive through its middle, that a different plant standing in it
+is left out, that every point of every returned arc is outside every other
+canopy in the group (the definition of the boundary, sampled), that the hidden
+lens is *exactly* `2·acos(6/10)` short of the full turn, that a canopy swallowed
+whole draws no rim at all, and that an outline running through angle zero comes
+back as **one** arc rather than two with a nick at three o'clock. Three
+mutations turn it red: dropping the seam stitch (2 checks), grouping by
+proximity alone (2), and skipping the hidden-line removal (3).
+
+`test:board-ui` reads the canvas, because none of that can see whether any of
+it reached the screen: **two plants massed draw LESS ink than one plant alone**,
+which cannot happen by accident — the pair's own texture is the only thing that
+went missing. It uses a shade tree on purpose: a perennial is below the size
+where texture is drawn at all, so a mass of two would have nothing to remove
+and the reading would say nothing either way.
+
+**Three things that check took to get right, all of them the ruler and not the
+code.** The pair is made by dragging one plant ONTO another rather than by
+tapping twice: a tap that lands on a plant PICKS it, which is the Plant tool's
+own rule, so the first version placed two and believed it had three. They are
+put at the SAME point rather than near each other, because "they did not mass"
+and "they were never close enough at this zoom" are indistinguishable
+otherwise. And the ink is counted from the centre DOWNWARD, because the mass
+carries a call-out in the plant's own colour above its canopy — the reading was
+431 against 277 with the outline underneath doing exactly what it should, and
+what was actually being measured was the letters. The wash needed no such care:
+14% of #22c55e over the canvas's own #0b0b0d cannot pass a green test.
+
 #### A plant moves only in the Plant tool, and the symbols are yours to set
 
 **A plant used to be grabbable in Select**, alongside the corners and the pins.

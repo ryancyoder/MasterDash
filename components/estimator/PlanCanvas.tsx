@@ -46,6 +46,12 @@ import {
   type PlantStampKind,
 } from "@/lib/estimator/plantStamp";
 import {
+  massGroups,
+  massLabelAt,
+  massOutline,
+  type MassDisc,
+} from "@/lib/estimator/plantMass";
+import {
   SURVEY_COLORS,
   formatElevation,
   type ElevationResult,
@@ -482,6 +488,7 @@ export default function PlanCanvas({
   onMoveCallout,
   plants,
   plantFace,
+  plantName,
   plantPickId,
   onPickPlant,
   selectedPlantId,
@@ -586,6 +593,12 @@ export default function PlanCanvas({
     color: string;
     spreadFt: number;
   };
+  /**
+   * What a placed plant is called — the cultivar where there is one, else its
+   * kind. The canvas has no catalog, so the page resolves it, exactly as it
+   * does for `plantFace` and `labelFor`. It is what a mass is called out as.
+   */
+  plantName: (plant: PlacedPlant) => string;
   selectedPlantId: string | null;
   onSelectPlant: (id: string | null) => void;
   /** A tap on open ground while the plant tool is armed. */
@@ -1861,12 +1874,120 @@ export default function PlanCanvas({
     const ftPerPxNow =
       (metresPerWorldUnit(toLatLng(viewRef.current.centre).lat) / t.scale) *
       FEET_PER_METRE;
+
+    /*
+      MASSING, THE PLANTING-PLAN CONVENTION.
+
+      Where canopies of the SAME plant overlap they are not eleven circles with
+      eleven lots of texture — that is a scribble, and the one thing the
+      drawing has to say is how far the planting reaches. The interior lines
+      come out and what is left is the outer boundary of the union, called out
+      as `11 · Green Velvet Boxwood`. See plantMass.ts for the geometry and for
+      why a plain circle is what makes it cheap.
+
+      Same plant only: a maple standing in a bed of boxwood keeps its own
+      symbol, or the drawing would stop saying there are two different things
+      there.
+    */
+    const discs: MassDisc[] = plants.map((plant) => {
+      const at = dragPlant && dragPlant.id === plant.id ? dragPlant.at : plant.at;
+      const p = toCanvas(toWorld(at), t);
+      const face = plantFace(plant);
+      return {
+        id: plant.id,
+        key: `${plant.itemId}|${plant.variantId ?? ""}`,
+        x: p.x,
+        y: p.y,
+        r: stampRadius(face.spreadFt, ftPerPxNow).r,
+      };
+    });
+    const groups = massGroups(discs);
+    const massed = new Map<string, MassDisc[]>();
+    for (const group of groups) {
+      for (const d of group) massed.set(d.id, group);
+    }
+
+    for (const group of groups) {
+      const lead = plants.find((p) => p.id === group[0].id);
+      if (!lead) continue;
+      const face = plantFace(lead);
+
+      /*
+        The fill is ONE path of every disc, filled once.
+
+        Filling them separately would double the wash wherever two overlap and
+        the mass would read as a contour map of its own crowding. The nonzero
+        winding rule over one path is the union, at one weight, for free.
+      */
+      ctx.save();
+      ctx.beginPath();
+      for (const d of group) {
+        ctx.moveTo(d.x + d.r, d.y);
+        ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+      }
+      ctx.fillStyle = face.color;
+      ctx.globalAlpha = 0.14;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // And the outline: only the rim that is not inside another of its own.
+      ctx.beginPath();
+      for (const arc of massOutline(group)) {
+        ctx.moveTo(
+          arc.x + arc.r * Math.cos(arc.from),
+          arc.y + arc.r * Math.sin(arc.from),
+        );
+        ctx.arc(arc.x, arc.y, arc.r, arc.from, arc.to);
+      }
+      ctx.strokeStyle = face.color;
+      ctx.lineWidth = 2;
+      ctx.lineCap = "round";
+      ctx.shadowColor = "rgba(0,0,0,0.55)";
+      ctx.shadowBlur = 3;
+      ctx.stroke();
+      ctx.restore();
+
+      /*
+        A TICK WHERE EACH PLANT STANDS.
+
+        The outline says how far the planting reaches; this says how many there
+        are and where. On this app that is not decoration — the count IS the
+        take-off — and it keeps every plant a thing you can see to pick, drag
+        or take off with the eraser.
+      */
+      for (const d of group) {
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, d.id === selectedPlantId ? 3.5 : 2, 0, Math.PI * 2);
+        ctx.fillStyle = d.id === selectedPlantId ? "#e5e7eb" : face.color;
+        ctx.fill();
+      }
+
+      // The call-out. `N · name`, which is what replaces being able to count
+      // the circles.
+      const at = massLabelAt(group);
+      drawLabel(
+        ctx,
+        `${group.length} · ${plantName(lead)}`,
+        at.x,
+        at.y - 12,
+        face.color,
+      );
+    }
+
     for (const plant of plants) {
       const at = dragPlant && dragPlant.id === plant.id ? dragPlant.at : plant.at;
       const p = toCanvas(toWorld(at), t);
       const face = plantFace(plant);
       const picked = plant.id === selectedPlantId;
       const { r, toScale } = stampRadius(face.spreadFt, ftPerPxNow);
+
+      /*
+        A plant inside a mass has already been drawn as part of it — EXCEPT the
+        one that is picked, which gets its own symbol back on top. Selecting a
+        plant is asking which of them you have hold of, and a tick among twenty
+        ticks does not answer that.
+      */
+      if (massed.has(plant.id) && !picked) continue;
 
       drawPlantStamp(ctx, face.stamp, p.x, p.y, r, {
         color: face.color,
@@ -2160,6 +2281,7 @@ export default function PlanCanvas({
     labelMode,
     dragLabel,
     labelFor,
+    plantName,
     tool,
     plantMode,
     transformFor,

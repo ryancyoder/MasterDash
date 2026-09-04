@@ -32,6 +32,11 @@ import {
   type PlanShape,
 } from "../lib/estimator/plan.ts";
 import {
+  massGroups,
+  massLabelAt,
+  massOutline,
+} from "../lib/estimator/plantMass.ts";
+import {
   buildProposal,
   effectiveTaps,
   takeoffProjection,
@@ -1395,6 +1400,134 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   // The leave radius has to be outside the rim, or the ring would close
   // before a wedge at the rim could be reached.
   ok("and you can reach the rim without leaving", RING_LEAVE_PX > RING_OUTER_PX);
+}
+
+// --- Massing: overlapping plants of one kind read as one shape ---------------
+
+{
+  console.log("\n--- plant massing ---");
+
+  const disc = (id: string, key: string, x: number, y: number, r: number) =>
+    ({ id, key, x, y, r });
+  /** Is a point inside any disc but the one it came from? */
+  const insideAnother = (
+    group: { x: number; y: number; r: number }[],
+    from: { x: number; y: number; r: number },
+    at: { x: number; y: number },
+  ) =>
+    group.some(
+      (d) =>
+        d !== from &&
+        Math.hypot(at.x - d.x, at.y - d.y) < d.r - 1e-6,
+    );
+
+  /*
+    WHAT MASSES WITH WHAT.
+
+    Same plant AND overlapping. A maple standing in a bed of boxwood keeps its
+    own symbol, or the drawing stops saying there are two different things
+    there — which is the whole reason the convention groups by species rather
+    than by proximity.
+  */
+  const bed = [
+    disc("a", "box", 0, 0, 10),
+    disc("b", "box", 14, 0, 10),
+    disc("c", "box", 28, 0, 10),
+    disc("tree", "maple", 14, 2, 12),
+    disc("lonely", "box", 200, 200, 10),
+  ];
+  const groups = massGroups(bed);
+  ok("THE OVERLAPPING RUN OF ONE PLANT IS ONE MASS",
+    groups.length === 1 && groups[0].length === 3,
+    JSON.stringify(groups.map((g) => g.map((d) => d.id))));
+  /*
+    AND IT IS TRANSITIVE. `a` and `c` do not touch each other at all — they
+    are one hedge because `b` bridges them, which is what a person sees. Pairs
+    alone would draw three masses over the top of one another.
+  */
+  ok("and it is transitive: the ends belong to it through the middle",
+    groups[0].some((d) => d.id === "a") && groups[0].some((d) => d.id === "c"));
+  ok("A DIFFERENT PLANT STANDING IN IT KEEPS ITS OWN SYMBOL",
+    !groups[0].some((d) => d.id === "tree"));
+  ok("and one on its own is not a mass at all",
+    !groups[0].some((d) => d.id === "lonely"));
+  // Touching at a point is two plants, not a mass: there is no interior line
+  // to remove, and the outline would be the two circles it already draws.
+  ok("two canopies that merely touch do not mass",
+    massGroups([disc("a", "box", 0, 0, 10), disc("b", "box", 20, 0, 10)]).length === 0);
+
+  /*
+    THE OUTLINE IS THE OUTSIDE, AND THIS IS THE CHECK THAT SAYS SO.
+
+    Every arc returned is walked, and every point on it must be outside every
+    other disc of the group — that is the definition of the union's boundary,
+    and it is the thing a rendering can get subtly wrong in a way that looks
+    fine until two circles sit at an awkward angle.
+  */
+  const pair = [disc("a", "box", 0, 0, 10), disc("b", "box", 12, 0, 10)];
+  const arcs = massOutline(pair);
+  let sampled = 0;
+  let inside = 0;
+  for (const arc of arcs) {
+    for (let i = 0; i <= 40; i++) {
+      const th = arc.from + ((arc.to - arc.from) * i) / 40;
+      const at = { x: arc.x + arc.r * Math.cos(th), y: arc.y + arc.r * Math.sin(th) };
+      sampled++;
+      if (insideAnother(pair, pair.find((d) => d.x === arc.x && d.y === arc.y)!, at)) {
+        inside++;
+      }
+    }
+  }
+  ok("EVERY POINT OF THE OUTLINE IS OUTSIDE EVERY OTHER CANOPY",
+    sampled > 0 && inside === 0, `${inside} of ${sampled} points inside`);
+
+  /*
+    AND THE INTERIOR IS REALLY GONE. Two circles overlapping keep a bit less
+    than a full turn each; the arc that is dropped is the lens where they
+    cross. 12 apart with 10 radii is 2·acos(6/10) = 1.855 rad hidden, so
+    2π − 1.855 = 4.428 survives on each.
+  */
+  const kept = arcs.reduce((sum, a) => sum + (a.to - a.from), 0);
+  ok("and the hidden lens is exactly what is missing",
+    Math.abs(kept - 2 * (2 * Math.PI - 2 * Math.acos(6 / 10))) < 1e-12,
+    `${kept} against ${2 * (2 * Math.PI - 2 * Math.acos(6 / 10))}`);
+
+  /*
+    A CANOPY SWALLOWED WHOLE CONTRIBUTES NOTHING.
+
+    A ground cover under a shade tree of the same kind is not a hole in the
+    tree, and an arc drawn inside another canopy is exactly the interior line
+    this feature exists to remove.
+  */
+  const swallowed = [disc("big", "box", 0, 0, 20), disc("small", "box", 2, 0, 5)];
+  ok("A CANOPY INSIDE ANOTHER DRAWS NO RIM AT ALL",
+    massOutline(swallowed).every((a) => a.r === 20),
+    JSON.stringify(massOutline(swallowed).map((a) => a.r)));
+  ok("and the one that swallowed it keeps its whole rim",
+    Math.abs(
+      massOutline(swallowed).reduce((s, a) => s + (a.to - a.from), 0) - 2 * Math.PI,
+    ) < 1e-12);
+
+  /*
+    THE SEAM AT ZERO IS ONE ARC, NOT TWO.
+
+    A neighbour due LEFT hides a span centred on π, so what survives runs
+    through angle zero — and that is the case a naive [0, 2π) subtraction
+    returns as two pieces with a join at three o'clock. Stroked, that join is
+    a visible nick in an outline that should be continuous.
+  */
+  const leftward = [disc("a", "box", 0, 0, 10), disc("b", "box", -12, 0, 10)];
+  const seam = massOutline(leftward).filter((a) => a.x === 0);
+  ok("AN OUTLINE RUNNING THROUGH ZERO IS ONE ARC, not two",
+    seam.length === 1, JSON.stringify(seam));
+  ok("and it wraps past 2π rather than restarting",
+    seam[0].to > Math.PI && seam[0].to - seam[0].from < 2 * Math.PI,
+    `${seam[0].from} to ${seam[0].to}`);
+
+  // The call-out sits over the middle of the planting and clear of its rim.
+  const at = massLabelAt(pair);
+  ok("the call-out is centred on the planting, above the highest canopy",
+    at.x === 6 && at.y === -10, JSON.stringify(at));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

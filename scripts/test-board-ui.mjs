@@ -3806,6 +3806,179 @@ try {
     (await plantCount()) === wereThere,
     `${await plantCount()} on the plan`);
 
+
+  /*
+    7c-x-c-3. OVERLAPPING PLANTS OF ONE KIND READ AS ONE MASS.
+
+    The planting-plan convention: canopies that overlap are drawn overlapping
+    and the INTERIOR LINES ARE REMOVED, leaving the outer boundary of the union
+    and a call-out saying how many. Eleven boxwood drawn as eleven textured
+    circles is a scribble, and the one thing the drawing has to say — how far
+    the planting reaches — is what you cannot see in it.
+
+    The geometry is pinned to the last decimal in scripts/test-plan.ts. What
+    that cannot see is whether any of it reaches the screen — the flow-arrow
+    lesson, where the maths was right to 3.4e-13 and the glyph was drawn upside
+    down — so this reads the CANVAS.
+
+    SHADE TREE, because the check below is about texture. A perennial is drawn
+    below the size where texture is worth drawing at all (see plantStamp.ts),
+    so a mass of two would have nothing to remove and the reading would say
+    nothing either way. A 20ft canopy is all texture.
+  */
+  await armPlant(page);
+  await page.waitForTimeout(300);
+  await page.click('button[aria-label="Shade Tree"]');
+  await page.waitForTimeout(300);
+  ok("a big-canopy plant is armed, so there is texture to remove",
+    (await armed()) === "Shade Tree", await armed());
+
+  const soloOff = fractionOff(0.55, 0.3);
+  const massOff = fractionOff(0.78, 0.3);
+  const spareOff = fractionOff(0.62, 0.46);
+  for (const [name, off] of [
+    ["the single", soloOff],
+    ["the mass", massOff],
+    ["the one to be dragged in", spareOff],
+  ]) {
+    const pt = await pointNow(off);
+    ok(`the ground for ${name} is empty to begin with`,
+      (await ringInk(pt, 60)) === 0, `${await ringInk(pt, 60)} green`);
+  }
+
+  /*
+    THREE PLANTED APART, AND THEN ONE DRAGGED IN — which is not a detour.
+
+    A tap that lands ON a plant PICKS it rather than planting a second one on
+    top: that is the Plant tool's own rule and the thing that makes a mis-aim
+    correctable. So a bed cannot be crowded by tapping inside a canopy, and the
+    first version of this check planted two and thought it had three. Moving
+    one in is also how a person actually spaces a bed.
+  */
+  await tapAt(soloOff);
+  await page.waitForTimeout(300);
+  await tapAt(massOff);
+  await page.waitForTimeout(300);
+  await tapAt(spareOff);
+  await page.waitForTimeout(400);
+  ok("three plants are on the plan for this",
+    (await plantCount()) === wereThere + 3,
+    `${await plantCount()} on the plan`);
+
+  /*
+    Into Pick, and slide the spare one ONTO the other — the same point, not
+    merely near it.
+
+    Coincident is the case that cannot be argued with: two canopies at the same
+    place overlap whatever the zoom happens to be, so the check below is not
+    quietly resting on a radius nobody measured. The first version dropped it
+    15px away and could not tell "they did not mass" from "they were never
+    close enough at this zoom".
+  */
+  await plantBtn.click();
+  await page.waitForTimeout(300);
+  ok("the tool is in Pick to move it", (await plantMode()) === "select");
+  const spotsBeforeMove = await plantSpots();
+  const from = await pointNow(spareOff);
+  const to = await pointNow(massOff);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  // Read off the plan rather than off the pixels: a canopy from the mass
+  // reaches into any box big enough to see the spare spot, so ink there says
+  // nothing either way. Where the plants ARE is exact.
+  ok("and it moved rather than being planted again",
+    (await plantSpots()) !== spotsBeforeMove &&
+      (await plantCount()) === wereThere + 3,
+    `${await plantCount()} on the plan`);
+
+  /*
+    AND NOTHING IS PICKED WHEN THE READINGS ARE TAKEN.
+
+    The picked plant gets its whole symbol drawn back on top of the mass — that
+    is the point of it, and it would put the texture straight back into what is
+    being measured. A tap on bare ground in Pick puts it down.
+  */
+  const clearAt = await pointNow(fractionOff(0.36, 0.24));
+  await page.mouse.click(clearAt.x, clearAt.y);
+  await page.waitForTimeout(400);
+  ok("nothing is picked, so no symbol is drawn back on top",
+    (await page.locator("aside >> text=/naming/i").count()) === 0,
+    ((await page.textContent("aside")) ?? "").slice(0, 120));
+
+  /*
+    THE CHECK WITH A SIGN IN IT: TWO MASSED DRAW LESS INK THAN ONE ALONE.
+
+    A plant on its own is a circle AND its texture — for a shade tree, twelve
+    branches and an inner ring. Two of the same plant on the same spot are ONE
+    union outline and two ticks: the texture of both is interior line work and
+    it is gone. So the pair must read LIGHTER than the single, which cannot
+    happen by accident.
+
+    MEASURED BELOW THE CENTRE, and that is not a fudge. The mass carries a
+    call-out — `2 · Shade Tree`, in the plant's own colour, above the top of
+    the canopy — and a box centred on the mass measures those letters as line
+    work: they are what the convention ADDS, not what it removes, and they
+    swamped the reading at 431 against 277 while the outline underneath was
+    doing exactly what it should. A box from the centre downward cannot reach
+    the label, and the wash cannot be mistaken for line work at all — 14% of
+    #22c55e over the canvas's own #0b0b0d is nowhere near green enough to
+    count.
+  */
+  const below = (off) => pointNow({ dx: off.dx, dy: off.dy + 30 });
+  const soloInk = await ringInk(await below(soloOff), 30);
+  const massInk = await ringInk(await below(massOff), 30);
+  ok("A SINGLE PLANT IS DRAWN WITH ITS TEXTURE UNDER IT",
+    soloInk > 20, `${soloInk} ink`);
+  ok("AND TWO MASSED DRAW LESS THAN ONE ALONE — the interior is gone",
+    massInk < soloInk, `${massInk} massed against ${soloInk} single`);
+
+  /*
+    AND THE TAKE-OFF IS UNTOUCHED, read after the drawing has massed them.
+
+    Massing is a DRAWING convention: it changes what is on the page and nothing
+    about what is bought. The count is what this app exists to produce, and a
+    convention that quietly merged two trees into one line would be worse than
+    no convention at all.
+  */
+  ok("MASSING THEM CHANGED NOTHING ABOUT WHAT IS COUNTED",
+    (await plantCount()) === wereThere + 3,
+    `${await plantCount()} on the plan`);
+
+  /*
+    AND A PLANT INSIDE A MASS IS STILL A PLANT: it can be picked, which is what
+    the tick under each one is for. An outline you cannot reach into would put
+    a wall around the work.
+  */
+  const massPt = await pointNow(massOff);
+  await page.mouse.click(massPt.x, massPt.y);
+  await page.waitForTimeout(400);
+  ok("A PLANT INSIDE THE MASS CAN STILL BE PICKED",
+    (await page.locator("aside >> text=/naming/i").count()) >= 1,
+    ((await page.textContent("aside")) ?? "").slice(0, 160));
+
+  // Put the three back off the plan, so what follows sees the yard it expects.
+  await plantBtn.click();
+  await page.waitForTimeout(300);
+  ok("and back to Remove to clear them", (await plantMode()) === "delete");
+  /*
+    Two taps rather than a sweep: a stroke across the whole width would run
+    through ground this section never checked was empty, and taking a plant
+    off that belongs to another check is the kind of tidying that makes the
+    next failure unreadable. The tap on the mass takes BOTH of its trees,
+    since the tip is inside each of their canopies — which is the eraser doing
+    exactly what it says.
+  */
+  await tapAt(soloOff);
+  await page.waitForTimeout(300);
+  await tapAt(massOff);
+  await page.waitForTimeout(400);
+  ok("the three placed here are off the plan again",
+    (await plantCount()) === wereThere,
+    `${wereThere} at the start, ${await plantCount()} now`);
+
   // Back to the take-off's own tool and column for what follows.
   await page.click('button[aria-label="Select"]');
   await page.waitForTimeout(200);

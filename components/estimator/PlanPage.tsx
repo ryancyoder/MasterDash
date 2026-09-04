@@ -2412,6 +2412,7 @@ export default function PlanPage({
           onPickPlant={(itemId) => setPlantPick({ itemId })}
           selectedPlantId={selectedPlantId}
           onSelectPlant={pickPlant}
+          plantName={plantName}
           onPlacePlant={placePlant}
           onMovePlant={movePlant}
           /*
