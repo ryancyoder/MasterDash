@@ -4309,6 +4309,117 @@ try {
   await page.waitForTimeout(250);
   ok("and back to Pick", (await plantMode()) === "select");
 
+  /*
+    7c-x-c-6. AND A GRASS CLUMP HAS NO OUTLINE AT ALL.
+
+    Drawn from Ryan's own sketch, and what the sketch says is mostly what is
+    ABSENT: no ring round it, not even a broken one, and a hollow middle with
+    the blades starting out on a ring rather than meeting at a point. Both are
+    invisible to any check that counts ink — a clump with a dashed extent and
+    a clump without one both draw plenty of it — so both are read here as
+    geometry.
+
+    The ruler is the shade tree again: same 80ft spread, same zoom, same
+    frame, so its own radius IS the radius the grass claims.
+  */
+  await symbolPanel.click();
+  await page.waitForTimeout(300);
+  const grsSpread = page.locator('input[aria-label="Grasses spread in feet"]');
+  ok("the panel offers grasses their own spread", (await grsSpread.count()) === 1);
+  await grsSpread.fill("80");
+  await page.waitForTimeout(400);
+  await symbolPanel.click();
+  await page.waitForTimeout(400);
+
+  await armPlant(page);
+  await page.waitForTimeout(200);
+  await page.click('button[aria-label="Grasses"]');
+  await page.waitForTimeout(300);
+  const grsOff = fractionOff(0.2, 0.68);
+  const grsGround = await pointNow(grsOff);
+  ok("the ground for the clump is clear before it goes down",
+    (await ringInk(grsGround, 70)) === 0, `${await ringInk(grsGround, 70)} green`);
+  await tapAt(grsOff);
+  await page.waitForTimeout(400);
+  await plantBtn.click();
+  await page.waitForTimeout(250);
+  const grsClear = await pointNow(fractionOff(0.62, 0.72));
+  await page.mouse.click(grsClear.x, grsClear.y);
+  await page.waitForTimeout(400);
+  ok("nothing is picked while the clump is read",
+    (await page.locator("aside >> text=/naming/i").count()) === 0);
+
+  /**
+   * Two readings at one point: how much of a ring at `ringR` carries ink, and
+   * how much ink is inside `coreR`.
+   */
+  const clumpShape = (pt, ringR, coreR) =>
+    page.evaluate(([x, y, rr, cr]) => {
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const rect = c.getBoundingClientRect();
+      const k = c.width / rect.width;
+      const cx = (x - rect.left) * k;
+      const cy = (y - rect.top) * k;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      const green = (px, py) => {
+        if (px < 0 || py < 0 || px >= c.width || py >= c.height) return false;
+        const i = (Math.round(py) * c.width + Math.round(px)) * 4;
+        return d[i + 1] > 120 && d[i + 1] - d[i] > 40 && d[i + 1] - d[i + 2] > 25;
+      };
+      // The ring, sampled all the way round with a couple of pixels of slack
+      // either side — a hand-set radius that missed a real circle by one pixel
+      // would report the circle as absent, which is the answer being looked
+      // for and therefore the one to guard against.
+      let lit = 0;
+      const N = 360;
+      for (let n = 0; n < N; n++) {
+        const a = (Math.PI * 2 * n) / N;
+        let hit = false;
+        for (let o = -2.5; o <= 2.5 && !hit; o += 0.5) {
+          if (green(cx + (rr + o) * k * Math.cos(a), cy + (rr + o) * k * Math.sin(a))) hit = true;
+        }
+        if (hit) lit++;
+      }
+      // And the middle.
+      let core = 0;
+      for (let py = Math.round(cy - cr * k); py <= cy + cr * k; py++) {
+        for (let px = Math.round(cx - cr * k); px <= cx + cr * k; px++) {
+          if ((px - cx) ** 2 + (py - cy) ** 2 > (cr * k) ** 2) continue;
+          if (green(px, py)) core++;
+        }
+      }
+      return { ringLit: lit / N, core };
+    }, [pt.x, pt.y, ringR, coreR]);
+
+  const trueR = Math.max(...soloRim);
+  const clump = await clumpShape(await pointNow(grsOff), trueR, trueR * 0.13);
+  /*
+    A DASHED RING IS STILL A RING, and it is what this replaced — so the bar
+    has to be low enough to catch one. The old extent was 34px on, 26px off,
+    which lights 57% of the circumference; blades alone cross it only where a
+    blade happens to reach that far.
+  */
+  ok("A GRASS CLUMP HAS NO RING ROUND IT, dashed or otherwise",
+    clump.ringLit < 0.3, `${(clump.ringLit * 100).toFixed(0)}% of the extent is inked`);
+  /*
+    AND THE MIDDLE IS HOLLOW. The blades start out on a ring; a hub is what
+    makes a fan read as a wheel, and the old symbol had every blade meeting at
+    the centre point.
+  */
+  ok("AND ITS MIDDLE IS HOLLOW — the blades do not meet at a point",
+    clump.core === 0, `${clump.core} green in the middle`);
+
+  await plantBtn.click();
+  await page.waitForTimeout(250);
+  ok("to Remove to clear the clump", (await plantMode()) === "delete");
+  await tapAt(grsOff);
+  await page.waitForTimeout(400);
+  await plantBtn.click();
+  await page.waitForTimeout(200);
+  await plantBtn.click();
+  await page.waitForTimeout(250);
+  ok("and back to Pick once more", (await plantMode()) === "select");
+
   // Off the plan, and the table's own spread back, so nothing downstream
   // inherits a 50ft shade tree.
   await plantBtn.click();

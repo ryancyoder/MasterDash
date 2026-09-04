@@ -802,11 +802,47 @@ drawn. Branching under a see-through canopy for a shade tree; a ring of blossom
 clusters for an ornamental; the conifer sawtooth, which is the one plan
 convention everybody already reads; layered broken arcs for a shrub, dense and
 unmistakably not a tree at a glance, which is the pair that has to be told
-apart most often; blades out of a clump inside a dashed extent for grasses,
-because a grass has no edge and should not be drawn one; a small rosette for a
-perennial; and the lightest mark on the plan, a dashed ring with a stipple in
-it, for a ground cover. An emoji at 6px is a smudge. A sawtooth at 6px still
-reads as spiky.
+apart most often; a ragged clump of blades for grasses,
+with no ring round it at all; a small rosette for a perennial; and the lightest
+mark on the plan, a dashed ring with a stipple in it, for a ground cover. An
+emoji at 6px is a smudge. A sawtooth at 6px still reads as spiky.
+
+**The grass clump is drawn from Ryan's own sketch of one**, which is the second
+half of the same lesson as the conifer and arrived the same way — as a picture
+rather than as a description. What the sketch says is mostly what is *absent*:
+
+- **No ring.** Not even a broken one. The dashed extent that used to be there
+  was a compromise — a way to state how far the clump reaches while admitting
+  the edge is not real — and the drawing simply has none. The reach of the
+  longest blades is the extent, exactly as the conifer's points are.
+- **A hollow middle.** The blades start out on a ring at 28% of the radius
+  rather than meeting at a point. A hub is what makes a fan read as a wheel,
+  and every version before this had one.
+- **Ragged, not even.** Blades differ in length (68–100% of the radius) and in
+  spacing. A clump of grass is not a rosette, and regular spacing is the single
+  thing that most makes hand line work look machine-drawn.
+- **Some are folded** — a narrow hairpin, out and back, which is what a blade
+  bent over itself looks like from above and is the mark that reads as *blade*
+  rather than as *spoke*. Its gap is set off the line WEIGHT, not the radius:
+  at a 24px clump the two legs were 1.2px apart under a 2.7px stroke, so they
+  merged and the fold read as a solid wedge. A fold you cannot see through is
+  not a fold.
+
+**The raggedness is deterministic, and that is not a detail.** `Math.random()`
+would make every clump shimmer on each redraw of the map, and no test could
+read one. The jitter comes off the golden ratio — irrational, so it never
+repeats within a clump, and a pure function of the blade's index, so the same
+clump is drawn every frame and every session. Same device as the ground
+cover's stipple spiral, for the same reason.
+
+It also carries its own size floor, lower than the shared one: the blades ARE
+the symbol, so there is nothing to fall back to, and a 3ft clump is under 11px
+of radius at any zoom short of standing in the bed. A category that spent
+almost all of its life as a plain dot would have been drawn for nothing.
+
+**A mass of them still gets an outline**, and that is not a contradiction. One
+clump has no edge to claim; a planted *area* of them does, and drawing its
+extent is the entire point of massing.
 
 **The conifer is the one whose texture is its OUTLINE, and getting that wrong
 cost three rounds.** Every stamp was a plain circle with its mark inside — the
@@ -871,6 +907,14 @@ symbol grows when the map zooms in and shrinks on the way back out. That last
 pair is what the old fixed-size disc cannot do — against a build with the
 radius pinned at 13px it reports **1001 then 1012**, flat. A shade tree shrunk
 to a shrub's 6ft turns 3 checks red.
+
+**The grass clump is read as geometry, not as ink.** Both of the things that
+define it are *absences*, and a clump with a dashed extent and a clump without
+one both draw plenty of ink — so the checks sample a ring at the canopy radius
+(the shade tree at the same 80ft spread is the ruler again) and the disc at the
+middle. Under 30% of that ring may carry ink, and the middle must carry none.
+Put the dashed extent back and the first goes red at 68% inked; start the
+blades at the centre point and the second goes red with 164 pixels in the hub.
 
 **And the conifer's own outline is read off the canvas**, with a shade tree at
 the same 80ft spread beside it as the ruler in the same frame: the rim varies
@@ -983,8 +1027,9 @@ what was actually being measured was the letters. The wash needed no such care:
 
 Taking the interior line work out is what makes a mass readable, but it also
 throws away the one thing that told the categories apart — plantStamp.ts says
-it plainly: *a lobed cloud for a shade tree, a sawtooth for a conifer, blades
-for grasses*. With the middle empty the boundary takes that on, which is how a
+it plainly: *a lobed cloud for a shade tree, a pointed star for a conifer, a
+ragged clump for grasses*. With the middle empty the boundary takes that on,
+which is how a
 hand-drafted plan does it: a mass of arborvitae reads as a spiky blob and a
 mass of maples as a cloud, and neither needs its label to be recognised.
 
@@ -992,22 +1037,26 @@ mass of maples as a cloud, and neither needs its label to be recognised.
 | --- | --- | --- | --- |
 | Shade tree | cloud scallops | 9 | 14% |
 | Ornamental | smaller scallops | 8 | 13% |
-| Evergreen | sawtooth | 12 | 26% |
+| Evergreen | a pointed star | 12 | 58% |
 | Shrub | shallow mound scallops | 7 | 12% |
 | Grasses | fine teeth | 16 | 16% |
 | Perennial | small scallops | 6 | 10% |
 | Ground cover | a broken line | — | — |
 
-**Those figures are the second set, and the first set is the lesson.** They
-were chosen on paper — 20 teeth at 14% for a conifer, and so on — and what
-reached the screen was nothing: reported as *"I don't see anything unique for
-evergreens"*, which is exactly what it looked like. An evergreen's 8ft spread
-is the smallest of the three trees, so it is a **12px canopy** at an ordinary
-yard zoom; at 20 teeth that is a tooth 4.7px wide and 2.1px deep, drawn with a
-2px stroke and a drop shadow. A furry circle. The conifer now gets the deepest
-bite of any profile and few enough teeth that each one is a shape rather than a
-serration, and every profile is checked at **the size its own plant is actually
-drawn at** rather than at one radius that suits the biggest of them.
+**The conifer's figure is the THIRD set, and the first two are the lesson.**
+Both were chosen on paper — 20 teeth at 14%, then 12 at 26% — and both were
+reported as unrecognisable: *"I don't see anything unique for evergreens"*,
+then *"still not seeing sawtooth"*. The arithmetic behind them was not wrong.
+An evergreen's 8ft spread is the smallest of the three trees, so it is a **12px
+canopy** at an ordinary yard zoom; at 20 teeth that is a tooth 4.7px wide and
+2.1px deep under a 2px stroke and a drop shadow, and reasoning about those
+numbers is what produced 26% next. What settled it was drawing four candidates
+at the sizes a conifer is really drawn at and asking which one — see *The
+conifer is the one whose texture is its OUTLINE* above. **How deep is a
+question only a drawing answers**, and two rounds were spent finding that out.
+
+Every profile is still checked at **the size its own plant is actually drawn
+at** rather than at one radius that suits the biggest of them.
 
 **And the floor is per profile, not one radius.** Twelve teeth need more circle
 than nine lobes and far less than sixteen; a single floor either turns the fine
