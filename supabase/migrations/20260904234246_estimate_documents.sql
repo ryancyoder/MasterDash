@@ -1,5 +1,9 @@
 -- The take-off and the visit get columns of their own.
 --
+-- Applied to ktgpjizfntdfpghalukx as 20260904234246_estimate_documents.
+-- 40 rows backfilled, 14 of them carrying drawn shapes and 5 carrying plants;
+-- every one verified identical to the copy it was read from.
+--
 -- They had been riding inside `quick_estimates.lines`, the jsonb blob whose
 -- whole contract is that it is DISPOSABLE: `lines` carries `taps`, `labels`,
 -- `assemblyBuckets`, `rendered` and `takeoff`, every one of which is a
