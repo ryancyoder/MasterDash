@@ -365,29 +365,36 @@ function stipple(
 }
 
 /**
- * A clump of grass blades — drawn from Ryan's own sketch of one.
+ * A clump of ornamental grass, drawn from Ryan's own reference for one.
  *
- * FOUR THINGS IN THAT DRAWING, and every one of them is a departure from what
- * was here before (an even fan of curved spokes inside a dashed circle):
+ * A RING OF FINE TICKS ROUND A HOLLOW MIDDLE, with a small cross at the
+ * centre. Nothing else — in particular no outline, dashed or otherwise. That
+ * is the second reference for this symbol and it replaced the first: a rougher
+ * clump of long blades, some folded back on themselves, which was drawn from
+ * an earlier sketch and read as a starburst rather than as grass. The
+ * difference between the two is instructive — the marks are SHORTER and there
+ * are far MORE of them, which is what makes a clump read as texture instead of
+ * as a symbol with spikes.
  *
- *  - **No ring around it.** None, not even a broken one. A grass clump has no
- *    closed canopy and the drawing does not pretend otherwise; the extent is
- *    the reach of the longest blades and nothing else.
- *  - **A hollow middle.** The blades start out on a ring rather than meeting
- *    at a point. A hub is what makes a fan read as a wheel.
- *  - **Ragged, not even.** Blades differ in length and are not evenly spaced.
- *    A clump of grass is not a rosette, and regular spacing is the single
- *    thing that most makes hand line work look machine-drawn.
- *  - **Some are folded.** A narrow hairpin — out and back — which is what a
- *    grass blade bent over itself looks like from above, and is the mark that
- *    reads as *blade* rather than as *spoke*.
+ * FOUR THINGS CARRY IT:
  *
- * THE RAGGEDNESS IS DETERMINISTIC, which is not a detail. `Math.random()`
- * would make the clump shimmer on every redraw of the map, and a test could
- * not read it. The jitter comes off the golden ratio, the same device the
- * stipple's spiral uses: irrational, so it never repeats within a clump, and
- * a pure function of the blade's index, so the same clump is drawn every
- * frame and every session.
+ *  - **No ring around it.** A grass clump has no closed canopy and the drawing
+ *    does not pretend otherwise; the extent is the reach of the ticks.
+ *  - **A hollow middle.** The ticks occupy the outer half and nothing but the
+ *    centre cross is inside them.
+ *  - **The count grows with the clump**, not with the category — about one
+ *    tick to every 11px of rim — so a clump gets finer as the map zooms in
+ *    rather than turning into a dozen long spokes.
+ *  - **Jittered, not regular.** Spacing and both ends of every tick are nudged
+ *    off dead-even. A perfectly regular ring reads as machine-drawn, which is
+ *    the one thing hand line work must not.
+ *
+ * THE JITTER IS DETERMINISTIC, which is not a detail. `Math.random()` would
+ * make the clump shimmer on every redraw of the map, and a test could not read
+ * it. It comes off the golden ratio: irrational, so it never repeats within a
+ * clump, and a pure function of the tick's index, so the same clump is drawn
+ * every frame and every session. Same device as the ground cover's stipple
+ * spiral, for the same reason.
  */
 const PHI = 0.6180339887498949;
 const jitter = (i: number, k: number) => {
@@ -395,63 +402,38 @@ const jitter = (i: number, k: number) => {
   return v - Math.floor(v);
 };
 
-function bladeClump(
+/** About one tick to every 11px of rim, and never fewer than a dozen. */
+const TICKS_PER_PX = 0.55;
+
+function grassClump(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   r: number,
-  count: number,
 ) {
+  const count = Math.max(12, Math.round(r * TICKS_PER_PX));
   const step = TAU / count;
-  const hub = r * 0.28;
   ctx.beginPath();
   for (let i = 0; i < count; i++) {
     const j1 = jitter(i, 1);
     const j2 = jitter(i, 3.7);
-    // Angular jitter is kept under half a step, so blades crowd and open up
+    // Angular jitter is kept under half a step, so ticks crowd and open up
     // without ever crossing into their neighbour's place.
-    const th = i * step + (j1 - 0.5) * step * 0.8;
-    const tip = r * (0.68 + 0.32 * j2);
+    const th = i * step + (j1 - 0.5) * step * 0.7;
     const cs = Math.cos(th);
     const sn = Math.sin(th);
-    // Perpendicular, for the bend and for the fold's two legs.
-    const px = -sn;
-    const py = cs;
-    const bend = (j1 < 0.5 ? -1 : 1) * r * (0.02 + 0.05 * j2);
-    const mid = (hub + tip) / 2;
-
-    if (j2 < 0.36) {
-      /*
-        A folded blade: two legs off the same root, closing to a point at the
-        tip. The gap is set off the LINE WEIGHT rather than off the radius
-        alone — at a 24px clump the two legs were 1.2px apart under a 2.7px
-        stroke, so they merged and the fold read as a solid wedge. A fold you
-        cannot see through is not a fold.
-      */
-      const w = Math.max(ctx.lineWidth * 1.5, r * 0.05);
-      ctx.moveTo(x + cs * hub + px * w, y + sn * hub + py * w);
-      ctx.quadraticCurveTo(
-        x + cs * mid + px * (w + bend * 0.5),
-        y + sn * mid + py * (w + bend * 0.5),
-        x + cs * tip,
-        y + sn * tip,
-      );
-      ctx.quadraticCurveTo(
-        x + cs * mid - px * (w - bend * 0.5),
-        y + sn * mid - py * (w - bend * 0.5),
-        x + cs * hub - px * w,
-        y + sn * hub - py * w,
-      );
-      continue;
-    }
-    ctx.moveTo(x + cs * hub, y + sn * hub);
-    ctx.quadraticCurveTo(
-      x + cs * mid + px * bend,
-      y + sn * mid + py * bend,
-      x + cs * tip,
-      y + sn * tip,
-    );
+    const inner = r * (0.56 + 0.1 * j2);
+    const outer = r * (0.94 + 0.06 * j1);
+    ctx.moveTo(x + cs * inner, y + sn * inner);
+    ctx.lineTo(x + cs * outer, y + sn * outer);
   }
+  // The centre cross. Small, and the only thing inside the ring — it marks
+  // where the plant actually stands, which the ticks do not.
+  const m = Math.max(2, r * 0.07);
+  ctx.moveTo(x - m, y);
+  ctx.lineTo(x + m, y);
+  ctx.moveTo(x, y - m);
+  ctx.lineTo(x, y + m);
   ctx.stroke();
 }
 
@@ -513,21 +495,20 @@ export function drawPlantStamp(
   if (kind === "grasses") {
     /*
       A CLUMP OF GRASS HAS NO OUTLINE AND NO WASH, which is the whole of what
-      Ryan's sketch says and the reverse of what was drawn here before. The
+      Ryan's reference says and the reverse of what was drawn here before. The
       dashed ring was a compromise — a way to state the extent while admitting
       the edge is not real — and the drawing simply does not have one. The
-      reach of the longest blades is the extent, exactly as the conifer's
-      points are, and a circular wash would put the ring back by another
-      route.
+      reach of the ticks is the extent, exactly as the conifer's points are,
+      and a circular wash would put the ring back by another route.
 
-      Its floor is its own, too, and lower than the shared one: the blades ARE
+      Its floor is its own, too, and lower than the shared one: the ticks ARE
       the symbol, so there is nothing to fall back to. A 3ft clump is under
       11px of radius at any zoom short of standing in the bed, and a category
       that spent almost all of its life as a plain dot would have been drawn
       for nothing.
     */
     if (r >= 7) {
-      bladeClump(ctx, x, y, r, r < 13 ? 10 : 17);
+      grassClump(ctx, x, y, r);
       ctx.restore();
       return;
     }
@@ -594,7 +575,7 @@ export function drawPlantStamp(
       arcRing(ctx, x, y, r * 0.42, 5, 0.4);
       break;
     case "grasses":
-      // Unreachable: a clump is drawn and returned above, because the blades
+      // Unreachable: a clump is drawn and returned above, because the ticks
       // are its outline rather than something inside one. Kept so the switch
       // still names every kind — an unlisted one would draw a bare circle and
       // nobody would notice which.

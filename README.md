@@ -807,35 +807,39 @@ with no ring round it at all; a small rosette for a perennial; and the lightest
 mark on the plan, a dashed ring with a stipple in it, for a ground cover. An
 emoji at 6px is a smudge. A sawtooth at 6px still reads as spiky.
 
-**The grass clump is drawn from Ryan's own sketch of one**, which is the second
-half of the same lesson as the conifer and arrived the same way — as a picture
-rather than as a description. What the sketch says is mostly what is *absent*:
+**The grass clump is drawn from Ryan's own reference for one** — a ring of fine
+ticks round a hollow middle, with a small cross at the centre and nothing else.
+It is the second half of the same lesson as the conifer and it arrived the same
+way, as a picture rather than as a description. Twice, in fact: the first
+sketch produced a rougher clump of long blades with some folded back on
+themselves, and the second reference replaced it. **The difference between the
+two is the useful part** — the marks are SHORTER and there are far MORE of
+them, which is what makes a clump read as texture rather than as a symbol with
+spikes. Long marks on a hollow hub read as a starburst however they are drawn.
+
+What the drawing says is mostly what is *absent*:
 
 - **No ring.** Not even a broken one. The dashed extent that used to be there
   was a compromise — a way to state how far the clump reaches while admitting
   the edge is not real — and the drawing simply has none. The reach of the
-  longest blades is the extent, exactly as the conifer's points are.
-- **A hollow middle.** The blades start out on a ring at 28% of the radius
-  rather than meeting at a point. A hub is what makes a fan read as a wheel,
-  and every version before this had one.
-- **Ragged, not even.** Blades differ in length (68–100% of the radius) and in
-  spacing. A clump of grass is not a rosette, and regular spacing is the single
-  thing that most makes hand line work look machine-drawn.
-- **Some are folded** — a narrow hairpin, out and back, which is what a blade
-  bent over itself looks like from above and is the mark that reads as *blade*
-  rather than as *spoke*. Its gap is set off the line WEIGHT, not the radius:
-  at a 24px clump the two legs were 1.2px apart under a 2.7px stroke, so they
-  merged and the fold read as a solid wedge. A fold you cannot see through is
-  not a fold.
+  ticks is the extent, exactly as the conifer's points are.
+- **A hollow middle.** The ticks occupy the outer half and nothing but the
+  centre cross is inside them.
+- **The count grows with the clump**, not with the category — about one tick to
+  every 11px of rim — so it gets finer as the map zooms in rather than turning
+  into a dozen long spokes.
+- **Jittered, not regular.** Spacing and both ends of every tick are nudged off
+  dead-even. A perfectly regular ring reads as machine-drawn, which is the one
+  thing hand line work must not.
 
-**The raggedness is deterministic, and that is not a detail.** `Math.random()`
+**The jitter is deterministic, and that is not a detail.** `Math.random()`
 would make every clump shimmer on each redraw of the map, and no test could
-read one. The jitter comes off the golden ratio — irrational, so it never
-repeats within a clump, and a pure function of the blade's index, so the same
-clump is drawn every frame and every session. Same device as the ground
-cover's stipple spiral, for the same reason.
+read one. It comes off the golden ratio — irrational, so it never repeats
+within a clump, and a pure function of the tick's index, so the same clump is
+drawn every frame and every session. Same device as the ground cover's stipple
+spiral, for the same reason.
 
-It also carries its own size floor, lower than the shared one: the blades ARE
+It also carries its own size floor, lower than the shared one: the ticks ARE
 the symbol, so there is nothing to fall back to, and a 3ft clump is under 11px
 of radius at any zoom short of standing in the bed. A category that spent
 almost all of its life as a plain dot would have been drawn for nothing.
@@ -938,11 +942,19 @@ to a shrub's 6ft turns 3 checks red.
 
 **The grass clump is read as geometry, not as ink.** Both of the things that
 define it are *absences*, and a clump with a dashed extent and a clump without
-one both draw plenty of ink — so the checks sample a ring at the canopy radius
-(the shade tree at the same 80ft spread is the ruler again) and the disc at the
-middle. Under 30% of that ring may carry ink, and the middle must carry none.
-Put the dashed extent back and the first goes red at 68% inked; start the
-blades at the centre point and the second goes red with 164 pixels in the hub.
+one both draw plenty of ink. So the checks sample a ring at the canopy radius
+(the shade tree at the same 80ft spread is the ruler again) and the band
+between a fifth and half of it.
+
+**What is measured at that ring is the longest UNBROKEN arc, not how much of it
+is inked** — and the difference is the whole check. A ring of tick *ends*
+lights a real fraction of that circle too, about 20%, so a simple "under 30%
+inked" is a bar the clump nearly fails for entirely the wrong reason. The old
+dashed extent was 34px on and 26px off, which at this radius is a **35° dash**;
+a tick end is two or three degrees with nothing joining it to the next. Put the
+dashed extent back and it goes red at 38° of unbroken rim; start the ticks at
+the centre point and the hollow-middle check goes red with 1,386 pixels in a
+band that should be empty.
 
 **That it does not mass is read the same way, and this one has a sign in it.**
 A second clump is planted clear and dragged onto the first — a tap inside a

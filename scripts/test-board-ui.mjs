@@ -4350,11 +4350,12 @@ try {
     (await page.locator("aside >> text=/naming/i").count()) === 0);
 
   /**
-   * Two readings at one point: how much of a ring at `ringR` carries ink, and
-   * how much ink is inside `coreR`.
+   * Three readings at one point: how much of a ring at `ringR` carries ink,
+   * the longest UNBROKEN arc of it that does, and how much ink sits in the
+   * annulus between `inR` and `outR` fractions of that radius.
    */
-  const clumpShape = (pt, ringR, coreR) =>
-    page.evaluate(([x, y, rr, cr]) => {
+  const clumpShape = (pt, ringR, inR, outR) =>
+    page.evaluate(([x, y, rr, fi, fo]) => {
       const c = document.querySelector("canvas[data-plan-canvas]");
       const rect = c.getBoundingClientRect();
       const k = c.width / rect.width;
@@ -4370,44 +4371,67 @@ try {
       // either side — a hand-set radius that missed a real circle by one pixel
       // would report the circle as absent, which is the answer being looked
       // for and therefore the one to guard against.
-      let lit = 0;
-      const N = 360;
+      const N = 720;
+      const hit = [];
       for (let n = 0; n < N; n++) {
         const a = (Math.PI * 2 * n) / N;
-        let hit = false;
-        for (let o = -2.5; o <= 2.5 && !hit; o += 0.5) {
-          if (green(cx + (rr + o) * k * Math.cos(a), cy + (rr + o) * k * Math.sin(a))) hit = true;
+        let lit = false;
+        for (let o = -2.5; o <= 2.5 && !lit; o += 0.5) {
+          if (green(cx + (rr + o) * k * Math.cos(a), cy + (rr + o) * k * Math.sin(a))) lit = true;
         }
-        if (hit) lit++;
+        hit.push(lit);
       }
-      // And the middle.
+      const lit = hit.filter(Boolean).length;
+      // The longest unbroken run, wrapping — which is what tells a ring from a
+      // row of tick ends. Start the walk at a gap so the wrap is not a special
+      // case; an entirely lit ring has no gap and is reported as the whole
+      // circle.
+      const first = hit.indexOf(false);
+      let run = 0;
+      let best = first === -1 ? N : 0;
+      if (first !== -1) {
+        for (let n = 1; n <= N; n++) {
+          if (hit[(first + n) % N]) { run++; if (run > best) best = run; }
+          else run = 0;
+        }
+      }
+      // And the annulus between the two fractions, which on a clump is empty
+      // ground between the centre mark and the ticks.
       let core = 0;
-      for (let py = Math.round(cy - cr * k); py <= cy + cr * k; py++) {
-        for (let px = Math.round(cx - cr * k); px <= cx + cr * k; px++) {
-          if ((px - cx) ** 2 + (py - cy) ** 2 > (cr * k) ** 2) continue;
+      for (let py = Math.round(cy - rr * fo * k); py <= cy + rr * fo * k; py++) {
+        for (let px = Math.round(cx - rr * fo * k); px <= cx + rr * fo * k; px++) {
+          const dd = (px - cx) ** 2 + (py - cy) ** 2;
+          if (dd > (rr * fo * k) ** 2 || dd < (rr * fi * k) ** 2) continue;
           if (green(px, py)) core++;
         }
       }
-      return { ringLit: lit / N, core };
-    }, [pt.x, pt.y, ringR, coreR]);
+      return { ringLit: lit / N, maxRunDeg: (best * 360) / N, core };
+    }, [pt.x, pt.y, ringR, inR, outR]);
 
   const trueR = Math.max(...soloRim);
-  const clump = await clumpShape(await pointNow(grsOff), trueR, trueR * 0.13);
+  const clump = await clumpShape(await pointNow(grsOff), trueR, 0.2, 0.5);
   /*
-    A DASHED RING IS STILL A RING, and it is what this replaced — so the bar
-    has to be low enough to catch one. The old extent was 34px on, 26px off,
-    which lights 57% of the circumference; blades alone cross it only where a
-    blade happens to reach that far.
+    A DASHED RING IS STILL A RING, and it is what this replaced — so what is
+    measured is the longest UNBROKEN arc at the extent, not how much of it is
+    inked. The two answers differ, and only one of them is the question: a ring
+    of tick ENDS lights a real fraction of that circle too, so a simple "under
+    30% inked" is a bar the tick clump nearly fails for the wrong reason. The
+    old dashed extent was 34px on and 26px off, which at this radius is a 35°
+    dash; a tick end is two or three degrees and nothing joins it to the next.
   */
   ok("A GRASS CLUMP HAS NO RING ROUND IT, dashed or otherwise",
-    clump.ringLit < 0.3, `${(clump.ringLit * 100).toFixed(0)}% of the extent is inked`);
+    clump.maxRunDeg < 12,
+    `${clump.maxRunDeg.toFixed(1)}° of unbroken rim, ` +
+      `${(clump.ringLit * 100).toFixed(0)}% inked in total`);
   /*
-    AND THE MIDDLE IS HOLLOW. The blades start out on a ring; a hub is what
-    makes a fan read as a wheel, and the old symbol had every blade meeting at
-    the centre point.
+    AND THE MIDDLE IS HOLLOW. The ticks occupy the outer half; between the
+    centre cross and the innermost of them there is nothing at all, which is
+    what makes a clump read as a clump rather than as a starburst. The band is
+    read from a fifth of the radius out to half of it, which clears the cross
+    at the middle without reaching the ticks.
   */
-  ok("AND ITS MIDDLE IS HOLLOW — the blades do not meet at a point",
-    clump.core === 0, `${clump.core} green in the middle`);
+  ok("AND ITS MIDDLE IS HOLLOW — nothing between the centre mark and the ticks",
+    clump.core === 0, `${clump.core} green in the band`);
 
   /*
     AND A SECOND ONE OVERLAPPING IT DOES NOT MASS.
