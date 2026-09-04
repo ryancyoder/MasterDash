@@ -4852,6 +4852,210 @@ try {
   await page.waitForTimeout(200);
   await openPlanTab();
 
+  /*
+    7c-x-c-7. A PHOTOGRAPH DROPPED ON A PLANT, OR ON A MASS OF THEM.
+
+    A picture is the evidence for what a line on the proposal says, and until
+    now only a drawn BED could carry one. The gesture is the one the strip
+    already has — drag a frame out onto the map — with a third thing it can
+    land on: the plan's own plants.
+
+    A MASS TAKES THE WHOLE GROUP, which is what its one outline means. Eleven
+    boxwood drawn as one thing read as one thing, so dropping a photograph on
+    that outline says "this is a picture of those eleven" rather than of
+    whichever of them happened to be under the finger. And it is ONE edit, so
+    one undo takes it back rather than eleven.
+  */
+  await openPlanTab();
+  /*
+    THE STRIP IS PUT BACK THE WAY IT WAS FOUND. This section swings it round
+    to the yard's own photographs, and the checks below it were written
+    against whatever was up before — leaving it changed turned three of them
+    red for reasons that had nothing to do with them.
+  */
+  const stripWas = (
+    await page.locator('button[aria-pressed="true"]').allTextContents()
+  ).find((t) => /^(Visit|Property|Reference|Plants)$/.test(t.trim()));
+
+  let shotStep = "start";
+  try {
+  shotStep = "arm";
+  await armPlant(page);
+  await page.waitForTimeout(200);
+  shotStep = "shrub";
+  await page.click('button[aria-label="Shrub"]');
+  await page.waitForTimeout(300);
+  shotStep = "offsets";
+  const loneOff = fractionOff(0.24, 0.24);
+  const pairOff = fractionOff(0.7, 0.24);
+  const spareOff2 = fractionOff(0.5, 0.5);
+  const beforeShots = await plantCount();
+  shotStep = "planting";
+  await tapAt(loneOff);
+  await page.waitForTimeout(250);
+  await tapAt(pairOff);
+  await page.waitForTimeout(250);
+  await tapAt(spareOff2);
+  await page.waitForTimeout(300);
+  // Onto each other, so the pair is a MASS rather than two plants near a
+  // photograph — the same way the massing checks above build one.
+  await plantBtn.click();
+  await page.waitForTimeout(250);
+  const shotFrom = await pointNow(spareOff2);
+  const shotTo = await pointNow(pairOff);
+  await page.mouse.move(shotFrom.x, shotFrom.y);
+  await page.mouse.down();
+  await page.mouse.move(shotTo.x, shotTo.y, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  ok("three plants are down, two of them massed",
+    (await plantCount()) === beforeShots + 3,
+    `${beforeShots} before, ${await plantCount()} now`);
+
+  /*
+    AND THE STRIP IS PUT ON THE YARD'S PHOTOGRAPHS — after the planting, not
+    before it. Arming the Plant tool swings the strip round to the cultivar
+    rail, so a Property tab clicked first is a Property tab that has been
+    clicked off again by the time anything is dragged. The frames are still in
+    the DOM when that happens, which is why the first version of this failed
+    inside a drag rather than on a count.
+  */
+  shotStep = "strip";
+  const propertyTab = page.locator('button:text-is("Property")');
+  if ((await propertyTab.count()) > 0) {
+    await propertyTab.first().click();
+    await page.waitForTimeout(500);
+  }
+  const stripFrames = page.locator("div.rounded-xl.border button:visible");
+  const frameCount = await stripFrames.count();
+  ok("the yard's own photographs are in the strip to drag",
+    frameCount >= 3,
+    `${frameCount} frames · switcher ${(await page
+      .locator('button[aria-pressed]')
+      .allTextContents())
+      .filter((t) => /Visit|Property|Reference|Plants/.test(t))
+      .join("|")}`);
+
+  /*
+    THE PHOTOGRAPHS EACH PLANT CARRIES, off the stored plan.
+
+    `planted()` maps every plant down to its `itemId`, which is what the count
+    checks need and is a list of STRINGS — reading `p.photos` off one of those
+    is undefined for every plant on the plan, whatever the app did. That is
+    exactly how the first version of these checks failed: they reported "no
+    plant carries a photograph" against a build that was attaching them
+    correctly, and the diagnosis came out of dumping the keys.
+  */
+  const plantShots = () =>
+    page.evaluate(() => {
+      const e = JSON.parse(localStorage.getItem("qe-estimate") ?? "{}");
+      return (e?.plan?.plants ?? []).map((p) => (p.photos ?? []).map((x) => x.photoId));
+    });
+  const taggedCount = async () => (await plantShots()).filter((l) => l.length).length;
+
+  /** Drag frame `n` out of the strip and let it go at a page point. */
+  const dropFrameOn = async (n, pt) => {
+    const f = await stripFrames.nth(n).boundingBox();
+    await page.mouse.move(f.x + f.width / 2, f.y + f.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(pt.x, pt.y, { steps: 10 });
+    await page.mouse.move(pt.x + 1, pt.y, { steps: 2 });
+    await page.waitForTimeout(150);
+    return async () => {
+      await page.mouse.up();
+      await page.waitForTimeout(450);
+    };
+  };
+  shotStep = "drag-1";
+  const lonePt = await pointNow(loneOff);
+  const drop1 = await dropFrameOn(0, lonePt);
+  /*
+    THE TARGET SHOWS ITSELF BEFORE THE FINGER LIFTS. A plant symbol is small
+    and letting go over one is a guess unless the drawing says what will catch
+    it — so the canopy is ringed in the accent green while the picture is over
+    it. Read off the canvas, because a flag would be right against a build
+    that rings nothing anybody can see.
+  */
+  const wouldCatch = await page.getAttribute("canvas[data-plan-canvas]", "data-photo-drop");
+  await drop1();
+  const taggedOne = (await plantShots()).filter((l) => l.length);
+  ok("A PHOTOGRAPH DROPPED ON A PLANT IS ATTACHED TO IT",
+    taggedOne.length === 1 && taggedOne[0][0].startsWith("event:"),
+    JSON.stringify(await plantShots()));
+  ok("and the canvas said it would catch exactly that one",
+    wouldCatch === "1", `${wouldCatch} plants under the picture`);
+
+  shotStep = "drag-2";
+  const pairPt = await pointNow(pairOff);
+  const drop2 = await dropFrameOn(1, pairPt);
+  const wouldCatchMass = await page.getAttribute("canvas[data-plan-canvas]", "data-photo-drop");
+  await drop2();
+  ok("a mass says it would catch both of its plants",
+    wouldCatchMass === "2", `${wouldCatchMass} plants under the picture`);
+  ok("AND ONE DROPPED ON A MASS TAKES THE WHOLE GROUP",
+    (await taggedCount()) === 3, JSON.stringify(await plantShots()));
+
+  /*
+    AND THE WHOLE DROP IS ONE UNDO. Two plants tagged in one edit, not two —
+    pressing undo twice to unpick a mass of eleven is not undo, it is a chore.
+  */
+  await page.locator('button[aria-label="Undo the last change to the plan"]').click();
+  await page.waitForTimeout(400);
+  ok("ONE UNDO TAKES A WHOLE MASS'S TAG BACK",
+    (await taggedCount()) === 1, JSON.stringify(await plantShots()));
+
+  /*
+    AND A DROP ON BARE GROUND IS STILL A PLACEMENT, not a tag. The plants are
+    the more specific answer to "what did that land on" and take precedence,
+    which is only safe if missing them all still does what it always did.
+  */
+  const bareBefore = await taggedCount();
+  shotStep = "drag-3";
+  const drop3 = await dropFrameOn(2, await pointNow(fractionOff(0.06, 0.94)));
+  /*
+    "BARE" IS ASSERTED, NOT HOPED. The canvas says what it would catch, so the
+    setup is checked in the same breath as the claim — the first spot chosen
+    for this had a canopy on it, and the check failed for having FOUND a plant
+    rather than for tagging one, which reads as the feature being broken.
+  */
+  const wouldCatchNone = await page.getAttribute("canvas[data-plan-canvas]", "data-photo-drop");
+  await drop3();
+  ok("bare ground catches nothing", wouldCatchNone === "0", `${wouldCatchNone} under it`);
+  ok("a drop on bare ground tags nothing",
+    (await taggedCount()) === bareBefore,
+    `${await taggedCount()} tagged, ${bareBefore} before`);
+
+  // Off the plan again, so what follows sees the yard it expects. Two taps of
+  // the tool from Plant, not one: the cycle is plant → pick → remove.
+  await armPlant(page);
+  await page.waitForTimeout(200);
+  await plantBtn.click();
+  await page.waitForTimeout(200);
+  await plantBtn.click();
+  await page.waitForTimeout(250);
+  ok("and the tool is in Remove to clear them", (await plantMode()) === "delete");
+  await tapAt(loneOff);
+  await page.waitForTimeout(250);
+  await tapAt(pairOff);
+  await page.waitForTimeout(400);
+  ok("and the three are off the plan again",
+    (await plantCount()) === beforeShots,
+    `${beforeShots} expected, ${await plantCount()} now`);
+  await page.click('button[aria-label="Select"]');
+  await page.waitForTimeout(200);
+  if (stripWas) {
+    const back = page.locator(`button:text-is("${stripWas}")`);
+    if ((await back.count()) > 0) {
+      await back.first().click();
+      await page.waitForTimeout(400);
+    }
+  }
+  await openPlanTab();
+  } catch (e) {
+    ok(`the photograph-on-a-plant section ran (${shotStep})`, false,
+      String(e).replace(/\s+/g, " ").slice(0, 180));
+  }
+
   // 7c-xi. A DESIGNATED COLOUR PER ASSEMBLY.
   //
   // A shape is minted with the next colour off a rotating palette, which is

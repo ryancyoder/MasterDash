@@ -242,6 +242,16 @@ export interface PlacedPlant {
   variantId?: string;
   /** Its name, carried so a plan can label itself with no plant list loaded. */
   variantLabel?: string;
+  /**
+   * Photographs of this plant, or of the group it stands in.
+   *
+   * The same link a bed carries and the same rules — see `photoLink.ts`. A
+   * photo dropped on a MASS is written onto every plant in it rather than onto
+   * some group object, because a mass is derived: it exists only while those
+   * canopies overlap, and a plant dragged out of one takes its own evidence
+   * with it. There is nothing for a link to a group to point at afterwards.
+   */
+  photos?: ShapePhotoLink[];
 }
 
 /**
@@ -771,6 +781,17 @@ export function plantsFrom(value: unknown): PlacedPlant[] {
     // placed, and the position is the part that matters.
     const id = typeof r.id === "string" && r.id && !seen.has(r.id) ? r.id : planId("p");
     seen.add(id);
+    // One attachment per picture, even if the stored list somehow holds two —
+    // the same rule a shape's photographs follow, and for the same reason.
+    const seenPhotos = new Set<string>();
+    const photos: ShapePhotoLink[] = [];
+    for (const entry of Array.isArray(r.photos) ? r.photos : []) {
+      const link = photoLinkFrom(entry);
+      if (!link || seenPhotos.has(link.photoId)) continue;
+      seenPhotos.add(link.photoId);
+      photos.push(link);
+    }
+
     out.push({
       id,
       at,
@@ -781,6 +802,10 @@ export function plantsFrom(value: unknown): PlacedPlant[] {
       ...(typeof r.variantLabel === "string" && r.variantLabel
         ? { variantLabel: r.variantLabel }
         : {}),
+      // READ BACK OR SILENTLY DROPPED, exactly as on a shape: this rebuilds a
+      // plant rather than casting one, so a field not named here vanishes on
+      // the next load with no error anywhere.
+      ...(photos.length ? { photos } : {}),
     });
   }
   return out;

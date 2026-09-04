@@ -38,38 +38,67 @@ export interface ShapePhotoLink {
 }
 
 /**
- * The same photograph attached twice is one attachment.
+ * Anything a photograph can be a picture OF.
  *
- * Tapping a bed you have already tagged is far more likely to be a miss than a
- * request for a duplicate, and a duplicate is invisible on the card — two
- * identical thumbnails — while quietly doubling what an export carries.
+ * A drawn bed and a placed plant are the same kind of subject here — they
+ * differ in every other way and not in this one — so the three functions below
+ * are written once against the field they share. Two copies of "attach a
+ * photograph, without duplicates, dropping the empty list" is two chances to
+ * fix a bug in one of them.
  */
-export function withPhotoLink(shape: PlanShape, link: ShapePhotoLink): PlanShape {
-  const photos = shape.photos ?? [];
-  if (photos.some((p) => p.photoId === link.photoId)) return shape;
-  return { ...shape, photos: [...photos, link] };
-}
-
-/** Detach one photograph. The empty list is dropped rather than kept as []. */
-export function withoutPhotoLink(shape: PlanShape, photoId: string): PlanShape {
-  const photos = (shape.photos ?? []).filter((p) => p.photoId !== photoId);
-  if (photos.length === (shape.photos ?? []).length) return shape;
-  if (photos.length) return { ...shape, photos };
-  // Dropped rather than left as [], so a shape that never had a photograph and
-  // one that had its last removed are stored the same way.
-  const { photos: _gone, ...bare } = shape;
-  void _gone;
-  return bare;
+export interface PhotoSubject {
+  photos?: ShapePhotoLink[];
 }
 
 /**
- * Which shapes a photograph documents — the link read backwards.
+ * The same photograph attached twice is one attachment.
  *
- * One photo can cover more than one bed, which is not an edge case: stand at
- * the corner of a house and one frame holds the bed, the lawn beside it and
- * the edging between them. Nothing here stops a photo being attached to all
- * three, and the reverse readout is what makes that legible from the pin.
+ * Dropping a picture on a bed you have already tagged is far more likely to be
+ * a miss than a request for a duplicate, and a duplicate is invisible on the
+ * card — two identical thumbnails — while quietly doubling what an export
+ * carries.
  */
+export function withPhotoLink<T extends PhotoSubject>(
+  subject: T,
+  link: ShapePhotoLink,
+): T {
+  const photos = subject.photos ?? [];
+  if (photos.some((p) => p.photoId === link.photoId)) return subject;
+  return { ...subject, photos: [...photos, link] };
+}
+
+/** Detach one photograph. The empty list is dropped rather than kept as []. */
+export function withoutPhotoLink<T extends PhotoSubject>(
+  subject: T,
+  photoId: string,
+): T {
+  const photos = (subject.photos ?? []).filter((p) => p.photoId !== photoId);
+  if (photos.length === (subject.photos ?? []).length) return subject;
+  if (photos.length) return { ...subject, photos };
+  // Dropped rather than left as [], so a subject that never had a photograph
+  // and one that had its last removed are stored the same way.
+  const { photos: _gone, ...bare } = subject;
+  void _gone;
+  return bare as T;
+}
+
+/**
+ * What a photograph documents — the link read backwards.
+ *
+ * One photo can cover more than one thing, which is not an edge case: stand at
+ * the corner of a house and one frame holds the bed, the lawn beside it, the
+ * edging between them and the row of arborvitae behind. Nothing here stops a
+ * photo being attached to all four, and the reverse readout is what makes that
+ * legible from the pin.
+ */
+export function subjectsForPhoto<T extends PhotoSubject>(
+  subjects: T[],
+  photoId: string,
+): T[] {
+  return subjects.filter((s) => (s.photos ?? []).some((p) => p.photoId === photoId));
+}
+
+/** The same, named for the one caller that only ever asks about beds. */
 export function shapesForPhoto(shapes: PlanShape[], photoId: string): PlanShape[] {
-  return shapes.filter((s) => (s.photos ?? []).some((p) => p.photoId === photoId));
+  return subjectsForPhoto(shapes, photoId);
 }

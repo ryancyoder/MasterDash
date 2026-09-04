@@ -1598,6 +1598,65 @@ cards while the column was on Plants. They say which tab they need now. A page
 that has just reloaded opens on the take-off, so anything reading the plant
 column has to open it first.
 
+#### A photograph of a plant, or of a mass of them
+
+Drag a frame out of the strip and let it go on a plant, and the picture is
+attached to it. Let it go on a **mass** and it goes on every plant in that
+mass. Until now only a drawn bed could carry a photograph, and a picture is the
+evidence for what a line on the proposal says — *this* row of arborvitae, not a
+row of arborvitae.
+
+**The gesture is the one the strip already had.** A frame dragged onto the map
+places the photograph there; onto **Add plan** it becomes a layer. A plant is a
+third thing it can land on, checked before the map because a plant standing on
+the map is the more specific answer to *what did that land on*. Missing every
+canopy still does what it always did.
+
+**A mass takes the whole group, because that is what its one outline means.**
+Eleven boxwood drawn as one thing read as one thing, so a picture dropped on
+that outline is a picture of the eleven rather than of whichever of them
+happened to be under the finger. The canvas answers *which plants* — it is the
+only thing that knows where a plant is drawn at this zoom and which ones the
+drawing has massed, and a drop that tagged a group the plan did not agree was a
+group would attach a picture to plants nobody pointed at. `massDiscs()` is one
+description read by both the draw and that hit test, for exactly that reason.
+
+**The link goes on each plant, not on the group.** A mass is DERIVED: it exists
+only while those canopies overlap, and a plant dragged out of one takes its own
+evidence with it. There is nothing for a link to a group to point at
+afterwards. `linkPhotoToPlants` takes the list so the whole drop is **one
+`mutatePlan`** — one step, one undo, rather than eleven to press back through.
+
+**The same link a bed carries**, and now written once: `withPhotoLink`,
+`withoutPhotoLink` and `subjectsForPhoto` are generic over anything with a
+`photos` field. Two copies of *attach without duplicates, drop the empty list*
+is two chances to fix a bug in one of them. And it is read back in
+`plantsFrom` — a field not named there vanishes on the next load with no error
+anywhere, which is what happened to a bed's photographs once already.
+
+**The target shows itself.** A plant symbol is small — an 8ft canopy is a dozen
+pixels at a yard zoom — so letting go over one is a guess unless the drawing
+says what will catch it. Every plant in the group rings at once, which is also
+the answer to *am I about to tag all of these*. A plant that carries a
+photograph then wears a small frame mark in the photo pins' own white, in place
+of its tick; the picked plant's card lists what it carries, with an × on each,
+because an attachment with no way back is half a feature and on a mass of
+eleven it is eleven of them.
+
+**Read off the canvas as a NUMBER, not as ink.** The ring is drawn in the
+plants' own green, so counting pixels cannot tell a highlight from the canopy
+under it — the first check written for this passed against a build that ringed
+nothing. `data-photo-drop` on the canvas says how many plants a drop would
+catch, the same way `data-plant-mode` says what the Plant button would do.
+
+**And the reader in the test was the other half of that lesson.** `planted()`
+maps every plant down to its `itemId`, so it returns a list of STRINGS —
+reading `p.photos` off one of those is undefined for every plant, whatever the
+app did. The checks reported "no plant carries a photograph" against a build
+that was attaching them correctly, and the diagnosis came from dumping the
+keys. Tagging only the first plant of a mass turns one check red; writing the
+group as one `mutatePlan` per plant instead of one turns the undo check red.
+
 #### Two fingers is undo, three is redo
 
 Tap the plan with two fingers and the last change comes off; three puts it

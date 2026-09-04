@@ -239,6 +239,33 @@ function drawLabel(
   return { x, y, w: ctx.measureText(text).width, h: 16 };
 }
 
+/**
+ * "There is a photograph of this."
+ *
+ * A small frame with a light in it, in the photo pins' own white so the mark
+ * means the same thing wherever it appears on this canvas. It goes ON the
+ * plant rather than beside it: a mark set alongside would be one more thing to
+ * mistake for a second plant on a drawing whose whole content is small round
+ * symbols.
+ */
+function drawPhotoMark(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  const w = Math.max(7, Math.min(13, r * 0.5));
+  const h = w * 0.72;
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.6)";
+  ctx.shadowBlur = 3;
+  ctx.fillStyle = PHOTO_COLOUR;
+  ctx.beginPath();
+  ctx.rect(x - w / 2, y - h / 2, w, h);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#0b0b0d";
+  ctx.beginPath();
+  ctx.arc(x, y, h * 0.26, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 export interface SurveyDot {
   id: string;
   kind: SurveyKind;
@@ -350,6 +377,13 @@ function calloutBox(
 export interface PlanCanvasApi {
   /** A point on the screen, as a coordinate. Null before the first layout. */
   latLngAt(clientX: number, clientY: number): LatLng | null;
+  /**
+   * The plants under a point on the screen — one, or a whole mass.
+   *
+   * Empty off the canvas and empty on bare ground, so a photograph let go over
+   * the side column or over open lawn is not attached to anything.
+   */
+  plantIdsAt(clientX: number, clientY: number): string[];
 }
 
 /** An iPad's rear camera, roughly, and about as far as a GPS fix earns. */
@@ -501,6 +535,7 @@ export default function PlanCanvas({
   onPickPlant,
   onUndo,
   onRedo,
+  photoDropIds,
   selectedPlantId,
   onSelectPlant,
   onPlacePlant,
@@ -623,6 +658,16 @@ export default function PlanCanvas({
   onRemovePlant: (id: string, stroke?: string) => void;
   /** What a tap does while the Plant tool is up. See `PlantMode`. */
   plantMode: PlantMode;
+  /**
+   * The plants a photograph is hovering over, mid-drag.
+   *
+   * A DROP TARGET HAS TO SHOW ITSELF. A plant symbol is small — an 8ft canopy
+   * is a dozen pixels at a yard zoom — and letting go over one is a guess
+   * unless the drawing says what will catch it. It is a whole mass or nothing,
+   * which is also what the ring has to show: eleven canopies lighting up
+   * together is the answer to "am I about to tag all of these".
+   */
+  photoDropIds?: string[];
   /**
    * Two fingers tapped, and three.
    *
@@ -1251,6 +1296,40 @@ export default function PlanCanvas({
       return outlineOf(shape, live);
     },
     [liveNodes],
+  );
+
+  /**
+   * Every plant that can mass, as a disc on the canvas.
+   *
+   * ONE DESCRIPTION, because two things read it: the draw, and the hit test
+   * that answers what a photograph was dropped on. A drop that landed on a
+   * mass the drawing did not agree it was in would attach a picture to plants
+   * nobody pointed at, and there would be nothing on screen to say so.
+   */
+  const massDiscs = useCallback(
+    (t: Transform): MassDisc[] => {
+      const ftPerPx =
+        (metresPerWorldUnit(toLatLng(viewRef.current.centre).lat) / t.scale) *
+        FEET_PER_METRE;
+      return plants
+        .filter((plant) => massesTogether(plantFace(plant).stamp))
+        .map((plant) => {
+          const at = dragPlant && dragPlant.id === plant.id ? dragPlant.at : plant.at;
+          const p = toCanvas(toWorld(at), t);
+          const face = plantFace(plant);
+          return {
+            id: plant.id,
+            key: `${plant.itemId}|${plant.variantId ?? ""}`,
+            x: p.x,
+            y: p.y,
+            r: stampRadius(face.spreadFt, ftPerPx).r,
+          };
+        });
+    },
+    // Held stable so the draw can depend on it by name: it is called from the
+    // effect, and a function rebuilt every render would redraw the map every
+    // render.
+    [plants, plantFace, dragPlant],
   );
 
   // --- Draw ---------------------------------------------------------------
@@ -1928,21 +2007,7 @@ export default function PlanCanvas({
       rather than inside `massGroups`, so a clump can never end up in a group
       it is then also drawn on top of.
     */
-    const discs: MassDisc[] = plants
-      .filter((plant) => massesTogether(plantFace(plant).stamp))
-      .map((plant) => {
-      const at = dragPlant && dragPlant.id === plant.id ? dragPlant.at : plant.at;
-      const p = toCanvas(toWorld(at), t);
-      const face = plantFace(plant);
-      return {
-        id: plant.id,
-        key: `${plant.itemId}|${plant.variantId ?? ""}`,
-        x: p.x,
-        y: p.y,
-        r: stampRadius(face.spreadFt, ftPerPxNow).r,
-      };
-    });
-    const groups = massGroups(discs);
+    const groups = massGroups(massDiscs(t));
     const massed = new Map<string, MassDisc[]>();
     for (const group of groups) {
       for (const d of group) massed.set(d.id, group);
@@ -2033,6 +2098,14 @@ export default function PlanCanvas({
         or take off with the eraser.
       */
       for (const d of group) {
+        // A photographed plant wears the frame instead of the tick: it is
+        // still one mark in one place, so a mass of eleven does not become a
+        // mass of eleven ticks AND eleven frames.
+        const shot = plants.find((pl) => pl.id === d.id)?.photos?.length;
+        if (shot) {
+          drawPhotoMark(ctx, d.x, d.y, d.r);
+          continue;
+        }
         ctx.beginPath();
         ctx.arc(d.x, d.y, d.id === selectedPlantId ? 3.5 : 2, 0, Math.PI * 2);
         ctx.fillStyle = d.id === selectedPlantId ? "#e5e7eb" : face.color;
@@ -2071,6 +2144,7 @@ export default function PlanCanvas({
         selected: picked,
         toScale,
       });
+      if (plant.photos?.length) drawPhotoMark(ctx, p.x, p.y, r);
 
       // The name only on the picked one. A yard with twelve labelled plants
       // is unreadable — the same rule Upright's pins follow, arrived at there
@@ -2078,6 +2152,32 @@ export default function PlanCanvas({
       if (picked && plant.variantLabel) {
         drawLabel(ctx, plant.variantLabel, p.x, p.y - r - 10, "#22c55e");
       }
+    }
+
+    /*
+      6b. WHAT A DROPPED PHOTOGRAPH WOULD CATCH.
+
+      Drawn after every plant and before the call-outs, so the ring sits over
+      the symbols it is picking out and under the pictures. Every plant in a
+      mass rings at once, because the drop takes the mass whole.
+    */
+    if (photoDropIds?.length) {
+      const wanted = new Set(photoDropIds);
+      ctx.save();
+      ctx.strokeStyle = "#22c55e";
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = "rgba(0,0,0,0.55)";
+      ctx.shadowBlur = 3;
+      for (const plant of plants) {
+        if (!wanted.has(plant.id)) continue;
+        const at = dragPlant && dragPlant.id === plant.id ? dragPlant.at : plant.at;
+        const p = toCanvas(toWorld(at), t);
+        const { r } = stampRadius(plantFace(plant).spreadFt, ftPerPxNow);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r + 5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
     }
     // 7. Photographs held open, over everything — the line first, so it runs
     //    UNDER its own picture and under the dot it points at rather than
@@ -2328,6 +2428,8 @@ export default function PlanCanvas({
     plantFace,
     selectedPlantId,
     dragPlant,
+    photoDropIds,
+    massDiscs,
     survey,
     photos,
     livePhotoId,
@@ -2448,6 +2550,15 @@ export default function PlanCanvas({
         if (x < 0 || y < 0 || x > rect.width || y > rect.height) return null;
         return toLatLng(fromCanvas({ x, y }, transformNow()));
       },
+      plantIdsAt(clientX, clientY) {
+        const canvas = canvasRef.current;
+        if (!canvas) return [];
+        const rect = canvas.getBoundingClientRect();
+        const x = clientX - rect.left;
+        const y = clientY - rect.top;
+        if (x < 0 || y < 0 || x > rect.width || y > rect.height) return [];
+        return plantIdsAt({ x, y }, transformNow());
+      },
     };
     return () => {
       if (apiRef) apiRef.current = null;
@@ -2465,6 +2576,25 @@ export default function PlanCanvas({
    * smaller than a thumb, though, or the smallest plants would be placeable
    * and then unreachable.
    */
+  /**
+   * The plants a drop at this point lands on: one, or every plant in its mass.
+   *
+   * A MASS IS THE TARGET IT LOOKS LIKE. Eleven boxwood drawn as one outline
+   * read as one thing, so dropping a photograph on that outline means "this is
+   * a picture of those eleven" — not of whichever of them happened to be under
+   * the finger. The plant is found first and its group second, so a drop that
+   * misses every canopy attaches nothing at all rather than guessing at the
+   * nearest.
+   */
+  function plantIdsAt(cp: Pt, t: Transform): string[] {
+    const hit = plantAt(cp, t);
+    if (!hit) return [];
+    for (const group of massGroups(massDiscs(t))) {
+      if (group.some((d) => d.id === hit.id)) return group.map((d) => d.id);
+    }
+    return [hit.id];
+  }
+
   function plantAt(cp: Pt, t: Transform): PlacedPlant | null {
     const ftPerPx =
       (metresPerWorldUnit(toLatLng(viewRef.current.centre).lat) / t.scale) *
@@ -3548,6 +3678,16 @@ function isPlantInput(type: string): boolean {
           worthless if it is reading the wrong surface.
         */
         data-plan-canvas="true"
+        /*
+          HOW MANY PLANTS A DROPPED PHOTOGRAPH WOULD CATCH.
+
+          The ring is drawn in the plants' own green, so counting pixels cannot
+          tell a highlight from the canopy under it — the first check written
+          against this passed on a build that ringed nothing. A number on the
+          element is the readable half, exactly as `data-plant-mode` is on the
+          Plant button.
+        */
+        data-photo-drop={photoDropIds?.length ?? 0}
         onPointerDown={handlePointerDown}
         onPointerMove={(e) => {
           // Hover and drag are the same event with the buttons different, so

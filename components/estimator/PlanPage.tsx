@@ -131,6 +131,7 @@ import {
   moveCallout,
   moveNodes,
   movePlant,
+  linkPhotoToPlants,
   linkPhotoToShape,
   removeCalloutFor,
   removePlant,
@@ -153,6 +154,7 @@ import {
   setReviewSession,
   setSurveySession,
   toggleVertexSmooth,
+  unlinkPhotoFromPlant,
   unlinkPhotoFromShape,
   updateShape,
 } from "@/lib/estimator/store";
@@ -558,6 +560,17 @@ export default function PlanPage({
     | null
   >(null);
   const [selectedCalloutId, setSelectedCalloutId] = useState<string | null>(null);
+  /**
+   * The plants a dragged photograph is currently over.
+   *
+   * A ref AND a state: the ref is what the release reads, the state is what
+   * the canvas draws a ring around. Reading it out of state in the drop
+   * handler would put it in that effect's dependencies, and the effect adds
+   * the window listeners — so every pointermove would tear them down and put
+   * them back.
+   */
+  const photoDropRef = useRef<string[]>([]);
+  const [photoDropIds, setPhotoDropIds] = useState<string[]>([]);
   const canvasApi = useRef<PlanCanvasApi | null>(null);
   /*
     Which photo pin is lit.
@@ -875,6 +888,40 @@ export default function PlanPage({
    * puts the pin back where it was, because a pin that is only on this device
    * is worse than one that never moved.
    */
+  /**
+   * The dragged frame, as a link a plant or a bed can carry.
+   *
+   * `event:<id>` is the id convention a call-out's dot already uses for an
+   * appointment photograph, so a link written here is resolved by the same
+   * lookup. `sessionId` is the EVENT it was taken on — the field means "which
+   * visit", and for these that is an appointment rather than an Upright
+   * session. It is looked up here rather than threaded through the drag
+   * because the strip hands over a photo, not the box it sits in.
+   */
+  const linkForEventPhoto = useCallback(
+    (photo: EventPhoto, label: string): ShapePhotoLink => {
+      const group = (eventPhotos ?? []).find((g) =>
+        g.photos.some((p) => p.id === photo.id),
+      );
+      return {
+        /*
+          WHICH VISIT — and `"property"` when there was not one.
+
+          Most of these were taken on an appointment and the group is that
+          visit. The yard's REFERENCE photographs belong to no visit at all,
+          and refusing to link one because of that would be a silent failure
+          on a perfectly good picture: the field is a note about provenance,
+          not a key anything resolves by. `photoId` is what does the resolving.
+        */
+        sessionId: group?.id ?? "property",
+        photoId: `event:${photo.id}`,
+        url: photo.url,
+        label: photo.caption?.trim() || label,
+      };
+    },
+    [eventPhotos],
+  );
+
   const placePhoto = useCallback(
     async (photo: EventPhoto, at: { lat: number; lng: number }) => {
       const before = { lat: photo.lat, lng: photo.lng, isOutlier: photo.isOutlier };
@@ -916,6 +963,23 @@ export default function PlanPage({
       // whole point of it.
       if (far) setPhotoStage(false);
       setDragPhoto((d) => (d ? { ...d, x: e.clientX, y: e.clientY, moved: d.moved || far } : d));
+      /*
+        WHAT WOULD CATCH IT, shown while the finger is still down.
+
+        Asked of the canvas on every move rather than worked out here: the
+        canvas is the only thing that knows where a plant is drawn at this
+        zoom, and — more to the point — which plants the drawing has MASSED.
+        A drop that tagged a group the plan did not agree was a group would
+        attach a picture to plants nobody pointed at.
+      */
+      const over = canvasApi.current?.plantIdsAt(e.clientX, e.clientY) ?? [];
+      photoDropRef.current = over;
+      // Only when it actually changes: this runs on every pointermove, and a
+      // fresh array each time would redraw the whole map at the frame rate of
+      // a finger.
+      setPhotoDropIds((was) =>
+        was.length === over.length && was.every((id, i) => id === over[i]) ? was : over,
+      );
     };
     const up = (e: PointerEvent) => {
       const from = dragStart.current;
@@ -925,8 +989,29 @@ export default function PlanPage({
         (Math.abs(e.clientX - from.x) > DRAG_START_PX ||
           Math.abs(e.clientY - from.y) > DRAG_START_PX);
       const drag = dragPhoto;
+      const onPlants = photoDropRef.current;
+      photoDropRef.current = [];
       setDragPhoto(null);
+      setPhotoDropIds([]);
       if (!dragged) return;
+
+      /*
+        DROPPED ON A PLANT, OR ON A MASS: the picture is OF that planting.
+
+        Checked before the map, because a plant standing on the map is the
+        more specific answer to "what did that land on" — the same precedence
+        Add plan takes for the same reason. A mass takes the whole group, which
+        is what its one outline means: eleven boxwood drawn as one thing read
+        as one thing.
+
+        WRITTEN AS ONE EDIT. `linkPhotoToPlants` takes the list, so tagging a
+        mass of eleven is a single step and a single undo rather than eleven of
+        them to press back through.
+      */
+      if (drag.kind === "pin" && onPlants.length) {
+        linkPhotoToPlants(onPlants, linkForEventPhoto(drag.photo, drag.label));
+        return;
+      }
 
       /*
         ADD PLAN IS A DROP TARGET.
@@ -969,7 +1054,7 @@ export default function PlanPage({
       window.removeEventListener("pointercancel", up);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dragPhoto?.url]);
+  }, [dragPhoto?.url, linkForEventPhoto]);
 
   /** What the strip has picked, resolved to something the preview can show. */
   const pickedFrame = useMemo(() => {
@@ -2421,6 +2506,7 @@ export default function PlanPage({
           */
           onUndo={() => undoPlan()}
           onRedo={() => redoPlan()}
+          photoDropIds={photoDropIds}
           selectedPlantId={selectedPlantId}
           onSelectPlant={pickPlant}
           plantName={plantName}
@@ -2754,6 +2840,10 @@ export default function PlanPage({
                 plant is not an edit anybody asked for.
               */
               selectedName={selectedPlant ? plantName(selectedPlant) : null}
+              selectedPhotos={selectedPlant?.photos ?? []}
+              onUnlinkPhoto={(photoId) => {
+                if (selectedPlant) unlinkPhotoFromPlant(selectedPlant.id, photoId);
+              }}
               onPick={(next) => {
                 /*
                   A DIFFERENT CATEGORY IS A CATEGORY CHANGE, selected plant or
@@ -3963,6 +4053,8 @@ function AssemblyColorPanel({
 function PlantsPanel({
   pick,
   selectedName,
+  selectedPhotos,
+  onUnlinkPhoto,
   onPick,
   kinds,
   onRemoveKind,
@@ -3981,6 +4073,9 @@ function PlantsPanel({
   pick: { itemId: string; variantId?: string; variantLabel?: string };
   /** The plant picked on the map, if one is — the names then rename it. */
   selectedName: string | null;
+  /** What the picked plant is a photograph of — see `photoLink.ts`. */
+  selectedPhotos: ShapePhotoLink[];
+  onUnlinkPhoto: (photoId: string) => void;
   onPick: (next: { itemId: string; variantId?: string; variantLabel?: string }) => void;
   /** What is on the plan, by species. The counts hang off the same rows. */
   kinds: { key: string; itemId: string; variantId?: string; label: string; count: number }[];
@@ -4189,6 +4284,38 @@ function PlantsPanel({
           </button>
         )}
       </div>
+      {/*
+        AND WHAT IT IS A PHOTOGRAPH OF.
+
+        Under the line that says which plant is in hand, for the same reason
+        Remove is: the picked plant's evidence belongs beside the picked
+        plant. A picture can be dropped onto a plant from the strip and this
+        is where it can be taken off again — an attachment with no way back is
+        half a feature, and on a mass of eleven it is eleven of them.
+      */}
+      {selectedName && selectedPhotos.length > 0 && (
+        <div className="mt-1 flex gap-1 overflow-x-auto md-scroll">
+          {selectedPhotos.map((ph) => (
+            <span key={ph.photoId} className="relative shrink-0">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={ph.url}
+                alt={ph.label}
+                title={ph.label}
+                className="h-10 w-14 rounded-md object-cover"
+              />
+              <button
+                onClick={() => onUnlinkPhoto(ph.photoId)}
+                aria-label={`Take ${ph.label} off this plant`}
+                title={`Take ${ph.label} off this plant`}
+                className="absolute -right-1 -top-1 rounded-full bg-surface2 px-1 text-[0.6rem] font-bold text-[#fca5a5]"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="mt-1 flex max-h-64 flex-col gap-1 overflow-y-auto md-scroll">
         <button
           onClick={() => onPick({ itemId: pick.itemId })}

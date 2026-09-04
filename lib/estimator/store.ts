@@ -1153,6 +1153,34 @@ export function unlinkPhotoFromShape(shapeId: string, photoId: string) {
   }));
 }
 
+/**
+ * Attach a photograph to plants — one of them, or every plant in a mass.
+ *
+ * A LIST, NOT AN ID, and that is the whole reason this is not the shape
+ * function with a different word in it. Dropping a picture on a mass means
+ * "this is a photograph of those eleven boxwood", and a mass is DERIVED: it
+ * exists only while those canopies overlap. There is no group to link to, so
+ * the link goes on each plant — and one `mutatePlan` writes them all, so the
+ * whole drop is a single undo rather than eleven.
+ */
+export function linkPhotoToPlants(plantIds: string[], link: ShapePhotoLink) {
+  const ids = new Set(plantIds);
+  if (!ids.size) return;
+  mutatePlan((plan) => ({
+    ...plan,
+    plants: plan.plants.map((p) => (ids.has(p.id) ? withPhotoLink(p, link) : p)),
+  }));
+}
+
+export function unlinkPhotoFromPlant(plantId: string, photoId: string) {
+  mutatePlan((plan) => ({
+    ...plan,
+    plants: plan.plants.map((p) =>
+      p.id === plantId ? withoutPhotoLink(p, photoId) : p,
+    ),
+  }));
+}
+
 export function removeShape(id: string) {
   mutatePlan((plan) => {
     const shapes = plan.shapes.filter((s) => s.id !== id);

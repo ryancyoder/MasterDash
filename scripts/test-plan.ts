@@ -10,6 +10,7 @@
 
 import {
   shapesForPhoto,
+  subjectsForPhoto,
   withPhotoLink,
   withoutPhotoLink,
   type ShapePhotoLink,
@@ -1383,6 +1384,105 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   ok("and it still reaches the take-off Upright draws",
     (takeoffProjection(off)?.shapes.length ?? 0) === 1,
     JSON.stringify(takeoffProjection(off)?.shapes.length ?? 0));
+}
+
+// --- A photograph of a plant, or of a mass of them --------------------------
+//
+// The same link a bed carries, on a plant. Written once against the field the
+// two share (`PhotoSubject`), because "attach without duplicates, drop the
+// empty list" is one rule and two copies of it is two chances to fix a bug in
+// one of them.
+
+{
+  console.log("\n--- photographs on plants ---");
+
+  const plantOf = (id: string, photos?: ShapePhotoLink[]): PlacedPlant => ({
+    id,
+    at: { lat: 41.3, lng: -87.2 },
+    itemId: "mat:shrub",
+    ...(photos ? { photos } : {}),
+  });
+  const shot = (photoId: string): ShapePhotoLink => ({
+    sessionId: "ev1",
+    photoId,
+    url: `https://example.test/${photoId}.jpg`,
+    label: `Pin ${photoId}`,
+  });
+
+  const bare = plantOf("p1");
+  ok("a plant starts with no photographs", bare.photos === undefined);
+  const one = withPhotoLink(bare, shot("a"));
+  ok("attaching one records it", one.photos?.length === 1);
+  ok("and the plant is otherwise untouched",
+    one.id === "p1" && one.itemId === "mat:shrub");
+
+  /*
+    THE SAME PICTURE TWICE IS ONE ATTACHMENT. Dropping a photograph on a mass
+    you have already tagged is far more likely to be a miss than a request for
+    a duplicate — and a duplicate is invisible, two identical thumbnails, while
+    doubling what an export carries.
+  */
+  ok("the same photograph twice is one attachment",
+    withPhotoLink(one, shot("a")).photos?.length === 1);
+  ok("and it is the same object, so nothing re-renders for it",
+    withPhotoLink(one, shot("a")) === one);
+  ok("a different one is a second", withPhotoLink(one, shot("b")).photos?.length === 2);
+
+  const two = withPhotoLink(one, shot("b"));
+  ok("detaching leaves the other", withoutPhotoLink(two, "a").photos?.length === 1);
+  /*
+    AND THE LAST ONE OFF LEAVES NO EMPTY LIST, so a plant that never had a
+    photograph and one that had its last removed are stored the same way —
+    which is what stops an estimate growing `photos: []` on every plant that
+    was ever tagged and untagged.
+  */
+  ok("and the last one off drops the field",
+    withoutPhotoLink(one, "a").photos === undefined);
+  ok("detaching one that is not there changes nothing",
+    withoutPhotoLink(one, "zz") === one);
+
+  // The link read backwards, over plants as well as beds.
+  const bed = plantOf("p2", [shot("a")]);
+  const other = plantOf("p3", [shot("b")]);
+  ok("what a photograph documents reads back",
+    subjectsForPhoto([one, bed, other], "a").map((p) => p.id).join(",") === "p1,p2",
+    subjectsForPhoto([one, bed, other], "a").map((p) => p.id).join(","));
+  ok("and the shape-shaped name is the same function",
+    shapesForPhoto([], "a").length === 0);
+
+  /*
+    READ BACK OR SILENTLY DROPPED. `plantsFrom` rebuilds each plant rather than
+    casting the array, so a field not named there vanishes on the next load
+    with no error anywhere — which is exactly what happened to a bed's
+    photographs once already.
+  */
+  const stored = plantsFrom({
+    plants: [
+      { id: "p1", at: { lat: 41.3, lng: -87.2 }, itemId: "mat:shrub", photos: [shot("a")] },
+    ],
+  });
+  ok("A PLANT'S PHOTOGRAPHS SURVIVE BEING REOPENED",
+    stored[0]?.photos?.length === 1 && stored[0].photos[0].photoId === "a",
+    JSON.stringify(stored[0]?.photos));
+  // Same dedupe on the way in as on the way out: a hand-edited estimate can
+  // hold anything.
+  const dupes = plantsFrom({
+    plants: [
+      {
+        id: "p1",
+        at: { lat: 41.3, lng: -87.2 },
+        itemId: "mat:shrub",
+        photos: [shot("a"), shot("a"), { nonsense: true }, shot("b")],
+      },
+    ],
+  });
+  ok("a stored duplicate is read back once, and rubbish is dropped",
+    dupes[0]?.photos?.length === 2,
+    JSON.stringify(dupes[0]?.photos?.map((p) => p.photoId)));
+  ok("and a plant with none gets no empty list",
+    plantsFrom({
+      plants: [{ id: "p9", at: { lat: 41.3, lng: -87.2 }, itemId: "mat:shrub" }],
+    })[0]?.photos === undefined);
 }
 
 // --- Two fingers is undo, three is redo -------------------------------------
