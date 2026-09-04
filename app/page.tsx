@@ -814,7 +814,33 @@ export default function EstimatorPage() {
               {openAssembly ? "Assemblies" : current.label}
             </button>
 
-            <div className="flex items-center gap-2">
+            {/*
+              WHICH YARD, ON THE BAR, IN ONE LINE.
+
+              It was in a card down the side column, wrapped over two lines and
+              scrolled away behind whatever else was open — and it is the one
+              fact on this screen that every other fact belongs to. A header is
+              where a document's name goes.
+
+              ONE LINE, TRUNCATED. "803 Brown St., Valparaiso, IN NE corner of
+              Brown and Garfield" is a real address on this project and it is
+              two lines wherever it is allowed to be; the whole of it is on the
+              `title`, and the card below still carries the anchor's own
+              account of itself.
+
+              Only on the plan, because only there does the map have to BE
+              somewhere. The grid prices a job wherever it is.
+            */}
+            {onPlanPage && estimate.plan.anchor?.label && (
+              <span
+                title={estimate.plan.anchor.label}
+                className="min-w-0 flex-1 truncate text-sm text-muted"
+              >
+                {estimate.plan.anchor.label}
+              </span>
+            )}
+
+            <div className="flex shrink-0 items-center gap-2">
               {/* One control for the whole grid, so folders have a resting
                   state rather than each keeping whatever was last done to it. */}
               {hasFolders && (

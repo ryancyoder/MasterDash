@@ -1228,6 +1228,36 @@ down grows the map by itself, so a build that did only that still measured
 root's own rectangle — top-left of the viewport, the whole of it — which is why
 it carries `data-plan-root`.
 
+#### The yard is named on the top bar
+
+The address sits on the header beside the back arrow, in **one line**. It was
+in a card down the side column — wrapped over two lines, and scrolled away
+behind whatever else was open — and it is the one fact on this screen that
+every other fact belongs to. A header is where a document's name goes.
+
+**One line, truncated, not wrapped.** `803 Brown St., Valparaiso, IN NE corner
+of Brown and Garfield` is a real address on this project and it is two lines
+wherever it is allowed to be. The whole of it is on the `title`.
+
+**And the card stops repeating it.** What is left there is the only thing it
+ever said that the bar cannot: where the map is **anchored** and how it got
+there — read off the property record, placed by hand, or the Hebron fallback
+that means the map is nowhere near the yard. That is a caveat, not a name, and
+it belongs beside the button that can do something about it. Folded, the card
+shows that source rather than the address: a box folded to a line that is
+already across the top of the screen is a box folded to nothing.
+
+The card still names the yard in one case — when there is no yard. An estimate
+with nothing chosen has no address on the bar, and that is exactly the moment
+it matters most.
+
+**The check measures the mechanism, not the symptom.** At a desk width that
+long address happens to fit, so "is it clipped right now" proves nothing; what
+makes it one line at any width is that it never wraps and truncates when it
+runs out of room. The check reads the computed `white-space` and
+`text-overflow`, sets the long address into the estimate, and confirms the
+header is exactly as tall as it was with the short one.
+
 #### The column folds
 
 Nine beds is nine cards of loads, photographs, grade and photographs again, and

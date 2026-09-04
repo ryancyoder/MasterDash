@@ -759,8 +759,88 @@ try {
       buttons: [...(box?.querySelectorAll("button") ?? [])].map((b) => b.textContent ?? ""),
     };
   });
-  ok("the plan opens already knowing the yard",
-    /5 Gone Ln/.test(card.text), card.text);
+  /*
+    THE YARD IS NAMED ON THE TOP BAR, not in the card.
+
+    It was in the card, wrapped over two lines and scrolled away behind
+    whatever else was open — and it is the one fact on this screen that every
+    other fact belongs to. The card kept the part the bar cannot carry: where
+    the map is ANCHORED and how it got there.
+  */
+  const barAddress = await page.evaluate(() =>
+    [...document.querySelectorAll("header span")]
+      .map((el) => el.textContent ?? "")
+      .find((t) => /Gone Ln/.test(t)) ?? null);
+  ok("THE YARD IS NAMED ON THE TOP BAR", barAddress !== null, barAddress);
+  ok("and the card does not repeat it",
+    !/5 Gone Ln/.test(card.text), card.text);
+
+  /*
+    AND IT IS ONE LINE, WHICH IS THE WHOLE POINT.
+
+    The fixture's address is short, so this measures with a REAL one from the
+    project: "803 Brown St., Valparaiso, IN NE corner of Brown and Garfield"
+    is two lines wherever it is allowed to be, and that is what pushed it out
+    of the card. Put back afterwards so the rest of the suite reads the
+    fixture it was written against.
+  */
+  const headerLines = async () =>
+    page.evaluate(() => {
+      const el = [...document.querySelectorAll("header span")]
+        .find((n) => /Brown St|Gone Ln/.test(n.textContent ?? ""));
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return {
+        height: Math.round(el.getBoundingClientRect().height),
+        line: Math.round(parseFloat(cs.lineHeight) || 20),
+        // The MECHANISM, not the symptom: at a desk width this address
+        // happens to fit, so "is it clipped right now" proves nothing. What
+        // makes it one line at any width is that it never wraps and truncates
+        // when it runs out of room.
+        nowrap: cs.whiteSpace === "nowrap",
+        ellipsis: cs.textOverflow === "ellipsis",
+        header: Math.round(
+          document.querySelector("header")?.getBoundingClientRect().height ?? 0,
+        ),
+      };
+    });
+  const shortBar = await headerLines();
+  await page.evaluate(() => {
+    const e = JSON.parse(localStorage.getItem("qe-estimate") ?? "{}");
+    e.plan.anchor.label =
+      "803 Brown St., Valparaiso, IN NE corner of Brown and Garfield";
+    localStorage.setItem("qe-estimate", JSON.stringify(e));
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("main button.aspect-square");
+  const planForBar = await page.$$eval("main button.aspect-square", (els) =>
+    els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
+  await page.locator("main button.aspect-square").nth(planForBar).click();
+  await page.waitForSelector("text=PROPERTY", { timeout: 15000 });
+  await page.waitForTimeout(600);
+  const longBar = await headerLines();
+  ok("A LONG ADDRESS IS STILL ONE LINE",
+    longBar !== null && longBar.height <= longBar.line + 4,
+    JSON.stringify(longBar));
+  ok("and it truncates rather than wrapping, at any width",
+    longBar?.nowrap === true && longBar?.ellipsis === true,
+    JSON.stringify(longBar));
+  ok("so the bar is exactly as tall as it was",
+    shortBar !== null && longBar !== null && shortBar.header === longBar.header,
+    `${shortBar?.header} then ${longBar?.header}`);
+
+  await page.evaluate(() => {
+    const e = JSON.parse(localStorage.getItem("qe-estimate") ?? "{}");
+    e.plan.anchor.label = "5 Gone Ln";
+    localStorage.setItem("qe-estimate", JSON.stringify(e));
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("main button.aspect-square");
+  const planBack = await page.$$eval("main button.aspect-square", (els) =>
+    els.findIndex((b) => /^\u{1F5FA}\u{FE0F}?Plan/u.test(b.textContent ?? "")));
+  await page.locator("main button.aspect-square").nth(planBack).click();
+  await page.waitForSelector("text=PROPERTY", { timeout: 15000 });
+  await page.waitForTimeout(600);
   ok("AND OFFERS NOTHING TO CHOOSE — the question was answered upstream",
     !card.buttons.some((b) => /choose|change/i.test(b)), card.buttons.join("|"));
   ok("it says where the answer came from",

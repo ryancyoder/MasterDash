@@ -3227,10 +3227,24 @@ function AnchorCard({
         check rather than change, and a PROPERTY box folded to the word
         "property" would answer nothing.
       */
+      /*
+        THE ADDRESS IS ON THE TOP BAR NOW, so this box does not repeat it.
+
+        What is left here is the only thing it ever said that the bar cannot:
+        where the map is anchored and how it got there — read off the property
+        record, placed by hand, or the Hebron fallback that means the map is
+        nowhere near the yard. That is a caveat, not a name, and it belongs
+        beside the button that can do something about it.
+
+        Folded, it shows that source rather than the address: a box folded to a
+        line that is already across the top of the screen is a box folded to
+        nothing.
+      */
       badge={
-        !open && (
-          <span className="min-w-0 flex-1 truncate text-[0.7rem] text-ink">
-            {anchor?.label ?? (anchor?.propertyId ? `#${anchor.propertyId}` : "Not chosen")}
+        !open &&
+        anchor && (
+          <span className="min-w-0 flex-1 truncate text-[0.65rem] text-muted">
+            {anchor.source === "fallback" ? "not placed" : "anchored"}
           </span>
         )
       }
@@ -3245,9 +3259,16 @@ function AnchorCard({
         )
       }
     >
-      <p className="mt-1 text-sm leading-snug text-ink">
-        {anchor?.label ?? (anchor?.propertyId ? `#${anchor.propertyId}` : "Not chosen")}
-      </p>
+      {/*
+        Only where the bar has nothing to show. An estimate with no yard chosen
+        yet has no address up there, so the box has to say so itself — and that
+        is exactly the moment it matters most.
+      */}
+      {!anchor?.label && (
+        <p className="mt-1 text-sm leading-snug text-ink">
+          {anchor?.propertyId ? `#${anchor.propertyId}` : "Not chosen"}
+        </p>
+      )}
       {fromJob && (
         <p className="mt-0.5 text-[0.65rem] leading-tight text-muted">
           From the job — open a different one on Jobs to change it.
