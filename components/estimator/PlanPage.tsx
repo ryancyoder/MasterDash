@@ -420,6 +420,17 @@ export default function PlanPage({
    */
   const [stripPick, setStripPick] = useState<string | null>(null);
   /*
+    The catalog, declared UP HERE with the strip's own state rather than down
+    with the rest of the plant handling.
+
+    `pickedFrame` reads it to put a plant's picture on the stage, and that
+    memo is a few hundred lines above where the plant code lives — reading a
+    `const` from above its declaration is a temporal dead zone throw, and this
+    file has walked into that three times already (`syncGridBtns`,
+    `renderPrefs`, the heading-up state). A throw here takes the whole page.
+  */
+  const [plantRows, setPlantRows] = useState<PlantRow[] | null>(null);
+  /*
     THE YARD'S OWN PHOTOGRAPHS.
 
     They started inside the filmstrip, which was right while the strip was the
@@ -920,6 +931,31 @@ export default function PlanPage({
   /** What the strip has picked, resolved to something the preview can show. */
   const pickedFrame = useMemo(() => {
     if (!stripPick) return null;
+    /*
+      A PLANT'S PICTURE GOES ON THE STAGE LIKE ANY OTHER.
+
+      The Photo toggle is a mode over `pickedFrame`, so a plant only had to
+      become one for the whole of it to work: pick a tile, press Photo, and
+      leaf along the rail at full size. That is what looking at a catalog IS,
+      and a 80px thumbnail is for finding one rather than for judging it.
+
+      Null where the row has no picture — 228 of the 962 — so the toggle does
+      not appear at all. A button that opens a black rectangle is worse than
+      no button, which is the rule it already followed for a photograph that
+      never uploaded.
+    */
+    if (stripPick.startsWith("plant:")) {
+      const id = Number(stripPick.slice("plant:".length));
+      const row = (plantRows ?? []).find((r) => r.id === id);
+      if (!row?.image) return null;
+      return {
+        url: row.image,
+        title: row.name,
+        // The botanical name is what tells two "Fine Line" cultivars apart,
+        // and it is the half a nursery order actually needs.
+        note: row.botanical,
+      };
+    }
     if (stripPick.startsWith("event:")) {
       const found = eventById.get(stripPick.slice("event:".length));
       if (!found) return null;
@@ -948,7 +984,7 @@ export default function PlanPage({
       title: tag ?? `Pin ${p.seq}`,
       note: tag ? [p.note, `Pin ${p.seq}`].filter(Boolean).join(" · ") : p.note,
     };
-  }, [stripPick, selectedSurveyId, selectedPhotoId, gradeFrames, visit, eventById]);
+  }, [stripPick, selectedSurveyId, selectedPhotoId, gradeFrames, visit, eventById, plantRows]);
 
   /**
    * Attaching a photograph to the take-off it is a picture of.
@@ -1295,7 +1331,6 @@ export default function PlanPage({
   */
   const [fullscreen, setFullscreen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const [plantRows, setPlantRows] = useState<PlantRow[] | null>(null);
 
   /*
     962 rows, fetched the first time somebody opens the names and not before.
@@ -2889,11 +2924,17 @@ export default function PlanPage({
         }
         plantGroupLabel={plantGroupOf(plantPick.itemId)?.label ?? "plant"}
         plantPickedId={plantPick.variantId ?? null}
-        onPickPlant={(row) =>
+        onPickPlant={(row) => {
           pickPlantName(
             row ? { variantId: `plant:${row.id}`, variantLabel: row.name } : null,
-          )
-        }
+          );
+          /*
+            AND THE STAGE FOLLOWS THE PICK, exactly as it does for a
+            photograph. One tap on a tile arms the plant and offers its
+            picture; the toggle over the map does the rest.
+          */
+          setStripPick(row ? `plant:${row.id}` : null);
+        }}
       />
       <ReviewTransport
         session={visit}

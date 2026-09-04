@@ -903,6 +903,26 @@ service worker's cache and will not be there without signal.
 under the first would be two rows competing for the same inch of screen, and
 this is the same rail doing the same job: a row of thumbnails you pick from.
 
+**A plant's picture goes on the stage like any other.** The Photo toggle over
+the map is a mode over whatever the strip has picked, so a plant only had to
+become one of those for the whole of it to work: pick a tile, press **Photo**,
+and leaf along the rail at full size. An 80px thumbnail is for *finding* a
+plant; it is no use at all for judging one, which is the whole reason the
+viewer exists.
+
+A row with no picture — 228 of the 962 — is not a frame at all, so the toggle
+does not appear. That is enforced by the type rather than by a check:
+`StageFrame.url` is a `string`, so allowing a picture-less plant onto the stage
+does not compile. It is the same rule the stage already followed for a
+photograph that never uploaded, and a button that opens a black rectangle is
+worse than no button.
+
+**The catalog's state is declared with the strip's**, not with the rest of the
+plant handling, because `pickedFrame` reads it a few hundred lines above where
+that lives — and reading a `const` from above its declaration is a temporal
+dead zone throw that takes the whole page. This file has walked into that three
+times already; the comment says so where the declaration sits.
+
 **One function decides what a pick means**, whether it came from the column's
 list or the strip's rail — they are one choice made two ways, and two copies of
 the rename-or-arm rule would be two chances to get it different. So a picture

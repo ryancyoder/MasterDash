@@ -2564,6 +2564,54 @@ try {
   ok("and the column says so too",
     (await page.locator("aside >> text=/Arborvitae Mr. Bowling Ball/").count()) >= 1);
 
+  /*
+    AND A PLANT'S PICTURE GOES ON THE STAGE, exactly as a photograph does.
+
+    The Photo toggle is a mode over whatever the strip has picked, so a plant
+    only had to become one of those for the whole of it to work: pick a tile,
+    press Photo, and leaf along the rail at full size. An 80px thumbnail is
+    for FINDING a plant; it is no use at all for judging one.
+  */
+  const photoBtn = page.locator('button[aria-pressed][title*="photograph"], button[aria-pressed][title="Back to the map"]');
+  ok("PICKING A PLANT OFFERS ITS PICTURE ON THE STAGE",
+    (await photoBtn.count()) === 1,
+    `${await photoBtn.count()} toggles`);
+
+  const mapBefore = await page.locator("canvas[data-plan-canvas]").count();
+  if ((await photoBtn.count()) === 1) await photoBtn.first().click();
+  await page.waitForTimeout(500);
+  ok("AND THE TOGGLE PUTS IT OVER THE MAP",
+    (await page.locator('img[alt="Arborvitae Mr. Bowling Ball"]').count()) === 1 ||
+      (await page.locator("main img[src*='plant-images']").count()) >= 1,
+    `${await page.locator("main img[src*='plant-images']").count()} plant pictures on the stage`);
+  ok("and the map is still mounted underneath, not torn down",
+    (await page.locator("canvas[data-plan-canvas]").count()) === mapBefore);
+
+  // Back, so the checks after this are looking at a map.
+  if ((await photoBtn.count()) === 1) await photoBtn.first().click();
+  await page.waitForTimeout(400);
+
+  /*
+    A PLANT WITH NO PICTURE OFFERS NO TOGGLE. 228 of the 962 rows have none,
+    and a button that opens a black rectangle is worse than no button — the
+    rule the stage already followed for a photograph that never uploaded.
+  */
+  const noPicture = await page.evaluate(async () => {
+    const rows = await fetch("/catalog/plants.json").then((r) => r.json());
+    return rows.find((r) => r.group === "shrub" && !r.image)?.name ?? null;
+  });
+  if (noPicture) {
+    const tile = page.locator(`button[aria-label="${noPicture}"]`);
+    if ((await tile.count()) === 1) {
+      await tile.click();
+      await page.waitForTimeout(400);
+      ok("A PLANT WITH NO PICTURE OFFERS NO TOGGLE",
+        (await photoBtn.count()) === 0, `${noPicture} still offered one`);
+    }
+  }
+  ok("and the catalog has such a plant to check with", noPicture !== null, noPicture);
+
+
   // The rail follows the armed CATEGORY, not a category of its own.
   await page.click('button[aria-label="Evergreen"]');
   await page.waitForTimeout(700);
