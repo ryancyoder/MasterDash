@@ -4913,6 +4913,46 @@ try {
     `${beforeShots} before, ${await plantCount()} now`);
 
   /*
+    THE SIGN AT THE HEAD OF THE CULTIVAR RAIL, checked at the exact moment it
+    matters: the Plant tool has just been armed, which is what swung the strip
+    onto the Plants rail, so this is precisely the screen somebody is looking
+    at when they try to drag a plant tile onto the plan and nothing happens.
+
+    Two halves, and the second is the one that earns it. Saying "photographs
+    are under Property" while the Property tab is a small word in a column of
+    four is a sign pointing at a sign. The button has to BE the way out, so
+    the check clicks it and reads which tab is pressed afterwards — a note
+    that merely renders would pass the first half and leave the user exactly
+    where they were.
+
+    IT HAD TO MOVE TO PASS, and that is the check earning its keep rather than
+    a test being appeased: written at the END of the rail the button sat 962
+    cultivars along a sideways scroll and could not be clicked at all. A user
+    would have scrolled no further than the test did.
+  */
+  shotStep = "plants-rail sign";
+  const pressedTab = () =>
+    page.evaluate(() =>
+      Array.from(document.querySelectorAll("button[aria-pressed]"))
+        .filter((b) => /^(Visit|Property|Reference|Plants)$/.test(b.textContent.trim()))
+        .filter((b) => b.getAttribute("aria-pressed") === "true")
+        .map((b) => b.textContent.trim())
+        .join("|"));
+  ok("arming the Plant tool leaves the strip on the cultivar rail",
+    (await pressedTab()) === "Plants", await pressedTab());
+  const railSign = page.locator('text=/Photographs to drag onto a plant are under/');
+  ok("the cultivar rail says where the photographs are",
+    (await railSign.count()) > 0,
+    `${await railSign.count()} signs`);
+  const railOut = page.locator('button:has-text("Property photos")');
+  if ((await railOut.count()) > 0) {
+    await railOut.first().click();
+    await page.waitForTimeout(500);
+  }
+  ok("and its button is the way out, not a pointer at one",
+    (await pressedTab()) === "Property", await pressedTab());
+
+  /*
     AND THE STRIP IS PUT ON THE YARD'S PHOTOGRAPHS — after the planting, not
     before it. Arming the Plant tool swings the strip round to the cultivar
     rail, so a Property tab clicked first is a Property tab that has been

@@ -831,6 +831,40 @@ export function ReviewFilmstrip({
       <div className="flex shrink-0 gap-2 overflow-x-auto border-t border-edge bg-bg px-3 py-2 md-scroll">
         {switcher}
         {/*
+          A SIGN AT THE HEAD OF THE CULTIVAR RAIL SAYING WHAT THIS ONE IS NOT.
+
+          Arming the Plant tool swings the strip round to this rail, so the
+          moment somebody is looking at plants is the moment the photographs
+          are gone — and the gesture that attaches a photograph to a plant
+          starts by dragging a frame OUT of the strip. Dragging one of these
+          does nothing, correctly: they are the catalog, not the yard, and a
+          stock picture of the species is not a photograph of this plant.
+
+          AT THE HEAD, NOT AT THE TAIL, and that was a real failure rather than
+          a preference: written after the tiles it sat 962 cultivars along a
+          rail that scrolls sideways, so the test could not even click it. A
+          sign nobody scrolls to is not a sign. It costs 9rem at the start of a
+          rail that is hundreds of tiles long, which is nothing.
+
+          And the button IS the way out rather than a pointer at the switcher's
+          own Property tab — the thing being answered is "what am I doing"
+          while looking straight at it.
+        */}
+        {canPhotos ? (
+          <div className="flex shrink-0 flex-col justify-center gap-1 self-stretch border-r border-edge pr-2">
+            <p className="max-w-[9rem] text-[0.6rem] leading-snug text-muted">
+              Tap to arm a cultivar. Photographs to drag onto a plant are under
+              Property.
+            </p>
+            <button
+              onClick={() => onSource("property")}
+              className="self-start rounded-lg bg-surface2 px-2 py-1 text-[0.65rem] font-bold text-ink"
+            >
+              Property photos →
+            </button>
+          </div>
+        ) : null}
+        {/*
           The generic leads, exactly as it does in the column: an unnamed shrub
           is a real answer, and it has to be reachable from inside the rail or
           choosing a cultivar would be a one-way door.

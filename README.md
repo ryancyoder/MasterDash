@@ -1675,6 +1675,22 @@ that was attaching them correctly, and the diagnosis came from dumping the
 keys. Tagging only the first plant of a mass turns one check red; writing the
 group as one `mutatePlan` per plant instead of one turns the undo check red.
 
+**AND THE RAIL YOU ARE ON IS THE WRONG ONE, because arming the Plant tool put
+you there.** The photographs are dragged out of the filmstrip, and the strip
+follows the Plant tool onto the *cultivar* rail — so the moment somebody is
+looking at plants is the moment the pictures are gone. Those catalog tiles have
+no drag handler at all and correctly never will: they are a stock picture of
+the species, not a photograph of this plant. Dragging one does nothing, and
+nothing is exactly what it looked like when the gesture was broken.
+
+So the cultivar rail carries a sign at its **head** — *tap to arm a cultivar;
+photographs to drag onto a plant are under Property* — and a button that
+switches the strip rather than pointing at the tab that would. Written at the
+tail it sat 962 cultivars along a sideways scroll and the test could not click
+it; a user would have scrolled no further. Changing that button's target to any
+other source turns one check red, which is the half that matters: a note that
+merely renders leaves you exactly where you were.
+
 #### Two fingers is undo, three is redo
 
 Tap the plan with two fingers and the last change comes off; three puts it
