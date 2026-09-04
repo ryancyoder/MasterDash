@@ -166,6 +166,37 @@ export function nextLabelMode(mode: LabelMode): LabelMode {
 }
 
 /**
+ * What a tap does while the Plant tool is up.
+ *
+ * PLACING, PICKING AND REMOVING ARE THREE JOBS ON ONE SUBJECT, so they are
+ * three states of one button rather than three buttons. The alternative was
+ * to send picking and removing back to the main Select tool, and that is the
+ * thing worth writing down: Select is the take-off's tool — it grabs beds,
+ * runs, corners and call-outs — so nudging one shrub meant leaving the plant
+ * workflow, and the column and the strip went with it. A planting plan is
+ * worked on in passes, and this keeps the whole of one pass on one button.
+ *
+ * - `plant` — a tap plants one. A tap ON a plant picks it instead, so a
+ *   mis-aim is correctable without changing anything.
+ * - `select` — taps pick and drags move, PLANTS ONLY. Shapes and call-outs
+ *   are not touched, which is what makes this different from Select proper.
+ * - `delete` — a tap takes a plant off the plan, and it STAYS in delete:
+ *   clearing a bed of eleven shrubs is one mode, not eleven mode switches.
+ *
+ * The cycle is the tool's own button, tapped again. Reaching for the tool
+ * from anywhere else always lands on `plant` — see `PlanPage`'s `chooseTool`
+ * — because coming back to a tool that is silently still in delete is how a
+ * tap meant to plant a tree removes one instead.
+ */
+export type PlantMode = "plant" | "select" | "delete";
+
+export const PLANT_MODES: PlantMode[] = ["plant", "select", "delete"];
+
+export function nextPlantMode(mode: PlantMode): PlantMode {
+  return PLANT_MODES[(PLANT_MODES.indexOf(mode) + 1) % PLANT_MODES.length];
+}
+
+/**
  * A stored offset, rebuilt rather than cast.
  *
  * A NaN here is a label drawn at `NaN,NaN` — which canvas silently declines to

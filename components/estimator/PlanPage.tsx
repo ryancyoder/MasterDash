@@ -75,6 +75,7 @@ import {
 import {
   assembliesForShape,
   nextLabelMode,
+  nextPlantMode,
   shapeIsHidden,
   bucketsForMeasurement,
   measurementOf,
@@ -90,6 +91,7 @@ import {
   type PendingPoint,
   type PlanNodes,
   type PlanShape,
+  type PlantMode,
   type ShapeKind,
 } from "@/lib/estimator/plan";
 import { heldPlanImages } from "@/lib/estimator/planImage";
@@ -199,11 +201,43 @@ const TOOLS: { key: PlanTool; label: string; glyph: string }[] = [
   { key: "plant", label: "Plant", glyph: "🌳" },
 ];
 
+/**
+ * What the Plant button says it is about to do, and what the line under the
+ * map says the tap will do.
+ *
+ * The word is on the button rather than only in a colour, because the three
+ * states are not equally recoverable: planting one too many is a symbol you
+ * can see and undo, and removing one is a symbol that is simply gone. So the
+ * mode is written where the thumb already is.
+ */
+const PLANT_MODE_UI: Record<
+  PlantMode,
+  { word: string; glyph: string; hint: string }
+> = {
+  plant: {
+    word: "Plant",
+    glyph: "🌳",
+    hint: "Tap to plant one · tap a symbol to pick it · tap Plant again to pick or remove",
+  },
+  select: {
+    word: "Pick",
+    glyph: "☝︎",
+    hint: "Tap a symbol to pick it · drag to move it · beds and runs are left alone",
+  },
+  delete: {
+    word: "Remove",
+    glyph: "✕",
+    hint: "Tap a symbol to take it off the plan · it stays in Remove · Undo puts it back",
+  },
+};
+
 const HINTS: Record<PlanTool, string> = {
   select: "Tap a shape to select it · drag its dots to reshape · + splits a side",
   area: "Tap each corner · tap the big green dot to close",
   linear: "Tap along the run · Finish when done",
-  plant: "Tap to plant one · tap a symbol to pick it · Select to move it",
+  // The Plant tool's line comes from its own sub-mode, of which this is the
+  // first: one string, so the button and the hint cannot drift apart.
+  plant: PLANT_MODE_UI.plant.hint,
 };
 
 /**
@@ -250,6 +284,15 @@ export default function PlanPage({
   */
   const { undoDepth, redoDepth } = useEstimate();
   const [tool, setTool] = useState<PlanTool>("area");
+  /**
+   * What a tap does while the Plant tool is up — see `PlantMode`.
+   *
+   * Session state, not part of the plan: it is which pass of the work you are
+   * in this minute, and a document that came back from a reload already in
+   * delete would be a document with a loaded gun in it. `tool` itself is held
+   * the same way and for the same reason.
+   */
+  const [plantMode, setPlantMode] = useState<PlantMode>("plant");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /**
    * Square corners up while drawing. On by default because beds and patios
@@ -1245,6 +1288,18 @@ export default function PlanPage({
    * for it afterwards.
    */
   const chooseTool = useCallback((next: PlanTool) => {
+    /*
+      THE PLANT BUTTON IS A THREE-WAY TOGGLE, and where the cycle starts is
+      the part worth writing down: reaching for the tool from anywhere else
+      always lands on `plant`, and only tapping a button that is ALREADY up
+      moves it on. Remembering the state across a trip to Select would mean
+      coming back to a tool that is silently still in delete, where the tap
+      meant to plant a tree removes one instead — and a mode you cannot see
+      the state of before you commit is a mode that costs you a plant to read.
+    */
+    if (next === "plant") {
+      setPlantMode(tool === "plant" ? nextPlantMode(plantMode) : "plant");
+    }
     setTool(next);
     setPending([]);
     // ARMING THE PLANT TOOL SHOWS THE PLANTING. Placing a symbol into a
@@ -1277,7 +1332,7 @@ export default function PlanPage({
       */
       setStripSource("plants");
     }
-  }, []);
+  }, [tool, plantMode]);
 
   /*
     THE PLANT TAKE-OFF.
@@ -1875,11 +1930,32 @@ export default function PlanPage({
     >
       {/* Tools */}
       <div className="shrink-0 flex items-center gap-1.5 overflow-x-auto pb-2">
-        {TOOLS.map((t) => (
+        {TOOLS.map((t) => {
+          /*
+            The Plant button carries its sub-mode; every other tool is itself.
+
+            One button rather than three, because they are three things to do
+            to one subject and a row of tools is already the widest thing on
+            the screen — see `PlantMode` for why picking a plant is not sent
+            back to Select proper.
+          */
+          const plantUi = t.key === "plant" ? PLANT_MODE_UI[plantMode] : null;
+          const live = tool === t.key;
+          // Red only in Remove, and only while it is the live tool: a state
+          // that takes things off the plan should not be readable as "the
+          // usual tool, armed".
+          const danger = live && plantUi != null && plantMode === "delete";
+          return (
           <button
             key={t.key}
             onClick={() => chooseTool(t.key)}
             disabled={!ready || aligning !== null}
+            data-plant-mode={t.key === "plant" ? plantMode : undefined}
+            title={
+              plantUi
+                ? `Plant tool — ${plantUi.word}. Tap again for plant, pick, remove.`
+                : t.label
+            }
             /*
               Named, and it says which one is live.
               
@@ -1889,15 +1965,20 @@ export default function PlanPage({
               state are what a control this important should carry anyway.
             */
             aria-label={t.label}
-            aria-pressed={tool === t.key}
+            aria-pressed={live}
             className={`shrink-0 flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-bold transition-colors disabled:opacity-30 ${
-              tool === t.key ? "bg-accent text-black" : "bg-surface2 text-ink"
+              danger
+                ? "bg-[#ef4444] text-white"
+                : live
+                  ? "bg-accent text-black"
+                  : "bg-surface2 text-ink"
             }`}
           >
-            <span aria-hidden="true">{t.glyph}</span>
-            {t.label}
+            <span aria-hidden="true">{plantUi && live ? plantUi.glyph : t.glyph}</span>
+            {plantUi && live ? plantUi.word : t.label}
           </button>
-        ))}
+          );
+        })}
         {/*
           UNDO, beside the tools rather than off at the end of the row.
 
@@ -2241,7 +2322,7 @@ export default function PlanPage({
       ) : (
         <p className="shrink-0 mb-2 text-[0.7rem] text-muted">
           {ready
-          ? `${HINTS[tool]}${
+          ? `${tool === "plant" ? PLANT_MODE_UI[plantMode].hint : HINTS[tool]}${
               tool === "select"
                 ? ""
                 : smoothNew
@@ -2333,6 +2414,16 @@ export default function PlanPage({
           onSelectPlant={pickPlant}
           onPlacePlant={placePlant}
           onMovePlant={movePlant}
+          /*
+            Removing clears the selection with it: the card in the column
+            describes a plant that is no longer on the plan, and a Remove
+            button on a plant that has gone is a button that does nothing.
+          */
+          onRemovePlant={(id) => {
+            removePlant(id);
+            setSelectedPlantId((cur) => (cur === id ? null : cur));
+          }}
+          plantMode={plantMode}
           pinsDraggable={mode === "review"}
           onMovePin={handleMovePin}
           rightAngle={rightAngle}

@@ -962,6 +962,64 @@ placed on the map.** Every other tool still takes a finger, and the tile grid
 still counts plants — but that is a real limit and it is worth knowing before
 somebody drives to a yard without the pencil.
 
+#### The Plant button is three states: plant, pick, remove
+
+Tapping the tool that is already up moves it on rather than doing nothing.
+**Plant** puts one down, **Pick** moves one that is already down, **Remove**
+takes one off — and the button says which, in a word beside its glyph, with
+Remove in red.
+
+**Three jobs on one subject, so one button.** The alternative was to send
+picking and removing back to Select, and that is the thing worth writing down:
+Select is the *take-off's* tool. It grabs beds, runs, corners and call-outs, so
+nudging one shrub meant leaving the plant workflow — and the column and the
+filmstrip went with it, since both follow the tool. A planting plan is worked
+on in passes; this keeps the whole of one pass on one button.
+
+**Pick touches plants and nothing else.** A tap on a bed does not select the
+bed, and a call-out is not picked up either. That is the whole difference from
+Select proper, and it is what makes it safe to be picking things up in a yard
+already drawn: there is nothing under the tip that a mis-aim could deform.
+
+**Remove is sticky, and that is the decision.** Clearing a bed of eleven shrubs
+is one mode, not eleven mode switches, so the tool stays in Remove until it is
+tapped on. There is no confirmation on the tap either — Undo already takes it
+back, and the symbol disappearing is its own receipt. The cost is a state you
+can be in without meaning to be, which is why the button is red for the
+duration and why the word is on it rather than only the colour: the three
+states are not equally recoverable, and one of them removes work.
+
+**A finger removes nothing.** Removing is aimed, exactly as planting is, so it
+is held to the same pencil-or-mouse rule — and a thumb that takes a shrub off
+is worse than one that plants a tree, because a stray plant is visible and a
+removed one is simply gone. The drag is off in Remove too: picking the symbol
+up first would slide it under the tip on the way to being taken off.
+
+**Reaching for the tool from anywhere else always lands on Plant.** The state
+is deliberately not remembered across a trip to Select: coming back to a tool
+that is silently still in Remove is how a tap meant to plant a tree takes one
+off instead. Cycling within the tool is the only way into the other two.
+
+**The ring and the ghost belong to Plant alone.** A menu of six categories
+offered over a plant you are about to remove answers a question nobody asked,
+and a preview of what is about to go down is meaningless when nothing is. So
+the hover does nothing in the other two states.
+
+**The accessible name stays "Plant".** It names the control, not its state,
+so a selector or a voice command that reaches for the Plant tool still finds
+it in all three; the mode rides on `aria-pressed`, on the button's own title —
+which is what a screen reader reads as its description — and on the word
+printed on it. Changing the name with the state would have made the tool
+unaddressable in two of the three.
+
+**What it cost the suite.** Every check that clicked the Plant button to *arm*
+the tool was clicking a toggle that now moves on instead, and a suite that
+quietly ended up in Remove would read as a tool that had stopped planting. They
+go through one `armPlant()` helper that clicks until the button reports both
+`aria-pressed` and `data-plant-mode="plant"` — and one check that meant
+"reaching for the tool opens the column" now puts another tool up first,
+because reaching for it means arriving at it.
+
 #### Plants get their own column
 
 **Review · Plan · Plants.** The categories, the cultivar names, the symbols and

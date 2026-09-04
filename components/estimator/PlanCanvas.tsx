@@ -62,6 +62,7 @@ import {
   type PendingPoint,
   type PlanNodes,
   type LabelMode,
+  type PlantMode,
   type PlanShape,
 } from "@/lib/estimator/plan";
 import {
@@ -487,6 +488,8 @@ export default function PlanCanvas({
   onSelectPlant,
   onPlacePlant,
   onMovePlant,
+  onRemovePlant,
+  plantMode,
   pinsDraggable,
   onMovePin,
   apiRef,
@@ -587,6 +590,13 @@ export default function PlanCanvas({
   onSelectPlant: (id: string | null) => void;
   /** A tap on open ground while the plant tool is armed. */
   onPlacePlant: (at: LatLng) => void;
+  /**
+   * Take one off the plan. Sticky — see `PlantMode`: the tool stays in delete
+   * so a bed can be cleared with one tap per plant.
+   */
+  onRemovePlant: (id: string) => void;
+  /** What a tap does while the Plant tool is up. See `PlantMode`. */
+  plantMode: PlantMode;
   /** One write per drag, on release — the same rule a corner follows. */
   onMovePlant: (id: string, at: LatLng) => void;
   /**
@@ -2004,7 +2014,10 @@ export default function PlanCanvas({
       would be — that is honest rather than unhelpful, and it is the zoom that
       is wrong at that point, not the symbol.
     */
-    if (penRef.current && !ringAt && tool === "plant") {
+    // The ghost belongs to PLACING. It is a preview of the symbol about to be
+    // put down, and there is nothing about to be put down while the tool is
+    // picking or removing.
+    if (penRef.current && !ringAt && tool === "plant" && plantMode === "plant") {
       const face = plantFace({ itemId: plantPickId });
       const { r, toScale } = stampRadius(face.spreadFt, ftPerPxNow);
       ctx.save();
@@ -2137,6 +2150,7 @@ export default function PlanCanvas({
     dragLabel,
     labelFor,
     tool,
+    plantMode,
     transformFor,
     placeView,
     focusOverlay,
@@ -2308,26 +2322,56 @@ function isPlantInput(type: string): boolean {
     // While a layer is being placed, a tap is not a request to draw on it.
     if (aligning) return;
 
-    // The plant tool: one tap, one plant. A tap ON one picks it instead, which
-    // is what makes a mis-tap correctable without changing tools — and is
-    // checked first, or every correction would plant a second symbol on top of
-    // the one being aimed at.
+    /*
+      The plant tool, in whichever of its three states it is in — see
+      `PlantMode`. All three answer the same question, "what is under the tip",
+      and differ only in what they then do with it.
+    */
     if (tool === "plant") {
-      // A tap on a held-open photograph picks the photograph, whatever the
-      // tool: it covers the ground under it, so a tap there is never aimed at
-      // that ground.
+      // A tap on a held-open photograph is never aimed at the ground beneath
+      // it — the picture covers it. In `plant` that means picking the
+      // photograph, which is the whole tool's rule about what is on top; in
+      // the other two it means nothing happens, because neither has anything
+      // to say about a call-out. That is the "shapes and call-outs are
+      // untouched" half of `select`, and it also stops a delete tap reaching a
+      // plant hidden under a picture.
       const covered = calloutAt(cp, t);
       if (covered) {
-        onSelectCallout(covered.id);
+        if (plantMode === "plant") onSelectCallout(covered.id);
         return;
       }
       const hit = plantAt(cp, t);
+      if (plantMode === "delete") {
+        /*
+          Deleting is AIMED, exactly as planting is, so it is held to the same
+          input rule: a pencil (or a mouse at a desk) and never a finger. A
+          thumb resting on the map while the other hand pans is how a shrub
+          nobody removed disappears — and a removal is worse than a stray
+          plant, which is visible the moment it lands.
+
+          Immediate, with no confirmation. Undo already takes it back, the
+          symbol vanishing is its own receipt, and a modal on every tap would
+          make clearing a bed of eleven shrubs eleven dialogs.
+        */
+        if (hit && isPlantInput(pointerType)) onRemovePlant(hit.id);
+        return;
+      }
       if (hit) {
         onSelectPlant(hit.id);
         return;
       }
-      // A finger tap in the Plant tool selects what it lands on and nothing
-      // else. It does not plant: see `isPlantInput`.
+      /*
+        A tap on nothing.
+
+        In `select` that is a request to put down whatever was held — the same
+        thing a tap on bare ground means in every other picking tool here. In
+        `plant` it plants one, and only from a pencil: a finger in the Plant
+        tool selects what it lands on and nothing else (see `isPlantInput`).
+      */
+      if (plantMode === "select") {
+        onSelectPlant(null);
+        return;
+      }
       if (isPlantInput(pointerType)) onPlacePlant(ll);
       return;
     }
@@ -2562,7 +2606,9 @@ function isPlantInput(type: string): boolean {
     // Moving a plant is the same rule as placing one: a finger is panning the
     // map, and a plant that slid because a thumb rested on it is a plant
     // nobody moved on purpose.
-    if (tool === "plant" && isPlantInput(e.pointerType)) {
+    // Not in delete: the tap there is a removal, and picking the symbol up
+    // first would slide it under the tip on the way to being taken off.
+    if (tool === "plant" && plantMode !== "delete" && isPlantInput(e.pointerType)) {
       const t = transformNow();
       const grabbed = plantAt(cp, t);
       if (grabbed) {
@@ -2758,7 +2804,14 @@ function isPlantInput(type: string): boolean {
   */
   function handleHover(e: React.PointerEvent<HTMLCanvasElement>) {
     if (e.pointerType !== "pen" || e.buttons !== 0) return;
-    if (tool !== "plant") {
+    /*
+      And only while the tool is PLACING. The ring arms a category and the
+      ghost previews the symbol, and neither means anything when the next tap
+      is going to pick a plant or take one off — a menu of six categories
+      offered over a plant you are about to delete is a menu that answers a
+      question nobody asked.
+    */
+    if (tool !== "plant" || plantMode !== "plant") {
       if (ringAt || penRef.current) clearHover();
       return;
     }

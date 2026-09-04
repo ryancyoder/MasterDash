@@ -160,6 +160,30 @@ const magentaCount = (page) =>
 const tileTexts = (page) =>
   page.$$eval("main button[data-deal]", (els) => els.map((e) => e.textContent ?? ""));
 
+/**
+ * Put the Plant tool up AND its sub-mode back on planting.
+ *
+ * The button is a three-way toggle now — plant, pick, remove — so a second
+ * click on a tool that is already up no longer means "arm it", it means "move
+ * it on". Every check that just wants to be planting goes through here rather
+ * than clicking blind: a suite that quietly ended up in Remove would read as
+ * a tool that had stopped planting.
+ */
+const armPlant = async (page) => {
+  const btn = page.locator('button[aria-label="Plant"]');
+  for (let i = 0; i < 4; i++) {
+    if (
+      (await btn.getAttribute("aria-pressed")) === "true" &&
+      (await btn.getAttribute("data-plant-mode")) === "plant"
+    ) {
+      return;
+    }
+    await btn.click();
+    await page.waitForTimeout(150);
+  }
+  throw new Error("the Plant tool would not come back to planting");
+};
+
 try {
   await Promise.race([waitForServer(), dead]);
   const browser = await chromium.launch();
@@ -1933,7 +1957,7 @@ try {
     }, [bx, by, side]);
 
   const greenBefore = await plantGreen();
-  await page.click('button[aria-label="Plant"]');
+  await armPlant(page);
   await page.waitForTimeout(250);
   ok("the plan has a Plant tool beside Area and Linear",
     (await page.locator('button[aria-label="Plant"]').count()) === 1);
@@ -2163,7 +2187,7 @@ try {
     grab — and the drag becomes a map pan, which looks exactly like a plant
     that refuses to move.
   */
-  await page.click('button[aria-label="Plant"]');
+  await armPlant(page);
   await page.waitForTimeout(400);
   const plantBox2 = await page.locator("canvas[data-plan-canvas]").boundingBox();
   const spot2 = await findPlant();
@@ -2365,7 +2389,7 @@ try {
 
   // And the other end of the rule: reaching for the tool brings the layer
   // back, so nobody can be planting into nothing.
-  await page.click('button[aria-label="Plant"]');
+  await armPlant(page);
   await page.waitForTimeout(500);
   // Against what the map was showing a moment ago, rather than against the
   // reading from before the reload: the map is a different height once the
@@ -2398,8 +2422,17 @@ try {
     Reaching for the Plant tool is reaching for a category and a name. Leaving
     the column on the take-off would mean two taps to arm anything, and a tool
     whose controls are on a screen you have to go and find.
+
+    REACHING FOR IT means ARRIVING at it, so another tool goes up first. The
+    tool is already the live one here — the checks above left it up — and
+    tapping a tool that is already up is no longer "arm it": the Plant button
+    is a three-way toggle now and that tap moves it on to picking. `armPlant`
+    is what knows the difference, and it does nothing when there is nothing to
+    do.
   */
-  await page.click('button[aria-label="Plant"]');
+  await page.click('button[aria-label="Select"]');
+  await page.waitForTimeout(200);
+  await armPlant(page);
   await page.waitForTimeout(400);
   ok("ARMING THE PLANT TOOL OPENS THE PLANTS COLUMN",
     (await page.locator('button[aria-label="Shade Tree"][aria-pressed]').count()) === 1,
@@ -2728,7 +2761,7 @@ try {
   };
   const cdpTouch = await page.context().newCDPSession(page);
 
-  await page.click('button[aria-label="Plant"]');
+  await armPlant(page);
   await page.waitForTimeout(300);
   const fingerCanvas = await page.locator("canvas[data-plan-canvas]").boundingBox();
   const fingerAt = {
@@ -2835,7 +2868,7 @@ try {
   };
 
   // Armed on Shrub from the checks above; the Plant tool is up.
-  await page.click('button[aria-label="Plant"]');
+  await armPlant(page);
   await page.waitForTimeout(250);
   const ringCanvas = await page.locator("canvas[data-plan-canvas]").boundingBox();
   const ringHome = {
@@ -3039,7 +3072,7 @@ try {
     (await ringInk(ringHome)) < openInk * 0.5,
     `${await ringInk(ringHome)} green in Select`);
 
-  await page.click('button[aria-label="Plant"]');
+  await armPlant(page);
   await page.waitForTimeout(250);
 
   // 7c-viii. A CORNER CAN BE SWAPPED BETWEEN AN ANGLE AND A CURVE.
@@ -3341,6 +3374,281 @@ try {
   ok("AND AN UNSELECTED SHAPE'S CORNER CANNOT BE DRAGGED",
     (await nodesNow()) === nodesUnselected,
     `${nodesUnselected} then ${await nodesNow()}`);
+
+  /*
+    7c-x-c. THE PLANT BUTTON IS A THREE-WAY TOGGLE: PLANT, PICK, REMOVE.
+
+    Three jobs on one subject — put one down, move one that is already down,
+    take one off — so they are three states of one button rather than a trip
+    back to Select. Select is the TAKE-OFF's tool: it grabs beds, runs,
+    corners and call-outs, and going there to nudge one shrub took the column
+    and the strip with it. See `PlantMode`.
+
+    Everything below is read off the estimate the app actually stores, or off
+    the canvas, rather than off the button's own state — a toggle that flips a
+    flag and changes nothing about what a tap does is exactly the failure this
+    is for.
+  */
+
+  /*
+    THE SAME GROUND, AFTER THE CANVAS HAS CHANGED SIZE.
+
+    Switching tools changes the height of the row above the map — the hint
+    line under it is longer in one mode than another and can wrap — so a page
+    point read in one tool is a different piece of ground in the next. The map
+    holds its CENTRE across a resize (the view is a centre and a scale), so an
+    offset from the middle of the canvas is the thing that survives, and every
+    point below is carried as one.
+  */
+  const plantCanvasNow = () => page.locator("canvas[data-plan-canvas]").boundingBox();
+  const offsetIn = (pt, box) => ({
+    dx: pt.x - (box.x + box.width / 2),
+    dy: pt.y - (box.y + box.height / 2),
+  });
+  const pointNow = async (off) => {
+    const b = await plantCanvasNow();
+    return { x: b.x + b.width / 2 + off.dx, y: b.y + b.height / 2 + off.dy };
+  };
+  const fractionOff = (fx, fy) =>
+    offsetIn(at(fx, fy), canvasForShape);
+  /** Every plant's position, so a move or a removal can be seen. */
+  const plantSpots = () =>
+    page.evaluate(() =>
+      JSON.stringify(
+        (JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.plants ?? [])
+          .map((p) => `${p.at.lat},${p.at.lng}`),
+      ));
+  const plantCount = async () => (await planted()).plants.length;
+  const plantBtn = page.locator('button[aria-label="Plant"]');
+  const plantMode = () => plantBtn.getAttribute("data-plant-mode");
+  const plantWord = async () => (await plantBtn.textContent()) ?? "";
+
+  const wereThere = await plantCount();
+
+  /*
+    WHERE THE BED IS, AND WHAT IT LOOKS LIKE PICKED UP — both read before the
+    Plant tool is armed, because the check they serve is that neither changes
+    when a bed is tapped in Pick.
+
+    The bed is found by its OWN COLOUR rather than by the fractions it was
+    drawn at: the check above this one drags an unselected corner, which is
+    refused as a grab and falls through to a map pan, so by here the bed is 55
+    by 40 pixels from where the section last named it. That is what the first
+    version of this check walked into — it read 0 ink at a remembered point
+    and called an empty tap a bed left alone.
+  */
+  const bedPixels = (want) =>
+    page.evaluate(([h, wantCentre]) => {
+      const r0 = parseInt(h.slice(1, 3), 16);
+      const g0 = parseInt(h.slice(3, 5), 16);
+      const b0 = parseInt(h.slice(5, 7), 16);
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const rect = c.getBoundingClientRect();
+      const k = c.width / rect.width;
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      let n = 0, sx = 0, sy = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (
+          Math.abs(d[i] - r0) <= 30 &&
+          Math.abs(d[i + 1] - g0) <= 30 &&
+          Math.abs(d[i + 2] - b0) <= 30
+        ) {
+          n++;
+          sx += (i / 4) % c.width;
+          sy += Math.floor(i / 4 / c.width);
+        }
+      }
+      if (!wantCentre) return n;
+      return n ? { x: rect.left + sx / n / k, y: rect.top + sy / n / k } : null;
+    }, [bedColor, want === "centre"]);
+  const bedInk = () => bedPixels("count");
+  const bedMiddle = () => bedPixels("centre");
+
+  const bedDown = await bedInk();
+  const bedPt = await bedMiddle();
+  ok("the bed is findable by its own colour", bedPt !== null, JSON.stringify(bedPt));
+  await page.mouse.click(bedPt.x, bedPt.y);
+  await page.waitForTimeout(400);
+  const bedUp = await bedInk();
+  ok("a tap on it in Select picks it up",
+    bedUp > bedDown, `${bedDown} down, ${bedUp} picked up`);
+  const bareOff = fractionOff(0.5, 0.12);
+  const bare0 = await pointNow(bareOff);
+  await page.mouse.click(bare0.x, bare0.y);
+  await page.waitForTimeout(400);
+  ok("and a tap on bare ground puts it down again",
+    (await bedInk()) <= bedDown * 1.05, `${await bedInk()} against ${bedDown}`);
+  const bedOff = offsetIn(bedPt, await plantCanvasNow());
+
+  await armPlant(page);
+  await page.waitForTimeout(400);
+  ok("the Plant tool comes up planting",
+    (await plantMode()) === "plant" && /Plant/.test(await plantWord()),
+    `${await plantMode()} · ${await plantWord()}`);
+
+  // Two shrubs of our own, on ground checked to be empty first: what follows
+  // picks one up and takes both off, and a spot that quietly held a plant
+  // already would make every one of those checks pass for the wrong reason.
+  const offA = fractionOff(0.72, 0.28);
+  const offB = fractionOff(0.88, 0.52);
+  const offC = fractionOff(0.6, 0.86);
+  for (const [name, off] of [["A", offA], ["B", offB], ["C", offC]]) {
+    const pt = await pointNow(off);
+    ok(`the ground at ${name} is empty to begin with`,
+      (await ringInk(pt, 22)) === 0, `${await ringInk(pt, 22)} green`);
+  }
+  const tapAt = async (off, tap = penDownAt) => {
+    const pt = await pointNow(off);
+    await tap(pt.x, pt.y);
+  };
+  await tapAt(offA);
+  await page.waitForTimeout(300);
+  await tapAt(offB);
+  await page.waitForTimeout(400);
+  ok("a pencil in the plant state puts two down",
+    (await plantCount()) === wereThere + 2,
+    `${wereThere} before, ${await plantCount()} after`);
+
+  // 1. PLANT -> PICK.
+  await plantBtn.click();
+  await page.waitForTimeout(400);
+  ok("TAPPING THE TOOL AGAIN MOVES IT ON TO PICK",
+    (await plantMode()) === "select" && /Pick/.test(await plantWord()),
+    `${await plantMode()} · ${await plantWord()}`);
+  ok("and it is still the live tool",
+    (await plantBtn.getAttribute("aria-pressed")) === "true");
+
+  /*
+    THE HEADLINE: THE SAME TAP NO LONGER PLANTS.
+
+    The pencil that put A and B down a moment ago, on ground checked empty,
+    now leaves nothing behind. Without this the toggle would be a word on a
+    button.
+  */
+  const beforePick = await plantCount();
+  await tapAt(offC);
+  await page.waitForTimeout(400);
+  ok("A PENCIL TAP IN PICK PLANTS NOTHING",
+    (await plantCount()) === beforePick,
+    `${beforePick} before, ${await plantCount()} after`);
+  const bareC = await ringInk(await pointNow(offC), 22);
+  ok("and the ground it landed on is still bare", bareC === 0, `${bareC} green`);
+
+  // But picking one up and moving it is exactly what this state is for. The
+  // drop is carried as an offset too, since that is where B stands from here.
+  const spotsBefore = await plantSpots();
+  const offBMoved = { dx: offB.dx - 60, dy: offB.dy + 45 };
+  const fromB = await pointNow(offB);
+  const toB = await pointNow(offBMoved);
+  await page.mouse.move(fromB.x, fromB.y);
+  await page.mouse.down();
+  await page.mouse.move(toB.x, toB.y, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  ok("AND A DRAG IN PICK MOVES THE PLANT",
+    (await plantSpots()) !== spotsBefore);
+  ok("and moving it planted nothing",
+    (await plantCount()) === beforePick,
+    `${beforePick} then ${await plantCount()}`);
+
+  /*
+    AND THE TAKE-OFF IS LEFT ALONE, which is what makes this different from
+    Select proper.
+
+    Read off the CANVAS: a selected shape wears a ring in its own colour on
+    every corner, and an unselected one carries the outline alone — the two
+    readings this section measured a few checks above. The bed's corner is
+    where the drag left it, carried across the tool change as an offset from
+    the middle of the map.
+  */
+  const bedPtNow = await pointNow(bedOff);
+  await page.mouse.click(bedPtNow.x, bedPtNow.y);
+  await page.waitForTimeout(400);
+  ok("A TAP ON A BED IN PICK DOES NOT PICK THE BED UP",
+    (await bedInk()) <= bedDown * 1.05,
+    `${await bedInk()} against ${bedDown} down and ${bedUp} picked up`);
+  // The ruler is the two readings above: the same tap in Select raised the
+  // count, so a tap that landed on nothing cannot be what this is reading.
+
+  /*
+    LEAVING THE TOOL AND COMING BACK LANDS ON PLANTING.
+
+    The state is not remembered across a trip to another tool, and that is
+    deliberate: coming back to a tool that is silently still in Remove is how
+    a tap meant to plant a tree takes one off instead.
+  */
+  await page.click('button[aria-label="Select"]');
+  await page.waitForTimeout(300);
+
+  await plantBtn.click();
+  await page.waitForTimeout(400);
+  ok("REACHING FOR THE TOOL AGAIN COMES BACK TO PLANTING",
+    (await plantMode()) === "plant", await plantMode());
+
+  // 2. PLANT -> PICK -> REMOVE.
+  await plantBtn.click();
+  await page.waitForTimeout(250);
+  await plantBtn.click();
+  await page.waitForTimeout(400);
+  ok("AND ONCE MORE REACHES REMOVE",
+    (await plantMode()) === "delete" && /Remove/.test(await plantWord()),
+    `${await plantMode()} · ${await plantWord()}`);
+  /*
+    AND IT SAYS SO IN RED.
+
+    The three states are not equally recoverable — a plant too many is a
+    symbol you can see, and a plant removed is a symbol that is gone — so the
+    one that takes things off the plan does not look like the tool armed as
+    usual.
+  */
+  ok("and the button says so in red",
+    (await plantBtn.evaluate((el) => getComputedStyle(el).backgroundColor)) ===
+      "rgb(239, 68, 68)",
+    await plantBtn.evaluate((el) => getComputedStyle(el).backgroundColor));
+
+  // A FINGER TAKES NOTHING OFF. Removing is aimed, exactly as planting is, so
+  // it is held to the same rule — and a thumb that removes a shrub is worse
+  // than one that plants a tree, because there is nothing left to notice.
+  const beforeDelete = await plantCount();
+  await tapAt(offA, touchTap);
+  await page.waitForTimeout(400);
+  ok("A FINGER TAP IN REMOVE TAKES NOTHING OFF",
+    (await plantCount()) === beforeDelete,
+    `${beforeDelete} before, ${await plantCount()} after`);
+
+  // The pencil does, and it STAYS in Remove: clearing a bed of eleven shrubs
+  // is one mode, not eleven mode switches. The second tap is the check —
+  // nothing is touched between them.
+  await tapAt(offA);
+  await page.waitForTimeout(400);
+  ok("A PENCIL TAP TAKES A PLANT OFF THE PLAN",
+    (await plantCount()) === beforeDelete - 1,
+    `${beforeDelete} before, ${await plantCount()} after`);
+  await tapAt(offBMoved);
+  await page.waitForTimeout(400);
+  ok("AND IT STAYS IN REMOVE FOR THE NEXT ONE",
+    (await plantCount()) === beforeDelete - 2,
+    `${beforeDelete} before, ${await plantCount()} after`);
+  ok("and the button is still on Remove",
+    (await plantMode()) === "delete", await plantMode());
+
+  // Undo is what makes it safe to have no confirmation on the tap.
+  await page.locator('button[aria-label="Undo the last change to the plan"]').click();
+  await page.waitForTimeout(500);
+  ok("AND UNDO PUTS ONE BACK",
+    (await plantCount()) === beforeDelete - 1,
+    `${await plantCount()} on the plan`);
+  // Take it off again, so the plan carries what it did before this section.
+  await tapAt(offBMoved);
+  await page.waitForTimeout(400);
+  ok("the two placed here are off the plan again",
+    (await plantCount()) === wereThere,
+    `${wereThere} at the start, ${await plantCount()} now`);
+
+  // Back to the take-off's own tool and column for what follows.
+  await page.click('button[aria-label="Select"]');
+  await page.waitForTimeout(200);
+  await openPlanTab();
 
   // 7c-xi. A DESIGNATED COLOUR PER ASSEMBLY.
   //

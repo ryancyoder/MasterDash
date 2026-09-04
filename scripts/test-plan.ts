@@ -24,6 +24,8 @@ import {
   plantsFrom,
   labelOffsetFrom,
   nextLabelMode,
+  nextPlantMode,
+  PLANT_MODES,
   shapeIsHidden,
   topologyFrom,
   type PlacedPlant,
@@ -1127,6 +1129,29 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
     nextLabelMode("all") === "name" &&
       nextLabelMode("name") === "none" &&
       nextLabelMode("none") === "all");
+}
+
+// --- What a tap does while the Plant tool is up ------------------------------
+
+{
+  console.log("\n--- plant modes ---");
+
+  /*
+    THREE JOBS ON ONE SUBJECT, ON ONE BUTTON.
+
+    Placing, picking and removing are all "the plant under the tip", so they
+    are three states of the Plant tool rather than a trip back to Select —
+    which is the take-off's tool and would take the column and the strip with
+    it. The order is the order of the work: you plant, then you tidy up where
+    things sit, then you take out what does not belong.
+  */
+  ok("the cycle is plant, then pick, then remove, then round",
+    nextPlantMode("plant") === "select" &&
+      nextPlantMode("select") === "delete" &&
+      nextPlantMode("delete") === "plant");
+  ok("and it starts on planting",
+    PLANT_MODES[0] === "plant" && PLANT_MODES.length === 3,
+    PLANT_MODES.join(" "));
 
   /*
     The offset is rebuilt out of storage, not cast.
