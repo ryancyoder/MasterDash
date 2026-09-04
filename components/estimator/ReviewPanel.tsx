@@ -588,6 +588,23 @@ export function ReviewColumn({
  * in what they are grouped by — the frame itself, its badges and its two
  * gestures are the same thing twice, and were the same fifty lines twice.
  */
+/**
+ * ONE TILE SIZE FOR EVERY RAIL, and it is square.
+ *
+ * The three photo rails were 88x64 and the plants rail 92x104 with a name
+ * under it — three shapes on one switch, so the strip changed height when you
+ * changed source and the map moved with it. A square is also the honest frame
+ * for what is in it: a photograph of a yard is as often portrait as landscape,
+ * and a plant picture is neither, so a landscape box crops one of them badly
+ * whatever it does.
+ *
+ * NO NAME UNDER A TILE. A caption at this size is four truncated words that
+ * tell you less than the picture already did, and it is the caption rather
+ * than the picture that sets the height. The name is still on the tile's
+ * `title` and its `aria-label`, and the armed one is named in the column.
+ */
+const TILE = "h-20 w-20 shrink-0 overflow-hidden rounded-xl";
+
 function PropertyFrame({
   photo,
   label,
@@ -609,7 +626,7 @@ function PropertyFrame({
          that holds both owns the gesture from here. */
       onPointerDown={(ev) => onDragPhoto(photo, label, ev)}
       title={photo.caption ?? label}
-      className={`relative h-16 w-[5.5rem] shrink-0 overflow-hidden rounded-lg border-2 ${
+      className={`relative ${TILE} border-2 ${
         picked ? "border-accent" : "border-transparent"
       }`}
     >
@@ -820,16 +837,23 @@ export function ReviewFilmstrip({
         */}
         <button
           onClick={() => onPickPlant(null)}
+          aria-label={`Any ${plantGroupLabel}`}
           aria-pressed={plantPickedId === null}
-          className={`flex h-[104px] w-[92px] shrink-0 flex-col items-center justify-center gap-1 rounded-xl border px-1 text-center ${
+          title={`Any ${plantGroupLabel}`}
+          /*
+            The one tile that keeps words, because it has no picture to be
+            recognised by — "any shrub" is a choice rather than a plant, and a
+            leaf glyph alone would read as a plant with no photograph on file.
+          */
+          className={`flex ${TILE} flex-col items-center justify-center gap-0.5 border-2 px-1 text-center ${
             plantPickedId === null
               ? "border-accent bg-accent/15"
               : "border-edge bg-surface"
           }`}
         >
-          <span aria-hidden="true" className="text-xl">🌿</span>
-          <span className="w-full truncate text-[0.6rem] font-bold text-ink">
-            Any {plantGroupLabel}
+          <span aria-hidden="true" className="text-lg">🌿</span>
+          <span className="w-full truncate text-[0.55rem] font-bold text-ink">
+            Any
           </span>
         </button>
         {plants === null ? (
@@ -848,9 +872,12 @@ export function ReviewFilmstrip({
                 onClick={() => onPickPlant(row)}
                 aria-label={row.name}
                 aria-pressed={picked}
-                title={row.botanical ?? row.name}
-                className={`flex h-[104px] w-[92px] shrink-0 flex-col overflow-hidden rounded-xl border text-left ${
-                  picked ? "border-accent bg-accent/15" : "border-edge bg-surface"
+                /* The name lives here now rather than under the picture: it is
+                   what a long press and a hover both answer with, and it is
+                   what the column says for whichever one is armed. */
+                title={row.botanical ? `${row.name} — ${row.botanical}` : row.name}
+                className={`relative ${TILE} border-2 ${
+                  picked ? "border-accent" : "border-transparent"
                 }`}
               >
                 {row.image ? (
@@ -859,19 +886,20 @@ export function ReviewFilmstrip({
                     src={row.image}
                     alt=""
                     loading="lazy"
-                    className="h-[68px] w-full bg-surface2 object-cover"
+                    draggable={false}
+                    className="h-full w-full bg-surface2 object-cover"
                   />
                 ) : (
+                  /* 228 of the 962 have no picture. A leaf on the tile's own
+                     ground says "nothing on file" rather than showing an
+                     empty frame that reads as an image that failed. */
                   <span
                     aria-hidden="true"
-                    className="flex h-[68px] w-full items-center justify-center bg-surface2 text-lg opacity-40"
+                    className="flex h-full w-full items-center justify-center bg-surface2 text-xl opacity-40"
                   >
                     🌿
                   </span>
                 )}
-                <span className="w-full flex-1 truncate px-1.5 py-1 text-[0.6rem] font-bold text-ink">
-                  {row.name}
-                </span>
               </button>
             );
           })
@@ -1006,7 +1034,7 @@ export function ReviewFilmstrip({
               if (item.offsetMs !== null) onSeek(item.offsetMs * drift);
             }}
             title={item.title}
-            className={`relative h-16 w-[5.5rem] shrink-0 overflow-hidden rounded-lg border-2 ${
+            className={`relative ${TILE} border-2 ${
               isPicked ? "border-accent" : isLive ? "border-ink" : "border-transparent"
             }`}
           >

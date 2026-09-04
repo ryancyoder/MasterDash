@@ -869,6 +869,29 @@ know, and this rail is for the other case, which is most of them.
 plain leaf rather than an empty frame. The rail follows whatever category is
 armed, and the generic leads it, because an unnamed shrub is a real answer.
 
+**Arming the Plant tool puts the strip on the catalog**, as it puts the column
+on Plants: the rail you want under a map you are planting on is the one you
+pick plants from, and reaching for the tool and then reaching again for the
+pictures was the second reach this exists to remove. Neither switches back when
+the tool is put down — both stay where the last deliberate act left them, and a
+rail that jumped away the moment you chose Select would take the plant you were
+mid-way through choosing with it.
+
+**Every tile on every rail is the same square.** The three photo rails were
+88×64 and the plants rail 92×104 with a name under it — three shapes on one
+switch, so the strip changed height when you changed source and the map moved
+with it. A square is also the honest frame for what is in it: a yard photograph
+is as often portrait as landscape and a plant picture is neither, so a
+landscape box crops one of them badly whatever it does.
+
+**No name under a tile.** A caption at that size is four truncated words that
+tell you less than the picture already did, and it is the caption rather than
+the picture that sets the height. The name is on the tile's `title` — with the
+botanical name after it — and on its `aria-label`, and the column names
+whichever one is armed. The one tile that keeps a word is *Any*, because it has
+no picture to be recognised by: a leaf glyph alone would read as a plant with
+no photograph on file.
+
 **THE PICTURE IS OF THE KIND, NOT OF THE VARIETY**, and that is worth knowing
 before trusting one: every Arborvitae cultivar in the file points at the same
 `Thuja.jpeg`. It tells you what an arborvitae looks like, not what *Forever

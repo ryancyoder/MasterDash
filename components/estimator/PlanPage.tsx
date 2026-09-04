@@ -1226,6 +1226,20 @@ export default function PlanPage({
         are on a screen you have to go and find.
       */
       setMode("plants");
+      /*
+        AND THE STRIP FOLLOWS THE TOOL TOO.
+
+        The catalog is the rail you want under a map you are planting on, and
+        leaving the strip on the yard's photographs meant reaching for the tool
+        and then reaching again for the pictures to pick from.
+
+        It does NOT switch back when the tool is put down, which matches the
+        column: both stay where the last deliberate act left them, and both are
+        one tap from anywhere else. A rail that jumped away the moment you
+        chose Select would take the plant you were mid-way through choosing
+        with it.
+      */
+      setStripSource("plants");
     }
   }, []);
 

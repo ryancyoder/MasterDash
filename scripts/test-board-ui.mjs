@@ -2489,14 +2489,65 @@ try {
   const plantsRail = page.locator('button:text-is("Plants")');
   ok("the strip offers the catalog beside the yard's photographs",
     (await plantsRail.count()) === 1);
-  await plantsRail.click();
+  /*
+    AND THE STRIP FOLLOWS THE TOOL, so it is already showing. Reaching for the
+    Plant tool and then reaching again for the pictures to pick from is the
+    second reach this was meant to remove.
+  */
+  ok("ARMING THE PLANT TOOL PUT THE STRIP ON THE CATALOG",
+    (await plantsRail.getAttribute("aria-pressed")) === "true",
+    await plantsRail.getAttribute("aria-pressed"));
   await page.waitForTimeout(900);
 
   ok("THE ARMED CATEGORY'S PLANTS ARE ON THE STRIP, as pictures",
     (await page.locator('button[aria-label="Arborvitae Mr. Bowling Ball"]').count()) === 1,
     `${await page.locator('button[aria-pressed][aria-label^="A"]').count()} tiles`);
   ok("and the generic leads it, because an unnamed shrub is a real answer",
-    (await page.locator('button:has-text("Any Shrub")').count()) >= 1);
+    (await page.locator('button[aria-label="Any Shrub"]').count()) === 1);
+
+  /*
+    THE TILES ARE SQUARE, AND THEY CARRY NO NAME.
+
+    Three rails on one switch were three different shapes, so the strip
+    changed height when you changed source and the map moved with it. A
+    caption at this size is four truncated words that tell you less than the
+    picture did — and it is the caption rather than the picture that sets the
+    height. The name is on the tile's title and its label.
+  */
+  const tileBox = async (label) =>
+    (await page.locator(`button[aria-label="${label}"]`).first().boundingBox()) ?? null;
+  const plantTile = await tileBox("Arborvitae Mr. Bowling Ball");
+  ok("A STRIP TILE IS SQUARE",
+    plantTile !== null && Math.abs(plantTile.width - plantTile.height) < 2,
+    JSON.stringify(plantTile));
+  ok("and carries no name under the picture",
+    !/Bowling/.test(
+      await page.evaluate(
+        () =>
+          document.querySelector('button[aria-label="Arborvitae Mr. Bowling Ball"]')
+            ?.textContent ?? "",
+      ),
+    ),
+    await page.evaluate(
+      () =>
+        document.querySelector('button[aria-label="Arborvitae Mr. Bowling Ball"]')
+          ?.textContent ?? "",
+    ));
+  ok("though the name is still on it, for a hover and for a reader",
+    (await page.getAttribute('button[aria-label="Arborvitae Mr. Bowling Ball"]', "title"))
+      ?.startsWith("Arborvitae Mr. Bowling Ball") === true);
+
+  // The photo rails are the same tile, so the strip does not change height
+  // when the source changes under a finger.
+  await page.click('button:text-is("Visit")');
+  await page.waitForTimeout(400);
+  const stripWithPhotos = (await page.locator("canvas[data-plan-canvas]").boundingBox())?.height;
+  await plantsRail.click();
+  await page.waitForTimeout(600);
+  const stripWithPlants = (await page.locator("canvas[data-plan-canvas]").boundingBox())?.height;
+  ok("AND EVERY RAIL IS THE SAME HEIGHT, so the map does not move under you",
+    Math.abs((stripWithPhotos ?? 0) - (stripWithPlants ?? 0)) < 2,
+    `${Math.round(stripWithPhotos ?? 0)} on photographs, ${Math.round(stripWithPlants ?? 0)} on plants`);
 
   /*
     A PICTURE PICKS THE SAME AS A NAME DOES.
