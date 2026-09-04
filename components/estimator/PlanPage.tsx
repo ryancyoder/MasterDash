@@ -561,15 +561,9 @@ export default function PlanPage({
   >(null);
   const [selectedCalloutId, setSelectedCalloutId] = useState<string | null>(null);
   /**
-   * The plants a dragged photograph is currently over.
-   *
-   * A ref AND a state: the ref is what the release reads, the state is what
-   * the canvas draws a ring around. Reading it out of state in the drop
-   * handler would put it in that effect's dependencies, and the effect adds
-   * the window listeners — so every pointermove would tear them down and put
-   * them back.
+   * The plants a dragged photograph is currently over, for the ring and the
+   * line under the map. NOT what the drop reads — see the release handler.
    */
-  const photoDropRef = useRef<string[]>([]);
   const [photoDropIds, setPhotoDropIds] = useState<string[]>([]);
   const canvasApi = useRef<PlanCanvasApi | null>(null);
   /*
@@ -973,7 +967,6 @@ export default function PlanPage({
         attach a picture to plants nobody pointed at.
       */
       const over = canvasApi.current?.plantIdsAt(e.clientX, e.clientY) ?? [];
-      photoDropRef.current = over;
       // Only when it actually changes: this runs on every pointermove, and a
       // fresh array each time would redraw the whole map at the frame rate of
       // a finger.
@@ -989,8 +982,16 @@ export default function PlanPage({
         (Math.abs(e.clientX - from.x) > DRAG_START_PX ||
           Math.abs(e.clientY - from.y) > DRAG_START_PX);
       const drag = dragPhoto;
-      const onPlants = photoDropRef.current;
-      photoDropRef.current = [];
+      /*
+        ASKED AGAIN AT THE RELEASE, not remembered from the last move.
+
+        The drop belongs to where the finger actually let go. Reading what the
+        last pointermove happened to see is a race with anything that redraws
+        between the two — and the answer it gives is a fraction of a second
+        stale, on a gesture whose whole point is aiming. The move's own copy
+        stays where it belongs: drawing the ring.
+      */
+      const onPlants = canvasApi.current?.plantIdsAt(e.clientX, e.clientY) ?? [];
       setDragPhoto(null);
       setPhotoDropIds([]);
       if (!dragged) return;
@@ -1637,6 +1638,21 @@ export default function PlanPage({
     }
     return out;
   }, [plan.plants, plantName]);
+
+  /**
+   * What a dropped photograph would be attached to, in words.
+   *
+   * The same `N · name` a mass is called out with on the map, so the line
+   * under the map and the label on the drawing say the same thing about the
+   * same group. One plant is just its name.
+   */
+  const photoDropLabel = useMemo(() => {
+    if (!photoDropIds.length) return "";
+    const first = plan.plants.find((p) => p.id === photoDropIds[0]);
+    if (!first) return "";
+    const name = plantName(first);
+    return photoDropIds.length > 1 ? `${photoDropIds.length} · ${name}` : name;
+  }, [photoDropIds, plan.plants, plantName]);
 
   const selectedPlant = useMemo(
     () => plan.plants.find((p) => p.id === selectedPlantId) ?? null,
@@ -2406,7 +2422,25 @@ export default function PlanPage({
         </div>
       ) : (
         <p className="shrink-0 mb-2 text-[0.7rem] text-muted">
-          {ready
+          {/*
+            WHILE A PHOTOGRAPH IS IN THE AIR, THIS LINE IS ABOUT THE DROP.
+
+            The drag ghost is a picture ninety pixels across and it sits over
+            the very thing being aimed at — so a ring drawn round a plant is
+            under the photograph hiding it. This line is the one place on the
+            screen that is not covered, and it already exists to say what the
+            next action will do.
+
+            It NAMES what would be caught rather than saying "a plant": the
+            whole question mid-drag is whether the mass under the picture is
+            the mass you meant, and "2 · Shrub" answers it where "a plant"
+            does not.
+          */}
+          {dragPhoto?.kind === "pin" && dragPhoto.moved
+          ? photoDropIds.length
+            ? `Let go to attach this photograph to ${photoDropLabel}`
+            : "Drop a photograph on a plant to attach it · a mass takes the whole group"
+          : ready
           ? `${tool === "plant" ? PLANT_MODE_UI[plantMode].hint : HINTS[tool]}${
               tool === "select"
                 ? ""

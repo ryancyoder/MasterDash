@@ -4989,9 +4989,22 @@ try {
   const pairPt = await pointNow(pairOff);
   const drop2 = await dropFrameOn(1, pairPt);
   const wouldCatchMass = await page.getAttribute("canvas[data-plan-canvas]", "data-photo-drop");
+  /*
+    AND THE LINE UNDER THE MAP NAMES IT, which is the half that makes the
+    gesture findable at all. The drag ghost is a picture ninety pixels across
+    sitting over the very thing being aimed at, so a ring round a plant is
+    under the photograph hiding it; this line is the one place on the screen
+    the ghost does not cover. It says WHAT would be caught rather than "a
+    plant", because the question mid-drag is whether the mass under the
+    picture is the mass you meant.
+  */
+  const dropHint = (await page.textContent("main p.text-muted, p.text-muted")) ?? "";
   await drop2();
   ok("a mass says it would catch both of its plants",
     wouldCatchMass === "2", `${wouldCatchMass} plants under the picture`);
+  ok("AND THE LINE UNDER THE MAP NAMES WHAT WOULD CATCH IT",
+    /Let go to attach/.test(dropHint) && /2 · Shrub/.test(dropHint),
+    dropHint.slice(0, 90));
   ok("AND ONE DROPPED ON A MASS TAKES THE WHOLE GROUP",
     (await taggedCount()) === 3, JSON.stringify(await plantShots()));
 

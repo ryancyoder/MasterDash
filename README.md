@@ -1621,6 +1621,13 @@ drawing has massed, and a drop that tagged a group the plan did not agree was a
 group would attach a picture to plants nobody pointed at. `massDiscs()` is one
 description read by both the draw and that hit test, for exactly that reason.
 
+**The drop is decided at the RELEASE**, by asking the canvas again where the
+finger let go — not by remembering what the last pointermove saw. That answer
+is a fraction of a second stale on a gesture whose whole point is aiming, and
+it races anything that redraws in between; a run with a screenshot in the
+middle of it tagged one plant of a mass of two. The move's own copy stays where
+it belongs, drawing the ring.
+
 **The link goes on each plant, not on the group.** A mass is DERIVED: it exists
 only while those canopies overlap, and a plant dragged out of one takes its own
 evidence with it. There is nothing for a link to a group to point at
@@ -1634,10 +1641,21 @@ is two chances to fix a bug in one of them. And it is read back in
 `plantsFrom` — a field not named there vanishes on the next load with no error
 anywhere, which is what happened to a bed's photographs once already.
 
-**The target shows itself.** A plant symbol is small — an 8ft canopy is a dozen
-pixels at a yard zoom — so letting go over one is a guess unless the drawing
-says what will catch it. Every plant in the group rings at once, which is also
-the answer to *am I about to tag all of these*. A plant that carries a
+**THE LINE UNDER THE MAP IS WHAT MAKES IT FINDABLE**, and the ring alone was
+not. The drag ghost is a picture ninety pixels across and it sits over the very
+thing being aimed at, so a ring drawn round a plant is *underneath the
+photograph hiding it* — and a 6ft shrub on a yard-wide view is a 5px dot to
+begin with. That line is the one place on the screen the ghost does not cover,
+and it already exists to say what the next action will do. Mid-drag it reads
+**"Let go to attach this photograph to 2 · Shrub"** — naming what would be
+caught, because the question in the air is whether the mass under the picture
+is the mass you meant. With nothing under it: *drop a photograph on a plant to
+attach it · a mass takes the whole group*.
+
+**The ring is drawn at the GRAB radius, not the canopy.** `PLANT_GRAB_MIN_PX`
+is what actually catches the drop, so it is the honest thing to draw: the ring
+shows the target rather than the plant. Every plant in the group rings at once,
+which is also the answer to *am I about to tag all of these*. A plant that carries a
 photograph then wears a small frame mark in the photo pins' own white, in place
 of its tick; the picked plant's card lists what it carries, with an × on each,
 because an attachment with no way back is half a feature and on a mass of

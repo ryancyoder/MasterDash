@@ -2173,8 +2173,17 @@ export default function PlanCanvas({
         const at = dragPlant && dragPlant.id === plant.id ? dragPlant.at : plant.at;
         const p = toCanvas(toWorld(at), t);
         const { r } = stampRadius(plantFace(plant).spreadFt, ftPerPxNow);
+        /*
+          RUNG AT THE GRAB RADIUS, not at the canopy.
+
+          A 6ft shrub on a yard-wide view is a 5px dot, and a ring five pixels
+          outside that is a mark nobody can see under a photograph being
+          dragged over it. `PLANT_GRAB_MIN_PX` is what actually catches the
+          drop, so it is also the honest thing to draw: the ring shows the
+          target, not the plant.
+        */
         ctx.beginPath();
-        ctx.arc(p.x, p.y, r + 5, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, Math.max(r, PLANT_GRAB_MIN_PX) + 4, 0, Math.PI * 2);
         ctx.stroke();
       }
       ctx.restore();
