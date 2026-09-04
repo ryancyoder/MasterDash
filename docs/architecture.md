@@ -26,9 +26,22 @@
 The estimate is stored as a **log of increments** rather than as totals, which
 is what lets two devices edit one job offline and merge by union afterwards.
 
-`quick_estimates.lines` is a **projection**. The estimate itself lives in
+`quick_estimates.lines` is a **projection** — `taps`, `labels`,
+`assemblyBuckets`, `rendered` and `takeoff`, every one of which folds out of
+`quick_estimate_taps` and can be rebuilt from it. The estimate itself lives in
 `quick_estimate_taps`. Anything editing an estimate directly in Supabase must
 write taps, not lines.
+
+**The take-off and the visit are documents, not projections**, so they have
+columns of their own: `quick_estimates.plan` and `quick_estimates.visit`.
+Nothing can rebuild them — not the op log, not the catalog, not the rest of the
+row. They used to ride inside `lines`, which meant the one column documented as
+safe to throw away held the only copy of the most expensive data the app has.
+
+> Both places are still written. A build in the field reads `lines.plan`, and
+> cutting over in one step would take the take-off away from every tablet that
+> has not been updated. Reads prefer the column and fall back to the blob;
+> dropping the copy is a later migration, once the fleet is current.
 
 **Some things are projected rather than logged:** loads produced by a drawn
 shape, and plants placed on the plan. `planBuckets()`/`effectiveBuckets()` and
@@ -51,6 +64,33 @@ The plan being a document is why undo there restores the document as it was,
 and why the merge guard has to be careful about adopting a remote plan. That
 guard once keyed off `shapes.length > 0`, so a yard taken off as twelve trees
 and no beds read as empty and was discarded whole; it counts plants too now.
+`planSupersedes()` holds that rule.
+
+### The plan document carries a version
+
+`PLAN_VERSION` in `plan.ts`. **Raise it whenever a field is added to the plan
+document or an existing one changes meaning.**
+
+It exists because the readers rebuild a plan field by field rather than casting
+one — which is what makes a hand-edited estimate safe to open, and which means
+anything they do not name is dropped. Between two builds that is a data-loss
+path: a tablet on an older build opens an estimate saved by a newer one, strips
+the fields it has never heard of, and its fresher `updated_at` then makes the
+stripped copy authoritative. A take-off cannot be rebuilt from anything.
+
+Three rules close it, all in `plan.ts` and all pinned by `test:plan`:
+
+- `futurePlanFrom()` spots a document declaring a version above this build's
+  and keeps the **original** beside the parsed copy.
+- `planForStorage()` writes that original back verbatim, so a save round-trips
+  every unknown field instead of replacing it with a gap.
+- `planSupersedes()` refuses a remote plan declaring an **older** version than
+  the one held, which is what an out-of-date build writing back its partial
+  reading looks like.
+
+A plan from a newer build is therefore **read-only**: `mutatePlan()` refuses
+every edit and the Plan page says why. The estimate can still be tapped out on
+the grid — taps are an op log and nothing about them is version-bound.
 
 ## Which job, before which assembly
 

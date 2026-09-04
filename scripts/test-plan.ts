@@ -22,6 +22,11 @@ import {
   calloutWidth,
   calloutsFrom,
   emptyPlan,
+  futurePlanFrom,
+  PLAN_VERSION,
+  planForStorage,
+  planReadOnly,
+  planSupersedes,
   plantsFrom,
   labelOffsetFrom,
   nextLabelMode,
@@ -2069,6 +2074,84 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
 
   ok("there is a size below which the texture is not drawn at all",
     EDGE_MIN_R >= 5);
+}
+
+/*
+  THE PLAN DOCUMENT'S VERSION, and the data-loss path it closes.
+
+  Every reader here REBUILDS a plan field by field rather than casting one,
+  which is what makes a hand-edited estimate safe to open and which means
+  anything unnamed is dropped. Across two builds that is how a take-off dies:
+  a tablet on an older build opens an estimate saved by a newer one, strips
+  the fields it has never heard of, and its fresher `updated_at` then makes
+  the stripped copy the one everybody gets. Nothing can rebuild a take-off —
+  it is not in the op log — so it would simply be gone.
+
+  These pin the three rules that stop it. They are written against
+  PLAN_VERSION + 1 rather than a literal, so raising the version does not
+  quietly turn the section green for the wrong reason.
+*/
+{
+  const legacy = { shapes: [], plants: [] };
+  ok("a plan saved before versioning existed is not treated as the future",
+    futurePlanFrom(legacy) === undefined);
+
+  ok("nor is one written at this build's own version",
+    futurePlanFrom({ v: PLAN_VERSION }) === undefined);
+
+  const ahead = { v: PLAN_VERSION + 1, shapes: [], plants: [], somethingNew: 42 };
+  const future = futurePlanFrom(ahead);
+  ok("a plan from a NEWER build is spotted", future?.v === PLAN_VERSION + 1);
+  ok("and the untouched document is kept, not this build's reading of it",
+    future?.raw === ahead,
+    "must be the same object, so no field can be lost on the way through");
+
+  ok("a nonsense version is read as legacy rather than as the future",
+    futurePlanFrom({ v: "soon" }) === undefined &&
+      futurePlanFrom({ v: Number.NaN }) === undefined);
+
+  /*
+    WHAT GETS WRITTEN. This is the half that actually saves the data: a
+    document this build could not fully parse is handed back exactly as it
+    arrived, so a save round-trips every unknown field instead of replacing it
+    with a gap.
+  */
+  const mine = emptyPlan();
+  ok("an ordinary plan is written as itself", planForStorage(mine) === mine);
+
+  const held = { ...emptyPlan(), v: PLAN_VERSION + 1, newer: future! };
+  ok("A PLAN FROM THE FUTURE IS WRITTEN BACK VERBATIM",
+    planForStorage(held) === ahead,
+    "not the parsed copy, which is missing whatever that build added");
+  ok("and it is read-only here, because editing it could only lose fields",
+    planReadOnly(held) && !planReadOnly(mine));
+
+  /*
+    WHAT GETS ADOPTED. `planSupersedes` says only whether a remote plan is fit
+    to be taken; the caller still decides which side is newer by time.
+  */
+  const drawn = {
+    ...emptyPlan(),
+    shapes: [shape("s1")],
+  };
+  ok("an empty remote plan never replaces one with beds in it",
+    !planSupersedes(emptyPlan(), drawn));
+
+  const trees = {
+    ...emptyPlan(),
+    plants: [{ id: "p1", at: { lat: 41, lng: -87 }, itemId: "mat:shade_tree" }] as PlacedPlant[],
+  };
+  ok("a yard taken off as PLANTS and no beds counts as work",
+    planSupersedes(trees, emptyPlan()),
+    "reading it as empty is what would discard the whole take-off");
+
+  ok("a plan at the same version with work in it is taken",
+    planSupersedes(drawn, emptyPlan()));
+
+  const stripped = { ...drawn, v: PLAN_VERSION - 1 };
+  ok("A DOWNGRADE IS REFUSED even though it has shapes in it",
+    !planSupersedes(stripped, held),
+    "an older build writing back what little of a newer document it could read");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

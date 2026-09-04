@@ -7,6 +7,7 @@ import {
   pendingOps,
   getSnapshot,
 } from "./store";
+import { planForStorage } from "./plan";
 import type { Estimate, TapOp } from "./types";
 import { takeoffProjection, type Proposal } from "./proposal";
 
@@ -134,18 +135,33 @@ function toRow(estimate: Estimate, proposal: Proposal) {
     property_id: estimate.propertyId,
     job_name: estimate.jobName,
     status: "draft",
+    /*
+      THE DOCUMENTS, in columns of their own.
+
+      The take-off and the visit are not derivable from anything: not from the
+      op log, not from the catalog, not from the rest of the row. They used to
+      ride inside `lines`, whose contract is that it is a projection and can be
+      rebuilt — so the one column everybody is told is safe to throw away held
+      the only copy of the most expensive data the app has. See the migration
+      in supabase/ for the whole of it.
+
+      Written as they were READ when they came from a newer build, so a tablet
+      that could not fully parse a document hands back what it was given rather
+      than its own lossy reading of it.
+    */
+    plan: planForStorage(estimate.plan),
+    visit: estimate.visit,
     // The projection, so a report or a push into Aspire has one flat row to
     // read and never has to fold the log itself.
     lines: {
       taps: estimate.taps,
       labels: estimate.labels,
       assemblyBuckets: estimate.assemblyBuckets,
-      // Shapes and scale, so a reopened estimate can be re-measured rather
-      // than only re-read. The image itself is not here — it goes to storage
-      // through /api/plan-image, and this carries the id that finds it.
-      plan: estimate.plan,
-      // The transcript and what was read from it, so a visit survives the
-      // device it was typed on.
+      // A COPY, for builds that predate the columns above. The tablets in
+      // the field update whenever somebody remembers to, and one still
+      // reading `lines.plan` would find no take-off at all if this went now.
+      // Dropping these two is a later change, once the fleet is current.
+      plan: planForStorage(estimate.plan),
       visit: estimate.visit,
       // The same take-off, resolved: outlines with the curves already worked
       // out, ready for another app to draw without owning any of the geometry.

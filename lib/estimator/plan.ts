@@ -328,7 +328,43 @@ export interface PendingPoint {
  * estimate decided: where the beds are, what the map is anchored on, and which
  * layers it wants to look at while drawing.
  */
+/**
+ * The schema version this build writes, and the highest it can safely edit.
+ *
+ * Raise it whenever a field is added to the plan document or an existing one
+ * changes meaning. It exists because of the failure below, which is a real
+ * prospect on a fleet of iPads that update whenever somebody remembers to.
+ *
+ * `topologyFrom` and its neighbours REBUILD a plan field by field rather than
+ * casting one, which is what makes a hand-edited or half-written estimate safe
+ * to open — and it means anything they do not name is dropped. Between two
+ * builds that is a data-loss path: a tablet on last month's build opens an
+ * estimate saved by a current one, silently strips the fields it has never
+ * heard of, and the moment it saves, its fresher `updated_at` makes the
+ * stripped version the one everybody gets. The take-off cannot be rebuilt from
+ * the op log, so nothing would bring it back.
+ *
+ * So a document that declares a version this build does not understand is
+ * shown but never rewritten — see `planFrom` and `mutatePlan`.
+ */
+export const PLAN_VERSION = 1;
+
 export interface PlanState {
+  /**
+   * The version this document was written at. Zero for the plans that were
+   * saved before this field existed, which are all readable by this build.
+   */
+  v: number;
+  /**
+   * Set only when the document came from a build NEWER than this one.
+   *
+   * Carries the untouched document, so a save writes back exactly what was
+   * read rather than this build's lossy reading of it. Its presence is also
+   * what makes the plan read-only here: editing a document we cannot fully
+   * parse would mean choosing between discarding the edit and discarding the
+   * fields we never understood.
+   */
+  newer?: { v: number; raw: unknown };
   anchor: MapAnchor | null;
   /**
    * A view somebody locked: where the map opens, instead of fitting.
@@ -431,6 +467,7 @@ export interface PlanState {
 
 export function emptyPlan(): PlanState {
   return {
+    v: PLAN_VERSION,
     anchor: null,
     view: null,
     basemap: "satellite",
@@ -445,6 +482,79 @@ export function emptyPlan(): PlanState {
     hiddenAssemblyIds: [],
     labelMode: "all",
   };
+}
+
+/**
+ * The plan as it should be WRITTEN — to localStorage, or to Supabase.
+ *
+ * Normally the document itself. When it came from a newer build this is the
+ * untouched original instead, so a save round-trips every field this build
+ * never understood rather than replacing them with its own reading. Pair it
+ * with the guard in `mutatePlan`, which is what stops a local edit being
+ * silently dropped on the way past.
+ */
+export function planForStorage(plan: PlanState): unknown {
+  return plan.newer ? plan.newer.raw : plan;
+}
+
+/**
+ * Whether this build may edit the plan at all.
+ *
+ * True only for a document written by a newer build. Reactive without a
+ * snapshot field of its own, since the flag rides on the plan the components
+ * already hold.
+ */
+export function planReadOnly(plan: PlanState): boolean {
+  return !!plan.newer;
+}
+
+/**
+ * The version a stored plan declares, and whether this build understands it.
+ *
+ * Absent or unreadable means a plan written before versioning existed, which
+ * is every plan on file today: those read exactly as they always did. A number
+ * ABOVE `PLAN_VERSION` is the case this exists for — the document carries
+ * fields this build's readers have never heard of and would drop on the next
+ * save — so the original is handed back to be kept beside the parsed copy.
+ */
+export function futurePlanFrom(
+  value: unknown,
+): { v: number; raw: unknown } | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = (value as Record<string, unknown>).v;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  const v = Math.floor(raw);
+  return v > PLAN_VERSION ? { v, raw: value } : undefined;
+}
+
+/**
+ * Whether a plan arriving from the server should replace the one held here.
+ *
+ * Two rules, and both are about not losing a take-off:
+ *
+ * An EMPTY remote plan never replaces one with work in it, for the same reason
+ * an empty job name does not un-name an estimate — a row saved before anybody
+ * drew is not evidence that the drawing should go. "Work in it" counts plants
+ * and call-outs as well as shapes: a yard taken off as twelve trees and no
+ * beds is a real take-off, and reading it as empty would discard the whole of
+ * it, which is the exact failure this guard exists to prevent.
+ *
+ * And a plan declaring an OLDER schema never replaces a newer one. That is a
+ * build which could not read this document writing back what it managed to
+ * parse; `planForStorage` stops this build from ever producing such a row, but
+ * a tablet still running a build from before that existed can, and on
+ * `updated_at` alone its clock would win.
+ *
+ * The caller still decides which side is newer by time. This says only whether
+ * the remote is fit to be taken at all.
+ */
+export function planSupersedes(remote: PlanState, current: PlanState): boolean {
+  if (remote.v < current.v) return false;
+  return (
+    remote.shapes.length > 0 ||
+    remote.plants.length > 0 ||
+    remote.callouts.length > 0
+  );
 }
 
 /**

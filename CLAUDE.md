@@ -21,7 +21,14 @@ those comments record a rule that was got wrong two or three times first.
 - **One tap is one purchase increment, never one unit.** There is no quantity
   entry anywhere, and adding one is a product change, not a convenience.
 - **The estimate lives in `quick_estimate_taps`.** `quick_estimates.lines` is a
-  projection. Never write `lines` as if it were the source.
+  projection and can be rebuilt from the taps. Never write `lines` as if it
+  were the source.
+- **The take-off and the visit are documents, not projections.** They live in
+  `quick_estimates.plan` and `.visit`, because nothing can rebuild them. Never
+  put a document back inside `lines`.
+- **Raise `PLAN_VERSION` when the plan document changes shape.** The readers
+  drop any field they do not name, so an un-versioned change lets an older
+  tablet silently strip a newer take-off and then win the merge on its clock.
 - **Never the legacy `estimates` table** — a different estimator owns it, and
   its `deal_id` carries a UNIQUE constraint this app's data would violate.
 - **Measurements are derived, never stored.** Dragging a vertex must correct

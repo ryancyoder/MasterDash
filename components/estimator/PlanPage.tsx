@@ -86,6 +86,7 @@ import {
   CALLOUT_MAX_W,
   CALLOUT_MIN_W,
   calloutWidth,
+  planReadOnly,
 
   type PlacedPlant,
   type PendingPoint,
@@ -276,6 +277,12 @@ export default function PlanPage({
   onIntentDone?: () => void;
 }) {
   const { plan } = estimate;
+  /*
+    Read straight off the plan rather than held in state: it is a fact about
+    the document, it changes only when the document is replaced by a merge,
+    and a copy in state would be one more thing to keep in step with it.
+  */
+  const readOnlyPlan = planReadOnly(plan);
   /*
     The undo depths come from the store rather than from the estimate prop.
 
@@ -2263,6 +2270,26 @@ export default function PlanPage({
       {error && (
         <p className="shrink-0 mb-2 rounded-xl bg-[#ef4444]/15 px-3 py-2 text-xs text-[#fca5a5]">
           {error}
+        </p>
+      )}
+
+      {/*
+        This estimate's take-off was drawn by a newer build than the one on
+        this tablet, so every edit here is refused rather than applied.
+
+        The alternative is worse than a locked plan: the readers rebuild a
+        document field by field, so this build's copy is missing whatever that
+        build added, and saving an edit made on top of it would write the gap
+        back over the real take-off. The plan still DRAWS — the beds and the
+        planting are all there to look at and to price against — and the
+        estimate can still be tapped out on the grid, because the taps are an
+        op log and nothing about them is version-bound. It says so here rather
+        than leaving somebody pressing a vertex that will not move.
+      */}
+      {readOnlyPlan && (
+        <p className="shrink-0 mb-2 rounded-xl bg-[#f59e0b]/15 px-3 py-2 text-xs text-[#fcd34d]">
+          This take-off was drawn on a newer version of the app. It is shown
+          here but cannot be edited — update this iPad to change it.
         </p>
       )}
 

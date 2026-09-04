@@ -5,8 +5,12 @@ import {
   calloutWidth,
   calloutsFrom,
   emptyPlan,
+  futurePlanFrom,
   nextShapeColor,
+  PLAN_VERSION,
+  planForStorage,
   planId,
+  planSupersedes,
   plantsFrom,
   pruneNodes,
   topologyFrom,
@@ -216,10 +220,30 @@ function anchorFrom(value: unknown): MapAnchor | null {
 function planFrom(value: unknown): PlanState {
   if (!value || typeof value !== "object") return emptyPlan();
   const v = value as Record<string, unknown>;
+
+  /*
+    The version this document was written at, and whether this build can be
+    trusted with it.
+
+    Absent means a plan saved before versioning existed, which is every plan
+    on file today: those are read exactly as they always were, so nothing
+    already saved changes behaviour. A version HIGHER than this build's is the
+    case that matters — the document carries fields the readers below have
+    never heard of and would drop on the next save. It is still read, so the
+    beds and the plants draw and the estimate can be worked on, but the
+    original is kept beside it and `mutatePlan` refuses to edit it.
+  */
+  const newer = futurePlanFrom(value);
+
   const { nodes, shapes } = topologyFrom(v);
   const rawSurvey = (v.survey ?? null) as Record<string, unknown> | null;
   const rawReview = (v.review ?? null) as Record<string, unknown> | null;
   return {
+    // What was read, not what this build writes: a document from the future
+    // has to still look like one after a round trip through localStorage, or
+    // the guard would protect it once and forget on the next reload.
+    v: newer ? newer.v : PLAN_VERSION,
+    ...(newer ? { newer } : {}),
     anchor: anchorFrom(v.anchor),
     view: planViewFrom(v.view),
     basemap: v.basemap === "none" ? "none" : "satellite",
@@ -363,7 +387,13 @@ function loadSettings(): EstimatorSettings {
 
 function persist(estimate: Estimate) {
   try {
-    window.localStorage.setItem(ESTIMATE_KEY, JSON.stringify(estimate));
+    // The plan is written as it was READ when it came from a newer build, so
+    // reopening the tab does not quietly hand this build's lossy reading back
+    // to itself as the real document.
+    window.localStorage.setItem(
+      ESTIMATE_KEY,
+      JSON.stringify({ ...estimate, plan: planForStorage(estimate.plan) }),
+    );
   } catch {
     // A full or disabled store must not take the grid down mid-estimate. The
     // in-memory snapshot is still correct for this session.
@@ -502,6 +532,17 @@ const COALESCE_MS = 700;
 
 function mutatePlan(fn: (plan: PlanState) => PlanState, label = "") {
   const before = getSnapshot().estimate.plan;
+  /*
+    A plan written by a newer build is READ-ONLY here, and refusing is the
+    only honest answer.
+
+    The readers above rebuild a plan field by field, so this build's copy is
+    missing whatever that build added. Applying an edit to it and saving would
+    write the gap back over the real document; refusing the edit and saving
+    the original loses nothing. The UI says so rather than dropping presses
+    silently — see `planReadOnly()`, which reads the same flag.
+  */
+  if (before.newer) return;
   const top = undoStack[undoStack.length - 1];
   if (label && top && top.label === label && Date.now() - top.at < COALESCE_MS) {
     // Same gesture still going: keep the state it started from, and hold the
@@ -1361,12 +1402,12 @@ export function mergeRemote(
     // twelve trees and no beds is a real take-off, and reading it as empty
     // would silently discard the whole of it on the next merge — the one
     // failure this guard exists to prevent, arrived at from the other side.
+    //
+    // `planSupersedes` holds both halves of that and the downgrade rule with
+    // it, next to PLAN_VERSION where the policy lives and where a test with no
+    // browser can reach it. This decides only WHEN, by time.
     plan:
-      remoteNewer &&
-      remotePlan &&
-      (remotePlan.shapes.length > 0 ||
-        remotePlan.plants.length > 0 ||
-        remotePlan.callouts.length > 0)
+      remoteNewer && remotePlan && planSupersedes(remotePlan, current.plan)
         ? remotePlan
         : current.plan,
     // Same rule as the plan and the job name: a remote visit with no

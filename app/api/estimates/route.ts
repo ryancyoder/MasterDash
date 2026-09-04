@@ -168,7 +168,22 @@ interface RowShape {
   status?: string;
   total_sell?: number;
   subtotal_cost?: number;
-  /** The projection blob. Carries the map take-off alongside the lines. */
+  /**
+   * The take-off and the visit, in columns of their own.
+   *
+   * Documents rather than projections — nothing can rebuild them from the op
+   * log — which is why they no longer live in `lines`. Optional because a row
+   * last written by a build from before the columns existed has them only in
+   * the blob below.
+   */
+  plan?: unknown;
+  visit?: unknown;
+  /**
+   * The projection blob: taps, labels, buckets and the rendered lines, all of
+   * which fold out of `quick_estimate_taps`. Still carries copies of plan and
+   * visit for builds that predate the columns, and those copies are the
+   * fallback on read, never the preference.
+   */
   lines?: { plan?: unknown; visit?: unknown } | null;
   updated_at?: string;
 }
@@ -199,10 +214,12 @@ function toClientRow(row: RowShape) {
     jobName: row.job_name ?? "",
     dealId: row.deal_id ?? null,
     propertyId: row.property_id ?? null,
-    // Rides in the `lines` jsonb the row already has, so the map take-off
-    // needs no column of its own. The client validates it shape by shape.
-    plan: row.lines?.plan ?? null,
-    visit: row.lines?.visit ?? null,
+    // The column first, the old home in `lines` second. A row written by a
+    // current build has both and they agree; one written by an older build
+    // has only the blob; one written before the backfill ran has only the
+    // blob too. The client validates whichever arrives, shape by shape.
+    plan: row.plan ?? row.lines?.plan ?? null,
+    visit: row.visit ?? row.lines?.visit ?? null,
     updatedAt: row.updated_at ?? null,
   };
 }
