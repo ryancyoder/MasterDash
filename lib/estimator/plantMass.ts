@@ -271,30 +271,66 @@ export interface EdgeProfile {
 }
 
 /**
- * Below this the texture is not drawn at all.
+ * A lobe narrower than this is not a lobe, it is a wobble.
  *
- * A 10% lobe on a 5px symbol is half a pixel: it does not read as a conifer,
- * it reads as a furry line. The floor is the same reasoning plantStamp.ts uses
- * to drop its interior texture on small stamps.
+ * THE FIGURES BELOW WERE FIRST CHOSEN ON PAPER AND THEY READ AS NOTHING.
+ * A conifer at its 8ft spread is a 12px canopy at an ordinary yard zoom; at 20
+ * teeth that is a tooth 4.7px wide and 2.1px deep, drawn with a 2px stroke and
+ * a drop shadow. What reaches the screen is a slightly furry circle, and
+ * "there is nothing unique about the evergreens" is exactly what it looks
+ * like. The profiles are coarser and deeper now — a conifer's teeth are 12 and
+ * bite a quarter of the radius — and the floor is about whether ONE LOBE can
+ * be drawn rather than one flat radius for every kind.
  */
-export const EDGE_MIN_R = 11;
+export const MIN_LOBE_PX = 5;
+
+/**
+ * And an absolute floor under that, for the broken line a mat is drawn with:
+ * a 2-3 dash on a 5px circle is four dots.
+ */
+export const EDGE_MIN_R = 6;
 
 export const EDGE_PROFILES: Record<string, EdgeProfile> = {
   // A cloud. Few, deep, round — the canopy of a big deciduous tree.
-  shade_tree: { lobes: 11, depth: 0.1, shape: "scallop" },
-  ornamental_tree: { lobes: 9, depth: 0.09, shape: "scallop" },
-  // Spikes. The one edge that is unmistakable at a glance, and the reason a
-  // conifer mass never needs a label to be recognised.
-  evergreen_tree: { lobes: 20, depth: 0.14, shape: "saw" },
-  // A mound: shallow scallops, more of them than a tree has.
-  shrub: { lobes: 8, depth: 0.08, shape: "scallop" },
-  // Fine and many, which is what a stand of grasses looks like in outline.
-  grasses: { lobes: 26, depth: 0.07, shape: "saw" },
-  perennial: { lobes: 7, depth: 0.07, shape: "scallop" },
+  shade_tree: { lobes: 9, depth: 0.14, shape: "scallop" },
+  ornamental_tree: { lobes: 8, depth: 0.13, shape: "scallop" },
+  /*
+    SPIKES, AND THEY HAVE TO BE BIG ONES.
+
+    This is the edge that should be unmistakable at a glance — a conifer mass
+    ought to be recognisable across the room with the label covered — and it
+    is the category the fewest pixels are ever spent on, since an evergreen's
+    8ft spread is the smallest of the three trees. So it gets the deepest bite
+    of any profile and few enough teeth that each one is a shape rather than a
+    serration: 12 at a quarter of the radius is a 6px tooth on a canopy that
+    the old figures drew as a 2px ripple.
+  */
+  evergreen_tree: { lobes: 12, depth: 0.26, shape: "saw" },
+  // A mound: shallow scallops, fewer than a tree's and not as deep.
+  shrub: { lobes: 7, depth: 0.12, shape: "scallop" },
+  // Finer and sharper, which is what a stand of grasses looks like in outline
+  // — and the profile that needs the most room before it can be drawn at all.
+  grasses: { lobes: 16, depth: 0.16, shape: "saw" },
+  perennial: { lobes: 6, depth: 0.1, shape: "scallop" },
   // A mat has no canopy edge to speak of. A broken line says "this area is
   // planted" without pretending the boundary is a row of crowns.
   ground_cover: { lobes: 0, depth: 0, shape: "flat", dash: [2, 3] },
 };
+
+/**
+ * Is there room to draw this edge at this size?
+ *
+ * PER PROFILE, NOT ONE FLAT RADIUS. A conifer's twelve teeth need more circle
+ * than a canopy's nine lobes and far less than a stand of grasses' sixteen,
+ * and a single floor for all of them either turns the fine ones to mush or
+ * keeps the coarse ones plain long after they would have read. The rule is
+ * that one lobe has to be at least `MIN_LOBE_PX` of rim.
+ */
+export function edgeDrawn(profile: EdgeProfile, r: number): boolean {
+  if (profile.lobes <= 0 || profile.depth <= 0) return false;
+  if (r < EDGE_MIN_R) return false;
+  return (TAU * r) / profile.lobes >= MIN_LOBE_PX;
+}
 
 /** The profile for a stamp kind, or a plain rim for anything unknown. */
 export function edgeProfileOf(kind: string): EdgeProfile {
@@ -332,15 +368,32 @@ export function edgePoints(
   arc: MassArc,
   profile: EdgeProfile,
 ): { x: number; y: number }[] {
-  const span = arc.to - arc.from;
-  const perTurn = Math.max(48, profile.lobes * 8);
-  const steps = Math.max(2, Math.ceil((span / TAU) * perTurn));
   const out: { x: number; y: number }[] = [];
-  for (let i = 0; i <= steps; i++) {
-    const a = arc.from + (span * i) / steps;
+  const at = (a: number) => {
     const r = arc.r * (1 - edgeInset(profile, a));
     out.push({ x: arc.x + r * Math.cos(a), y: arc.y + r * Math.sin(a) });
+  };
+  const span = arc.to - arc.from;
+  if (profile.lobes <= 0 || profile.depth <= 0) {
+    const steps = Math.max(2, Math.ceil((span / TAU) * 48));
+    for (let i = 0; i <= steps; i++) at(arc.from + (span * i) / steps);
+    return out;
   }
+  /*
+    SAMPLED ON THE LOBE'S OWN GRID, not on an even division of the span.
+
+    A tooth's tip is one angle exactly, and a tip that falls between two
+    samples is a tip that gets rounded off — which is the difference between a
+    conifer and a fuzzy circle, and it shows up only on the PARTIAL arcs a
+    union is made of. Eight samples to the lobe, aligned to multiples of an
+    eighth of one, so every cusp and every trough is landed on exactly.
+  */
+  const step = TAU / profile.lobes / 8;
+  at(arc.from);
+  const first = Math.ceil(arc.from / step + 1e-9);
+  const last = Math.floor(arc.to / step - 1e-9);
+  for (let i = first; i <= last; i++) at(i * step);
+  at(arc.to);
   return out;
 }
 

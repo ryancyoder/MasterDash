@@ -47,6 +47,7 @@ import {
 } from "@/lib/estimator/plantStamp";
 import {
   EDGE_MIN_R,
+  edgeDrawn,
   edgeLoop,
   edgePoints,
   edgeProfileOf,
@@ -1926,7 +1927,7 @@ export default function PlanCanvas({
         a 10% lobe on a 5px symbol is a furry line, not a conifer.
       */
       const profile = edgeProfileOf(face.stamp);
-      const textured = group[0].r >= EDGE_MIN_R && profile.lobes > 0;
+      const textured = edgeDrawn(profile, group[0].r);
 
       /*
         The fill is ONE path of every disc, filled once.

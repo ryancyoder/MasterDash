@@ -912,13 +912,39 @@ mass of maples as a cloud, and neither needs its label to be recognised.
 
 | kind | edge | lobes | depth |
 | --- | --- | --- | --- |
-| Shade tree | cloud scallops | 11 | 10% |
-| Ornamental | smaller scallops | 9 | 9% |
-| Evergreen | sawtooth | 20 | 14% |
-| Shrub | shallow mound scallops | 8 | 8% |
-| Grasses | fine teeth | 26 | 7% |
-| Perennial | small scallops | 7 | 7% |
+| Shade tree | cloud scallops | 9 | 14% |
+| Ornamental | smaller scallops | 8 | 13% |
+| Evergreen | sawtooth | 12 | 26% |
+| Shrub | shallow mound scallops | 7 | 12% |
+| Grasses | fine teeth | 16 | 16% |
+| Perennial | small scallops | 6 | 10% |
 | Ground cover | a broken line | — | — |
+
+**Those figures are the second set, and the first set is the lesson.** They
+were chosen on paper — 20 teeth at 14% for a conifer, and so on — and what
+reached the screen was nothing: reported as *"I don't see anything unique for
+evergreens"*, which is exactly what it looked like. An evergreen's 8ft spread
+is the smallest of the three trees, so it is a **12px canopy** at an ordinary
+yard zoom; at 20 teeth that is a tooth 4.7px wide and 2.1px deep, drawn with a
+2px stroke and a drop shadow. A furry circle. The conifer now gets the deepest
+bite of any profile and few enough teeth that each one is a shape rather than a
+serration, and every profile is checked at **the size its own plant is actually
+drawn at** rather than at one radius that suits the biggest of them.
+
+**And the floor is per profile, not one radius.** Twelve teeth need more circle
+than nine lobes and far less than sixteen; a single floor either turns the fine
+ones to mush or keeps the coarse ones plain long after they would have read.
+The rule is that one lobe must be at least 5px of rim, with a 6px absolute
+floor under it for the mat's broken line. At a working zoom that means the
+three trees and the shrub carry an edge and a perennial does not — a foot and a
+half of spread is a 2px symbol, and there is no edge to draw on it.
+
+**Tips are sampled exactly, not on an even division of the span.** A tooth's
+tip is one angle; a tip that falls between two samples is a tip that gets
+rounded off, which is the difference between a conifer and a fuzzy circle — and
+it only shows on the PARTIAL arcs a union is made of, which is every arc that
+matters here. Sampling is aligned to the lobe's own grid, eight to a lobe, so
+every cusp and trough is landed on.
 
 **It only ever bites INWARD, and that is the decision worth defending.** The
 circle is drawn at the spread the plant will reach, which makes it a claim
@@ -949,19 +975,17 @@ the circle: it holds still under a pan, and a plant dragged across the map
 carries its own edge with it. A jitter reseeded per frame would shimmer, and
 this app redraws on every frame of a drag.
 
-**And there is a floor.** Below 11px radius the texture is not drawn at all: a
-10% lobe on a 5px symbol is half a pixel, and what that reads as is not a
-conifer but a furry line. Same reasoning plantStamp.ts uses to drop its
-interior texture on small stamps.
-
 **Tested both halves again.** `test:plan` pins the geometry: no point of any
 profile reaches past the true rim, a canopy's edge really is cut into (an
 honesty check that would pass against a plain circle otherwise), a conifer's
 edge is deeper than a canopy's, each kind keeps its own lobe count at 40px and
 at 400px, the points are identical between two calls, and the edge translates
-with the circle. Three mutations turn it red: letting the texture ride outward
-(2 checks), giving the conifer the canopy's profile (1), and doubling the lobe
-frequency (3).
+with the circle. Six mutations turn it red: letting the texture ride
+outward (2 checks), giving the conifer the canopy's profile (1), doubling the
+lobe frequency (3), flattening the inset (5), putting the conifer's original
+fine teeth back (4 — including the check that says an evergreen carries an edge
+at the size it is drawn), sampling the span evenly instead of on the lobe grid
+(1), and going back to one flat floor for every profile (1).
 
 `test:board-ui` reads it off the canvas, with the single plant's own circle as
 the ruler: rays from the centre find the outermost green pixel, and **the mass

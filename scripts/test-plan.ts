@@ -33,6 +33,8 @@ import {
 } from "../lib/estimator/plan.ts";
 import {
   EDGE_MIN_R,
+  MIN_LOBE_PX,
+  edgeDrawn,
   edgePoints,
   edgeProfileOf,
   massGroups,
@@ -1658,10 +1660,84 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   ok("something with no profile of its own is drawn round",
     deepest("no_such_plant") < 1e-9, `${deepest("no_such_plant")} deep`);
 
-  // The floor is a drawing decision, not arithmetic: at 5px a 10% lobe is half
-  // a pixel, and the canvas is told to draw the plain arc below it.
+  /*
+    IT HAS TO READ AT THE SIZE IT IS ACTUALLY DRAWN AT, which is the thing the
+    first set of figures got wrong. An evergreen's 8ft spread is a 12px canopy
+    at an ordinary yard zoom; at the 20 teeth it started with, one tooth was
+    4.7px wide and 2.1px deep under a 2px stroke, and what reached the screen
+    was a furry circle. Every profile is now required to put a real shape on a
+    canopy that size.
+  */
+  /*
+    AT THE SIZE EACH KIND IS ACTUALLY DRAWN, which is not one radius for all of
+    them: a shade tree is a 20ft canopy and a perennial is 18 inches. Read at
+    3px per foot — a couple of hundred feet of yard across a laptop — so the
+    figures below are what somebody laying out a bed really sees.
+  */
+  const WORKING_PX_PER_FT = 3;
+  const radiusOf = (kind: string) =>
+    ((PLANT_SPREAD_FT[`mat:${kind}`] ?? 6) / 2) * WORKING_PX_PER_FT;
+  for (const kind of ["shade_tree", "ornamental_tree", "evergreen_tree", "shrub"]) {
+    const profile = edgeProfileOf(kind);
+    const r = radiusOf(kind);
+    const lobePx = (2 * Math.PI * r) / profile.lobes;
+    ok(`a ${kind} mass carries its edge at the size it is drawn`,
+      edgeDrawn(profile, r) && lobePx >= MIN_LOBE_PX && profile.depth * r >= 1,
+      `${r}px canopy, ${lobePx.toFixed(1)}px per lobe, ` +
+        `${(profile.depth * r).toFixed(1)}px deep`);
+  }
+  /*
+    AND THE SMALL ONES ARE LEFT PLAIN, which is the same judgement rather than
+    a gap in it: a perennial at 18 inches is a 2px symbol at that zoom and a
+    stand of grasses 4px. There is no edge to draw on either, and a serration
+    at that size is a furry line — the exact fault the conifer's own figures
+    had before they were coarsened.
+  */
+  for (const kind of ["perennial", "grasses"]) {
+    ok(`a ${kind} is too small for an edge at that zoom, and is left round`,
+      !edgeDrawn(edgeProfileOf(kind), radiusOf(kind)),
+      `${radiusOf(kind)}px`);
+  }
+  ok("AND A CONIFER BITES DEEPEST OF ALL — it is the smallest tree and the " +
+    "one that most needs telling at a glance",
+    edgeProfileOf("evergreen_tree").depth >
+      Math.max(...PLANT_STAMPS.filter((k) => k !== "evergreen_tree")
+        .map((k) => edgeProfileOf(k).depth)),
+    `${edgeProfileOf("evergreen_tree").depth} deep`);
+
+  /*
+    THE FLOOR IS PER PROFILE, not one radius for every kind: twelve teeth need
+    more circle than nine lobes and far less than sixteen. Below it the canvas
+    draws the plain arc rather than a serration nobody can see.
+  */
+  ok("a canopy is textured before a stand of grasses is",
+    edgeDrawn(edgeProfileOf("shade_tree"), 9) &&
+      !edgeDrawn(edgeProfileOf("grasses"), 9),
+    `${(2 * Math.PI * 9) / 9}px and ${(2 * Math.PI * 9) / 16}px per lobe at r=9`);
+  ok("and nothing is textured on a symbol too small to hold one lobe",
+    PLANT_STAMPS.every((k) => !edgeDrawn(edgeProfileOf(k), 4)));
+  ok("while an evergreen at an ordinary yard zoom IS",
+    edgeDrawn(edgeProfileOf("evergreen_tree"), 12));
+
+  /*
+    AND THE TIPS ARE SAMPLED EXACTLY.
+
+    A tooth's tip is one angle; a tip that falls between two samples is a tip
+    that gets rounded off, which is the difference between a conifer and a
+    fuzzy circle. It only shows on the PARTIAL arcs a union is made of, so the
+    check uses one — every cusp of the profile inside the span has to appear in
+    the points, on the rim.
+  */
+  const partial = { x: 0, y: 0, r: 40, from: 0.37, to: 2.9 };
+  const conifer = edgeProfileOf("evergreen_tree");
+  const cusps = edgePoints(partial, conifer)
+    .filter((p) => Math.abs(Math.hypot(p.x, p.y) - 40) < 1e-9).length;
+  ok("EVERY TOOTH TIP IS LANDED ON EXACTLY, even on a partial arc",
+    cusps >= Math.floor(((2.9 - 0.37) * conifer.lobes) / (2 * Math.PI)),
+    `${cusps} tips on the rim`);
+
   ok("there is a size below which the texture is not drawn at all",
-    EDGE_MIN_R > 5);
+    EDGE_MIN_R >= 5);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
