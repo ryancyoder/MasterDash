@@ -2300,6 +2300,44 @@ try {
       (JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.plants ?? [])
         .map((p) => p.variantLabel ?? "")
         .join("|"));
+  /*
+    A SQUARE TILE, SIZED BY ITS OWN LABEL.
+
+    The grid's tile shape, so a plant tile on the map and a plant tile in the
+    column read as one thing — and the picture fills it with the name over a
+    scrim, which is what the grid already does with a photographed cultivar.
+
+    The size is the part worth pinning: a name is what is being CHOSEN here, so
+    the tile grows to hold it rather than the name shrinking to fit the tile.
+  */
+  const plantTileBox = async () => {
+    const b = await popup.boundingBox();
+    return b ? { w: Math.round(b.width), h: Math.round(b.height) } : null;
+  };
+  const tileGeneric = await plantTileBox();
+  ok("the card is a square tile",
+    !!tileGeneric && Math.abs(tileGeneric.w - tileGeneric.h) <= 2,
+    JSON.stringify(tileGeneric));
+  /*
+    Read off the LABEL's own required width against the tile's: `scrollWidth`
+    is what the text needs, `clientWidth` what it was given, so a name being
+    shaved by a character or two fails here rather than looking almost right.
+  */
+  const labelFits = () =>
+    page.evaluate(() => {
+      const el = document.querySelector("[data-plant-popup]");
+      if (!el) return null;
+      const lines = [...el.querySelectorAll("div")].filter(
+        (d) => d.textContent && !d.querySelector("div"),
+      );
+      const need = Math.max(...lines.map((d) => d.scrollWidth));
+      return { need, got: el.clientWidth };
+    });
+  const fitGeneric = await labelFits();
+  ok("and it is at least as wide as the label it carries",
+    !!fitGeneric && fitGeneric.got >= fitGeneric.need,
+    JSON.stringify(fitGeneric));
+
   const labelBefore = await plantLabels();
   await page.mouse.move(plantX, plantY);
   await page.mouse.wheel(0, 120);
@@ -2307,6 +2345,24 @@ try {
   ok("ROLLING ON THE PLANT ITSELF CHANGES ITS SPECIES",
     (await plantLabels()) !== labelBefore,
     `"${labelBefore}" -> "${await plantLabels()}"`);
+  /*
+    AND A LONGER NAME MAKES A BIGGER TILE, which is the rule stated as a
+    difference rather than as an absolute: "Any Shrub" is nine characters and a
+    cultivar is twenty-odd, so the tile has to have grown. A fixed-size tile
+    would satisfy "square" and "at least as wide" on the short name alone.
+  */
+  const tileNamed = await plantTileBox();
+  const fitNamed = await labelFits();
+  ok("A LONGER SPECIES NAME MAKES A BIGGER TILE",
+    !!tileNamed && !!tileGeneric && tileNamed.w > tileGeneric.w,
+    `${JSON.stringify(tileGeneric)} then ${JSON.stringify(tileNamed)}`);
+  ok("and the longer label still fits inside it",
+    !!fitNamed && fitNamed.got >= fitNamed.need,
+    JSON.stringify(fitNamed));
+  ok("and it is still square",
+    !!tileNamed && Math.abs(tileNamed.w - tileNamed.h) <= 2,
+    JSON.stringify(tileNamed));
+
   ok("and the card follows what the roll chose",
     ((await popupName()) ?? "").trim().length > 0 &&
       (await plantLabels()).includes(((await popupName()) ?? "").trim()),

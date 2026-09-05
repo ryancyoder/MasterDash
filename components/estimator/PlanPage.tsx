@@ -3040,7 +3040,24 @@ export default function PlanPage({
           ref={plantPopupRef}
           data-plant-popup
           style={{ opacity: 0 }}
-          className="pointer-events-none fixed left-0 top-0 z-40 flex max-w-[13rem] items-center gap-2 rounded-xl border border-edge bg-surface/95 p-1.5 shadow-lg backdrop-blur-sm transition-opacity"
+          /*
+            A SQUARE TILE, THE PICTURE FILLING IT, THE NAME OVER THE BOTTOM.
+
+            The grid's own tile, to the letter — full-bleed photograph under a
+            bottom scrim, label over it — because a plant tile on the map and a
+            plant tile in the column are the same thing and two shapes for one
+            thing reads as two things.
+
+            IT IS SIZED BY ITS OWN LABEL. The text is what sets the width: the
+            lines do not wrap, so the tile is at least as wide as the longest
+            of them, and `aspect-square` makes the height follow. A name is the
+            one part that must not be clipped — it is what is being chosen —
+            so the tile grows to hold it rather than the name shrinking to fit
+            a tile. The floor keeps a short name from drawing a stamp too small
+            to read; the cap keeps a botanical nobody can pronounce from
+            covering the yard, and past it the text truncates.
+          */
+          className="pointer-events-none fixed left-0 top-0 z-40 flex aspect-square min-w-[88px] max-w-[15rem] flex-col justify-end overflow-hidden rounded-2xl border border-edge bg-surface shadow-lg transition-opacity"
         >
           {species.current.row?.image && !brokenPopupImage[species.current.row.image] ? (
             /* eslint-disable-next-line @next/next/no-img-element */
@@ -3053,30 +3070,42 @@ export default function PlanPage({
                   [species.current.row!.image!]: true,
                 }))
               }
-              className="h-11 w-11 shrink-0 rounded-md object-cover"
+              className="absolute inset-0 h-full w-full object-cover"
             />
           ) : (
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-surface2">
+            /*
+              No photograph — the generic, or one of the 228 rows that carry
+              none. The stamp fills the tile instead, which is the honest
+              answer: it is what the map actually puts down.
+            */
+            <div className="absolute inset-0 flex items-center justify-center bg-surface2">
               <StampSwatch
                 kind={stampFor(plantPick.itemId, symbolPrefs)}
                 color="#22c55e"
-                size={34}
+                size={52}
               />
             </div>
           )}
-          <div className="min-w-0">
-            <div className="truncate text-[0.7rem] font-bold leading-tight text-ink">
+          {/*
+            The scrim, not a panel: a label straight onto a photograph is
+            unreadable over half the pictures in the catalog, and a solid bar
+            would take the bottom third of a tile that is mostly picture.
+          */}
+          <div className="relative bg-gradient-to-t from-black/85 via-black/60 to-transparent px-2 pb-1.5 pt-4">
+            <div className="whitespace-nowrap text-[0.7rem] font-bold leading-tight text-white">
               {species.current.label}
             </div>
             {species.current.row?.botanical && (
-              <div className="truncate text-[0.6rem] italic leading-tight text-muted">
+              /*
+                Nowrap and NOT truncated, so this line sizes the tile too: a
+                truncated line is clipped out of the width it asked for, which
+                left the botanical shaved by a character or two against a tile
+                sized by the name alone. Both lines are the label.
+              */
+              <div className="whitespace-nowrap text-[0.6rem] italic leading-tight text-white/70">
                 {species.current.row.botanical}
               </div>
             )}
-            <div className="text-[0.55rem] leading-tight text-muted">
-              {spreadFtFor(plantPick.itemId, symbolPrefs)}&#8242; spread
-              {species.options.length > 1 && " · roll to change"}
-            </div>
           </div>
         </div>
       )}

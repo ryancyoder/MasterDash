@@ -217,11 +217,17 @@ the way CAD massing draws it, and a hatch for ground-cover masses.
   people can see. Where there is no photograph (the generic, or one of the 228
   rows of 962 that carry none, or one that will not load offline) it draws the
   stamp instead, which is what the map will actually put down.
-- **A picked plant carries its card on the map** — the same picture and name
-  the column shows, put at the plant it belongs to, because choosing a species
-  is looking at the bed rather than at a list. It is positioned imperatively on
-  an animation frame, so panning with a card open re-renders nothing, and it
-  fades out when the plant is panned off the canvas.
+- **A picked plant carries its card on the map** — put at the plant it belongs
+  to, because choosing a species is looking at the bed rather than at a list.
+  It is **the grid's tile**: a square with the photograph full-bleed under a
+  bottom scrim and the name over it, so a plant tile on the map and one in the
+  column read as one thing. Where there is no photograph the stamp fills it
+  instead. **Sized by its own label** — the lines do not wrap, so the tile is
+  at least as wide as the longest of them and `aspect-square` makes the height
+  follow: a name is what is being chosen, so the tile grows to hold it rather
+  than the name shrinking to fit. It is positioned imperatively on an animation
+  frame, so panning with a card open re-renders nothing, and it fades out when
+  the plant is panned off the canvas.
 - **The wheel runs the species on the plant itself**, not only in the column.
   Claimed only when the pointer is over the picked plant or its card —
   everywhere else on the map the wheel is still the zoom, and a trackpad pinch
