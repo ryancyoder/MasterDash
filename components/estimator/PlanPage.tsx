@@ -3868,6 +3868,109 @@ function PlantsPanel({
   const group = PLANT_GROUPS.find((g) => g.itemId === pick.itemId);
   const named = rows === null ? null : plantsInGroup(rows, group?.group ?? "");
   const total = kinds.reduce((sum, k) => sum + k.count, 0);
+
+  /*
+    THE CHOICES, AS ONE ORDERED LIST — the generic first, then the cultivars.
+
+    The buttons below already draw exactly this, and the wheel needs it as a
+    sequence to step along. Building it once means the two cannot disagree
+    about what "the next one" is, which is the only way a list you can both
+    click and roll stays honest.
+  */
+  const options = useMemo(
+    () => [
+      { key: "", label: `Any ${group?.label ?? "plant"}`, row: null as PlantRow | null },
+      ...(named ?? []).map((r) => ({ key: `plant:${r.id}`, label: r.name, row: r })),
+    ],
+    [named, group?.label],
+  );
+  const at = Math.max(0, options.findIndex((o) => o.key === (pick.variantId ?? "")));
+  const current = options[at] ?? options[0];
+
+  /*
+    Held in a ref so the wheel listener below can be attached ONCE. Re-attaching
+    it every render would be a `removeEventListener`/`addEventListener` pair per
+    frame of a roll, and the listener has to be non-passive (see below), which
+    is the expensive kind to churn.
+  */
+  const stepRef = useRef<(n: number) => void>(() => {});
+  // Refreshed after every render rather than assigned during one, so the
+  // listener always steps from the CURRENT selection without being re-bound.
+  useEffect(() => {
+    stepRef.current = (n: number) => {
+      const i = Math.min(options.length - 1, Math.max(0, at + n));
+      if (i === at) return;
+      const o = options[i];
+      onPick(
+        o.row
+          ? { itemId: pick.itemId, variantId: o.key, variantLabel: o.row.name }
+          : { itemId: pick.itemId },
+      );
+    };
+  });
+
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const currentRef = useRef<HTMLButtonElement | null>(null);
+
+  /*
+    THE WHEEL STEPS THE SPECIES, and it has to be attached by hand.
+
+    React registers `wheel` as a PASSIVE listener on its root, so an `onWheel`
+    prop cannot `preventDefault()` — the page and the names list would scroll
+    underneath the selection changing, which is the one thing that makes this
+    unusable. Attached here directly, non-passive, on the picker alone: the
+    rest of the column scrolls normally and the map keeps its own wheel zoom.
+
+    The deltas are ACCUMULATED against a notch rather than one step per event.
+    A mouse wheel sends one large delta per click and a trackpad sends a stream
+    of small ones, so stepping per event would make a single flick run through
+    forty cultivars. `deltaMode` 1 is lines rather than pixels, which Firefox
+    still sends.
+  */
+  const roll = useRef(0);
+  useEffect(() => {
+    const el = pickerRef.current;
+    if (!el) return;
+    const NOTCH = 40;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) return; // a pinch-zoom gesture, not a roll
+      e.preventDefault();
+      roll.current += e.deltaY * (e.deltaMode === 1 ? 16 : 1);
+      const steps = Math.trunc(roll.current / NOTCH);
+      if (steps === 0) return;
+      roll.current -= steps * NOTCH;
+      stepRef.current(steps);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  /*
+    The list FOLLOWS the selection, or rolling past the bottom would choose
+    things you cannot see. Scrolled by hand rather than with `scrollIntoView`,
+    which walks up and can take the whole side column with it; this only ever
+    moves the names.
+  */
+  useEffect(() => {
+    const list = listRef.current;
+    const btn = currentRef.current;
+    if (!list || !btn) return;
+    const top = btn.offsetTop;
+    const bottom = top + btn.offsetHeight;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (bottom > list.scrollTop + list.clientHeight) {
+      list.scrollTop = bottom - list.clientHeight;
+    }
+  }, [at]);
+
+  /*
+    A catalog picture that will not load falls back to the stamp, which is the
+    same chain a tile uses and matters for the same reason: these are remote
+    images on a tablet that is often out of signal, and a plant that goes blank
+    reads as a broken app rather than as a picture that has not arrived.
+  */
+  const [brokenImage, setBrokenImage] = useState<Record<string, boolean>>({});
   /** What is placed, per category and per cultivar within it. */
   const placedOf = (itemId: string) => ({
     total: kinds.filter((k) => k.itemId === itemId).reduce((n, k) => n + k.count, 0),
@@ -4088,43 +4191,113 @@ function PlantsPanel({
           ))}
         </div>
       )}
-      <div className="mt-1 flex max-h-64 flex-col gap-1 overflow-y-auto md-scroll">
-        <button
-          onClick={() => onPick({ itemId: pick.itemId })}
-          className={`shrink-0 rounded-lg px-2 py-1.5 text-left text-xs font-bold ${
-            pick.variantId === undefined ? "bg-accent text-black" : "bg-surface2 text-muted"
-          }`}
-        >
-          Any {group?.label ?? "plant"}
-        </button>
-        {named === null ? (
-          <span className="px-2 py-1 text-[0.7rem] text-muted">Loading names…</span>
-        ) : named.length === 0 ? (
-          <span className="px-2 py-1 text-[0.7rem] leading-relaxed text-muted">
-            No named plants cached for this category. The generic still prices
-            the job.
-          </span>
-        ) : (
-          named.map((row) => (
-            <button
-              key={row.id}
-              onClick={() =>
-                onPick({
-                  itemId: pick.itemId,
-                  variantId: `plant:${row.id}`,
-                  variantLabel: row.name,
-                })
+      {/*
+        WHAT IS IN HAND, AS A PICTURE.
+
+        A cultivar name is not something most people can see. "Viburnum Blue
+        Muffin" against "Viburnum Chicago Lustre" is two words on a list and
+        two quite different shrubs in a bed, and the whole reason to refine a
+        generic is that somebody has a plant in mind — so the list that chooses
+        one should show it.
+
+        The picture is the CATALOG's, not the plan's: it says what this species
+        looks like, not what is drawn on the map. What the map will draw is the
+        stamp beside it, at the spread it will reach, which is the other half
+        of the same question and is why the fallback below is that stamp rather
+        than an empty frame.
+      */}
+      <div ref={pickerRef} data-plant-picker>
+        <div className="mt-1 flex items-center gap-2 rounded-lg bg-surface2/60 p-2">
+          {current.row?.image && !brokenImage[current.row.image] ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={current.row.image}
+              alt={current.label}
+              onError={() =>
+                setBrokenImage((b) => ({ ...b, [current.row!.image!]: true }))
               }
-              className={`shrink-0 truncate rounded-lg px-2 py-1.5 text-left text-xs font-bold ${
-                pick.variantId === `plant:${row.id}`
-                  ? "bg-accent text-black"
-                  : "bg-surface2 text-ink"
-              }`}
-            >
-              {row.name}
-            </button>
-          ))
-        )}
+              className="h-14 w-14 shrink-0 rounded-md object-cover"
+            />
+          ) : (
+            /*
+              No picture: the generic, one of the 228 rows that carry none, or
+              one that would not load. The stamp is the honest answer — it is
+              what this plant is actually drawn as.
+            */
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-surface">
+              <StampSwatch
+                kind={stampFor(pick.itemId, prefs)}
+                color="#22c55e"
+                size={44}
+              />
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <div data-plant-preview-name className="truncate text-xs font-bold text-ink">
+              {current.label}
+            </div>
+            {current.row?.botanical && (
+              <div className="truncate text-[0.65rem] italic text-muted">
+                {current.row.botanical}
+              </div>
+            )}
+            <div className="mt-0.5 text-[0.6rem] text-muted">
+              {spreadFtFor(pick.itemId, prefs)}&#8242; spread
+              {options.length > 1 && (
+                <>
+                  {" · "}
+                  <span className="tabular-nums">
+                    {at + 1}/{options.length}
+                  </span>
+                  {" · roll to change"}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+        <div
+          ref={listRef}
+          className="relative mt-1 flex max-h-64 flex-col gap-1 overflow-y-auto md-scroll"
+        >
+          <button
+            ref={at === 0 ? currentRef : undefined}
+            onClick={() => onPick({ itemId: pick.itemId })}
+            className={`shrink-0 rounded-lg px-2 py-1.5 text-left text-xs font-bold ${
+              pick.variantId === undefined ? "bg-accent text-black" : "bg-surface2 text-muted"
+            }`}
+          >
+            Any {group?.label ?? "plant"}
+          </button>
+          {named === null ? (
+            <span className="px-2 py-1 text-[0.7rem] text-muted">Loading names…</span>
+          ) : named.length === 0 ? (
+            <span className="px-2 py-1 text-[0.7rem] leading-relaxed text-muted">
+              No named plants cached for this category. The generic still prices
+              the job.
+            </span>
+          ) : (
+            named.map((row, i) => (
+              <button
+                key={row.id}
+                ref={at === i + 1 ? currentRef : undefined}
+                onClick={() =>
+                  onPick({
+                    itemId: pick.itemId,
+                    variantId: `plant:${row.id}`,
+                    variantLabel: row.name,
+                  })
+                }
+                className={`shrink-0 truncate rounded-lg px-2 py-1.5 text-left text-xs font-bold ${
+                  pick.variantId === `plant:${row.id}`
+                    ? "bg-accent text-black"
+                    : "bg-surface2 text-ink"
+                }`}
+              >
+                {row.name}
+              </button>
+            ))
+          )}
+        </div>
       </div>
     </InfoBox>
   );

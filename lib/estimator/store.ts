@@ -873,6 +873,20 @@ export function movePlant(id: string, at: LatLng) {
  * plant is going. Clearing the variant is deliberately possible — the generic
  * is a valid answer, not a failure to finish.
  */
+/**
+ * Name the plant that is picked, or take its name off.
+ *
+ * COALESCED ON THE PLANT, for the same reason a slider's drag is one undo:
+ * the names are a list somebody runs DOWN, by clicking or by rolling the
+ * wheel over it, and every step of that run is a rename. Without this, trying
+ * six cultivars against a bed is six presses of undo to get back — and rolling
+ * the wheel through a category of forty would push forty entries and shift the
+ * whole of the real history off the end of a stack forty deep.
+ *
+ * Keyed on the id, so naming a DIFFERENT plant always starts a new entry: the
+ * window only ever folds together a run against one plant. A deliberate rename
+ * made a few seconds after the last one is its own step, exactly as before.
+ */
 export function setPlantVariant(
   id: string,
   variant: { variantId?: string; variantLabel?: string } | null,
@@ -890,7 +904,7 @@ export function setPlantVariant(
           }
         : p,
     ),
-  }));
+  }), `name:${id}`);
 }
 
 /**

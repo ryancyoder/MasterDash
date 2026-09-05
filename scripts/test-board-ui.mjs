@@ -2595,6 +2595,45 @@ try {
     JSON.stringify((await planted()).plants));
 
   /*
+    AND A RUN DOWN THE NAMES IS ONE UNDO, not one per name tried.
+
+    The names are a list somebody runs down — by clicking, or by rolling the
+    wheel over it — and every step of that run renames the picked plant. Each
+    step used to be its own undo entry, so trying six cultivars against a bed
+    took six presses to get back; rolling the wheel through a category of 291
+    would push 291 and shift the whole of the real history off the end of a
+    stack forty deep. Coalesced on the plant id, exactly as a slider's drag and
+    an eraser's stroke already are.
+
+    The run is started AFTER the coalescing window has closed on the first
+    name, or it would fold into that one too and undo would land on an unnamed
+    plant instead of on the name before the run.
+  */
+  const pickedLabel = () =>
+    page.evaluate(() =>
+      (JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.plants ?? [])
+        .map((p) => p.variantLabel ?? "")
+        .filter(Boolean)
+        .join("|"));
+  const nameA = await pickedLabel();
+  await page.waitForTimeout(900);
+  const nameButtons = page.locator("[data-plant-picker] .overflow-y-auto button");
+  if ((await nameButtons.count()) > 3) {
+    await nameButtons.nth(2).click();
+    await page.waitForTimeout(80);
+    await nameButtons.nth(3).click();
+    await page.waitForTimeout(250);
+  }
+  const nameC = await pickedLabel();
+  ok("a run down the names does rename it each time",
+    nameC !== nameA, `${nameA} -> ${nameC}`);
+  await page.locator('button[aria-label="Undo the last change to the plan"]').click();
+  await page.waitForTimeout(400);
+  ok("BUT ONE UNDO PUTS THE WHOLE RUN BACK",
+    (await pickedLabel()) === nameA,
+    `${nameC} --undo--> ${await pickedLabel()}, wanted ${nameA}`);
+
+  /*
     AND THE CULTIVAR IS NESTED UNDER ITS OWN CATEGORY.
 
     Named plants used to be top-level rows on the bill — "Arborvitae Mr.
@@ -2618,6 +2657,144 @@ try {
     "the list still says it is naming something");
   ok("and the plant it was naming still is what it was",
     (await namedPlants()) === beforeNaming + 1);
+
+  await page.click('button[aria-label="Shrub"]');
+  await page.waitForTimeout(300);
+
+  /*
+    7c-vii-5a-2b. THE PICTURE OF WHAT IS IN HAND, AND THE WHEEL THAT CHANGES IT.
+
+    A cultivar name is not something most people can see: "Viburnum Blue
+    Muffin" against "Viburnum Chicago Lustre" is two words on a list and two
+    different shrubs in a bed. So the picker carries the catalog's photograph
+    of whatever is armed, and the wheel runs down the list without anybody
+    having to aim at forty small buttons.
+  */
+  const plantPicker = page.locator("[data-plant-picker]");
+  const previewName = () =>
+    page.locator("[data-plant-preview-name]").first().textContent();
+
+  ok("the picker shows a preview of what is armed",
+    (await page.locator("[data-plant-preview-name]").count()) === 1,
+    await previewName());
+  ok("and with the generic armed it names the generic",
+    /Any Shrub/i.test((await previewName()) ?? ""),
+    await previewName());
+  /*
+    NO PICTURE IS THE STAMP, NOT AN EMPTY FRAME. The generic has no photograph
+    and 228 of the 962 rows carry none — and the stamp is the honest answer,
+    because it is what the map actually draws. Read as a CANVAS in the preview
+    rather than as "no img": an empty frame would also have no img.
+  */
+  ok("with no photograph the preview draws the stamp instead",
+    (await plantPicker.locator("canvas").count()) === 1,
+    `${await plantPicker.locator("canvas").count()} canvases in the picker`);
+
+  /*
+    THE WHEEL STEPS THE SPECIES.
+
+    Driven with a real wheel event over the picker, not a dispatched one: the
+    whole reason this listener is attached by hand is that React registers
+    `wheel` as PASSIVE on its root, so an `onWheel` prop could not
+    preventDefault — and a synthetic event would pass against exactly the build
+    that fails in a hand.
+  */
+  /*
+    Pointed at the NAMES LIST rather than at the preview above it. That is
+    where a hand would put the pointer, and — the reason it matters — the only
+    place this can be tested at all: the list is the scrollable thing, so over
+    the preview the browser would scroll the side column instead and a build
+    with no `preventDefault` would look identical to a correct one.
+
+    HOVERED, NOT AIMED AT A COMPUTED POINT, and both of the ways that went
+    wrong are worth keeping. The list is 256px tall and starts near y=627 in a
+    720-tall viewport, so its own centre is off the bottom of the screen; and
+    the filmstrip covers what is left, so `elementFromPoint` at the top of it
+    answers with a strip tile. Either way the mouse receives no wheel event and
+    EVERY check below passes for the wrong reason. `hover()` scrolls the
+    element in and picks a point that is really visible, and the guard under it
+    fails loudly if that ever stops being true.
+  */
+  const namesList = plantPicker.locator(".overflow-y-auto");
+  const overNames = async () => {
+    await namesList.hover();
+    await page.waitForTimeout(60);
+  };
+  await overNames();
+  ok("the pointer is really over the names list before any of this is read",
+    await page.evaluate(() => {
+      const el = document.querySelector("[data-plant-picker] .overflow-y-auto");
+      const b = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(b.x + b.width / 2,
+        Math.min(b.y + b.height / 2, window.innerHeight - 4));
+      return !!hit && !!hit.closest("[data-plant-picker]");
+    }));
+  await overNames();
+  const genericName = await previewName();
+  await page.mouse.wheel(0, 120);
+  await page.waitForTimeout(300);
+  const rolledName = await previewName();
+  ok("ROLLING THE WHEEL OVER THE PICKER CHANGES THE SPECIES",
+    rolledName !== genericName && !/Any Shrub/i.test(rolledName ?? ""),
+    `${genericName} -> ${rolledName}`);
+
+  await page.mouse.wheel(0, -120);
+  await page.waitForTimeout(300);
+  ok("and rolling back comes back to it",
+    /Any Shrub/i.test((await previewName()) ?? ""),
+    await previewName());
+
+  /*
+    ACCUMULATED AGAINST A NOTCH, not one step per event. A trackpad sends a
+    stream of small deltas where a mouse sends one large one, so stepping per
+    event would run a single flick through the whole category.
+  */
+  const beforeCrumbs = await previewName();
+  for (let i = 0; i < 3; i++) await page.mouse.wheel(0, 8);
+  await page.waitForTimeout(300);
+  ok("a roll smaller than one notch changes nothing",
+    (await previewName()) === beforeCrumbs,
+    `${beforeCrumbs} -> ${await previewName()}`);
+
+  /*
+    AND IT DOES NOT SCROLL THE LIST UNDERNEATH.
+
+    This is the check that would catch the passive-listener trap: with
+    preventDefault ineffective the selection would still change AND the names
+    would scroll away under it, which is the version of this that cannot be
+    used. Read off the list's own scrollTop after a roll it would answer to.
+  */
+  const listScroll = () =>
+    page.evaluate(() => {
+      const el = document.querySelector("[data-plant-picker] .overflow-y-auto");
+      return el ? el.scrollTop : -1;
+    });
+  await page.evaluate(() => {
+    const el = document.querySelector("[data-plant-picker] .overflow-y-auto");
+    if (el) el.scrollTop = 0;
+  });
+  // The check is only worth anything if there is somewhere to scroll TO.
+  ok("the names list is long enough for that to mean something",
+    await page.evaluate(() => {
+      const el = document.querySelector("[data-plant-picker] .overflow-y-auto");
+      return !!el && el.scrollHeight > el.clientHeight + 100;
+    }));
+  await overNames();
+  await page.mouse.wheel(0, 120);
+  await page.waitForTimeout(300);
+  ok("THE WHEEL DOES NOT SCROLL THE NAMES OUT FROM UNDER THE SELECTION",
+    (await listScroll()) === 0,
+    `scrollTop ${await listScroll()} after one notch`);
+
+  /*
+    THE LIST FOLLOWS THE SELECTION, or rolling past the bottom would be
+    choosing things nobody can see.
+  */
+  for (let i = 0; i < 12; i++) await page.mouse.wheel(0, 120);
+  await page.waitForTimeout(400);
+  ok("but it DOES follow the selection down past the fold",
+    (await listScroll()) > 0,
+    `scrollTop ${await listScroll()} after twelve notches`);
 
   await page.click('button[aria-label="Shrub"]');
   await page.waitForTimeout(300);
