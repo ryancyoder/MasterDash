@@ -202,6 +202,19 @@ the way CAD massing draws it, and a hatch for ground-cover masses.
 - **Picking a plant arms its category and its name**, so the column follows
   what you touched; a tap on a name then renames the plant you picked rather
   than arming a new one. The bar says which job it is doing.
+- **The picker shows what is in hand** — the catalog's photograph of the armed
+  species, with its botanical name. A cultivar name is not something most
+  people can see. Where there is no photograph (the generic, or one of the 228
+  rows of 962 that carry none, or one that will not load offline) it draws the
+  stamp instead, which is what the map will actually put down.
+- **The wheel steps the species** over the names list. Deltas are accumulated
+  against a notch, so a trackpad flick does not run through a whole category,
+  and the list follows the selection rather than scrolling out from under it.
+  The listener is attached by hand and non-passive: React registers `wheel` as
+  passive on its root, so an `onWheel` prop cannot `preventDefault()`.
+- **A run down the names is one undo**, coalesced on the plant id the same way
+  a slider's drag and an eraser's stroke are. Trying six cultivars against a
+  bed is one press back, not six.
 
 ## Layers, photographs and the map
 
