@@ -5403,8 +5403,8 @@ try {
       return n;
     });
 
-  const labelBtn = page.locator('button[aria-label="What is written on a shape"]');
-  ok("the toolbar has one control for what is written",
+  const labelBtn = page.locator('button[aria-label="How much of the take-off is drawn"]');
+  ok("the toolbar has one control for how much of the take-off is drawn",
     (await labelBtn.count()) === 1);
 
   const labelMode = () =>
@@ -5452,9 +5452,72 @@ try {
     nameInkBefore > 60 && (await nearColor(bedHue)) < nameInkBefore - 40,
     `${nameInkBefore} then ${await nearColor(bedHue)} in the shape colour`);
 
+  /*
+    AND THE FOURTH STATE TAKES THE SHAPES THEMSELVES OFF.
+
+    The steps take things away in the order they stop being wanted — numbers,
+    names, then the drawing — so one button walks a plan from the state it is
+    CHECKED in to the state it is SHOWN to a client in, with the yard, the
+    layers and the planting left under it.
+  */
+  /*
+    A DRAWING TOOL IS PUT UP FIRST, or the check below that it is put DOWN
+    proves nothing — by this point in the run the tool is Select anyway, so a
+    build that never touched it would pass. The setup is asserted rather than
+    assumed for the same reason: a tool that would not arm would leave the
+    check green and the rule untested.
+  */
+  const areaPressed = () =>
+    page.locator('button[aria-label="Area"]').getAttribute("aria-pressed");
+  await page.click('button[aria-label="Area"]');
+  await page.waitForTimeout(250);
+  ok("a drawing tool really is up before the take-off is hidden",
+    (await areaPressed()) === "true", await areaPressed());
+
+  const shapeInkDrawn = await nearColor(bedHue);
   if ((await labelBtn.count()) === 1) await labelBtn.click();
   await page.waitForTimeout(400);
-  ok("and a third comes back round to everything",
+  ok("a third tap lifts the take-off off the yard",
+    (await labelMode()) === "hidden", await labelMode());
+  /*
+    READ THE CANVAS. A stored mode is exactly what would still be right against
+    a build that saved the choice and drew the beds anyway — which is the same
+    trap the numbers check above is written around. Measured in the shape's own
+    colour, which at this point is the palette teal.
+  */
+  ok("AND THE POLYGONS COME OFF THE MAP",
+    shapeInkDrawn > 300 && (await nearColor(bedHue)) < shapeInkDrawn / 10,
+    `${shapeInkDrawn} in the shape colour drawn, ${await nearColor(bedHue)} hidden`);
+
+  /*
+    TWO THINGS GO WITH THEM, and they are the two the planting's switch takes
+    for the same reasons: a drawing tool that adds beds to a layer lifted off
+    the yard does nothing visible, and a half-drawn one would be finished into
+    thin air.
+  */
+  ok("THE DRAWING TOOLS ARE PUT DOWN WITH THEM",
+    (await areaPressed()) !== "true", `Area still reads ${await areaPressed()}`);
+
+  /*
+    AND THE RULE RUNS BOTH WAYS. Reaching for Area with the take-off hidden
+    brings it back — UNWRITTEN, which is the step it was hidden from, rather
+    than all the way back to the numbers nobody asked to see again.
+  */
+  await page.click('button[aria-label="Area"]');
+  await page.waitForTimeout(400);
+  ok("ARMING A DRAWING TOOL BRINGS THE TAKE-OFF BACK",
+    (await labelMode()) === "none", await labelMode());
+  ok("and brings it back unwritten, not back to the numbers",
+    (await nearColor(bedHue)) > shapeInkDrawn / 2,
+    `${await nearColor(bedHue)} in the shape colour`);
+
+  await page.click('button[aria-label="Select"]');
+  await page.waitForTimeout(200);
+  if ((await labelBtn.count()) === 1) await labelBtn.click();
+  await page.waitForTimeout(400);
+  if ((await labelBtn.count()) === 1) await labelBtn.click();
+  await page.waitForTimeout(400);
+  ok("and round again to everything",
     (await labelMode()) === "all" && (await whiteInk()) > inkName,
     await labelMode());
 

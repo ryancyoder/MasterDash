@@ -68,6 +68,7 @@ import {
 import {
   assembliesForShape,
   nextLabelMode,
+  shapesDrawn,
   nextPlantMode,
   shapeIsHidden,
   bucketsForMeasurement,
@@ -1244,6 +1245,17 @@ export default function PlanPage({
     }
     setTool(next);
     setPending([]);
+    /*
+      AND ARMING A DRAWING TOOL BRINGS THE TAKE-OFF BACK, which is the same
+      rule the planting has one line below and for the same reason: drawing a
+      bed into a layer that is lifted off the yard looks exactly like a tool
+      that does nothing, and finishing one would put a shape somewhere nobody
+      can see it. Brought back UNWRITTEN rather than at "all" — that is the
+      step the drawing was hidden from, so it is the step it comes back to.
+    */
+    if ((next === "area" || next === "linear") && !shapesDrawn(plan.labelMode)) {
+      setLabelMode("none");
+    }
     // ARMING THE PLANT TOOL SHOWS THE PLANTING. Placing a symbol into a
     // switched-off layer looks exactly like a tap that did nothing, and the
     // other half of the rule is below: switching the layer off puts the tool
@@ -1274,7 +1286,7 @@ export default function PlanPage({
       */
       setStripSource("plants");
     }
-  }, [tool, plantMode]);
+  }, [tool, plantMode, plan.labelMode]);
 
   /*
     THE PLANT TAKE-OFF.
@@ -1508,8 +1520,11 @@ export default function PlanPage({
    * can see that still takes a press is worse than one that is simply drawn.
    */
   const drawnShapes = useMemo(
-    () => plan.shapes.filter((s) => !shapeIsHidden(s, plan.hiddenAssemblyIds)),
-    [plan.shapes, plan.hiddenAssemblyIds],
+    () =>
+      shapesDrawn(plan.labelMode)
+        ? plan.shapes.filter((s) => !shapeIsHidden(s, plan.hiddenAssemblyIds))
+        : [],
+    [plan.shapes, plan.hiddenAssemblyIds, plan.labelMode],
   );
 
   /**
@@ -1544,6 +1559,27 @@ export default function PlanPage({
    * plant nobody can point at. Arming the tool again shows the layer — see
    * `chooseTool`.
    */
+  /**
+   * Step how much of the take-off is drawn: numbers, then names, then the
+   * shapes themselves.
+   *
+   * THE LAST STEP TAKES TWO THINGS WITH IT, and they are the same two the
+   * planting's switch takes, for the same reasons: the drawing tools are put
+   * down, because a tool that adds beds to a layer you cannot see is a tool
+   * that does nothing visible — and a half-drawn one would be finished into
+   * thin air; and the selection is dropped, because the shape card's Delete
+   * and Detach would otherwise be acting on a bed nobody can point at.
+   */
+  const stepLabelMode = useCallback(() => {
+    const next = nextLabelMode(plan.labelMode);
+    setLabelMode(next);
+    if (!shapesDrawn(next)) {
+      setSelectedId(null);
+      setPending([]);
+      setTool((t) => (t === "area" || t === "linear" ? "select" : t));
+    }
+  }, [plan.labelMode]);
+
   const togglePlants = useCallback(() => {
     const next = !plan.plantsHidden;
     setPlantsHidden(next);
@@ -1884,18 +1920,31 @@ export default function PlanPage({
           reading the map to find out where you are.
         */}
         <button
-          onClick={() => setLabelMode(nextLabelMode(plan.labelMode))}
-          aria-label="What is written on a shape"
-          className="shrink-0 rounded-xl bg-surface2 px-3 py-2 text-xs font-bold text-muted"
+          onClick={stepLabelMode}
+          aria-label="How much of the take-off is drawn"
+          data-label-mode={plan.labelMode}
+          className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${
+            plan.labelMode === "hidden"
+              ? "bg-[#f59e0b] text-black"
+              : "bg-surface2 text-muted"
+          }`}
           title={
             plan.labelMode === "all"
               ? "Numbers and names — tap to hide the numbers"
               : plan.labelMode === "name"
                 ? "Names only — tap to hide those too"
-                : "Nothing written — tap to show numbers and names"
+                : plan.labelMode === "none"
+                  ? "Shapes only — tap to lift the take-off off the yard"
+                  : "The take-off is hidden — tap to bring it back, written"
           }
         >
-          {plan.labelMode === "all" ? "123" : plan.labelMode === "name" ? "Aa" : "···"}
+          {plan.labelMode === "all"
+            ? "123"
+            : plan.labelMode === "name"
+              ? "Aa"
+              : plan.labelMode === "none"
+                ? "···"
+                : "⊘"}
         </button>
         {/*
           THE PLANTING, ON OR OFF.

@@ -59,6 +59,16 @@ vertex correct the loads rather than leaving a stale number behind.
   the constraint is solved in local metres.
 - **A shape you are not working on is drawn simply** — no vertex dots, no
   shared-corner ring, and no grab on either.
+- **One control steps how much of the take-off is drawn**, taking things away
+  in the order they stop being wanted: `all` (measurement and name) → `name` →
+  `none` (shapes, unwritten) → `hidden` (no shapes at all). The same button
+  walks a plan from the state it is checked in to the state it is shown to a
+  client in, leaving the yard, the layers and the planting under it.
+  `hidden` is a **view preference, not a deletion** — the shapes keep their
+  cards and their loads, and the proposal never learns the field exists.
+  Hiding puts the drawing tools down and drops the selection, and arming Area
+  or Linear brings the take-off back at `none`; the same two-way rule the
+  planting layer has.
 - **Labels can be dragged off the middle of a shape**, and the offset is stored
   **on the ground, not on the screen**, so it survives a zoom.
 - **One trade at a time:** the layer list hides shapes by assembly. Hidden

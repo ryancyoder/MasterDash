@@ -30,6 +30,8 @@ import {
   plantsFrom,
   labelOffsetFrom,
   nextLabelMode,
+  shapesDrawn,
+  type LabelMode,
   nextPlantMode,
   PLANT_MODES,
   shapeIsHidden,
@@ -1219,12 +1221,76 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   console.log("\n--- labels ---");
 
   ok("a plan starts writing everything", emptyPlan().labelMode === "all");
-  // One button, three states, and the middle one is what the old two-way
-  // toggle's "off" already was — so nothing anybody was used to has moved.
-  ok("the cycle is everything, then names, then nothing, then round",
+  /*
+    ONE BUTTON, FOUR STATES, TAKING THINGS AWAY IN THE ORDER THEY STOP BEING
+    WANTED — the numbers first, because they are the noisiest thing on a
+    drawing and the first thing you stop wanting once they are right; then the
+    names; then the shapes themselves. The same button walks a plan from the
+    state it is checked in to the state it is shown to a client in.
+
+    The first two steps are what the old three-way cycle already did, so
+    nothing anybody was used to has moved.
+  */
+  ok("the cycle is numbers, then names, then the shapes, then round",
     nextLabelMode("all") === "name" &&
       nextLabelMode("name") === "none" &&
-      nextLabelMode("none") === "all");
+      nextLabelMode("none") === "hidden" &&
+      nextLabelMode("hidden") === "all");
+
+  /*
+    AND ONLY THE LAST STEP TAKES THE SHAPES OFF. "none" is a bed drawn with
+    nothing written on it, which is a different thing from no bed — the step
+    before this existed, and the one every plan shown to a client was in.
+  */
+  ok("the shapes are drawn at every step but the last",
+    shapesDrawn("all") &&
+      shapesDrawn("name") &&
+      shapesDrawn("none") &&
+      !shapesDrawn("hidden"));
+
+  /*
+    HIDING IS A VIEW PREFERENCE, NOT A DELETION, and the loads are what say so:
+    a bed lifted off the yard is still bought. `planBuckets` reads the plan's
+    own shapes rather than what the map draws, so this cannot come out any
+    other way — which is exactly why it is worth pinning.
+  */
+  const labelBedPlan = {
+    ...emptyPlan(),
+    nodes: {
+      n1: { at: { lat: 41.31, lng: -87.15 } },
+      n2: { at: { lat: 41.3101, lng: -87.15 } },
+      n3: { at: { lat: 41.3101, lng: -87.1499 } },
+    },
+    shapes: [
+      {
+        id: "s1",
+        type: "area" as const,
+        vertices: ["n1", "n2", "n3"],
+        color: "#14b8a6",
+        assemblyId: "mulch_bed_installation_standard",
+      },
+    ],
+  };
+  const withMode = (labelMode: LabelMode) =>
+    ({
+      clientId: "e-labels",
+      jobName: "",
+      dealId: null,
+      propertyId: null,
+      taps: {},
+      labels: {},
+      assemblyBuckets: {},
+      ops: [],
+      plan: { ...labelBedPlan, labelMode },
+      visit: { transcript: "", source: null, findings: [], extractedFrom: null },
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    }) as unknown as Estimate;
+
+  ok("A HIDDEN TAKE-OFF IS STILL PRICED",
+    planShapeCount(withMode("hidden")) === planShapeCount(withMode("all")) &&
+      planShapeCount(withMode("hidden")) > 0,
+    `${planShapeCount(withMode("hidden"))} counted with the drawing off, ` +
+      `${planShapeCount(withMode("all"))} with it on`);
 }
 
 // --- What a tap does while the Plant tool is up ------------------------------

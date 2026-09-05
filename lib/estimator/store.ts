@@ -282,8 +282,22 @@ function planFrom(value: unknown): PlanState {
       : [],
     // "all" unless the estimate says one of the other two, so a plan saved
     // before this existed opens writing everything it used to.
+    /*
+      "all" unless the estimate says one of the other three, so a plan saved
+      before this existed opens writing everything it used to.
+
+      DELIBERATELY NOT A `PLAN_VERSION` BUMP, and that is a judgement rather
+      than an oversight. Adding a value to an existing field is not the change
+      that rule is for: an older build reads "hidden" here, does not recognise
+      it, and falls through to "all" — which draws MORE than was asked for and
+      loses nothing but a view preference the next tap restores. Bumping would
+      make every tablet in the field read-only over a drawing toggle, which is
+      a far worse trade than one forgotten preference.
+    */
     labelMode:
-      v.labelMode === "name" || v.labelMode === "none" ? v.labelMode : "all",
+      v.labelMode === "name" || v.labelMode === "none" || v.labelMode === "hidden"
+        ? v.labelMode
+        : "all",
   };
 }
 

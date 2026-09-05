@@ -157,9 +157,34 @@ export function shapeIsHidden(
   return shape.assemblyId !== null && hiddenAssemblyIds.includes(shape.assemblyId);
 }
 
-export type LabelMode = "all" | "name" | "none";
+/**
+ * HOW MUCH OF THE TAKE-OFF IS DRAWN, as one control tapped round.
+ *
+ * The steps take things away in the order they stop being wanted, so the same
+ * button walks a plan from the state it is CHECKED in to the state it is SHOWN
+ * IN, and nobody has to learn four controls to get there:
+ *
+ *   all     the measurement and the name on every shape — what a take-off is
+ *           checked in, because the number is the thing being checked
+ *   name    the names alone. The numbers are the noisiest thing on a drawing
+ *           and the first thing you stop wanting once they are right
+ *   none    the shapes, unwritten. What a bed IS, without the arithmetic
+ *   hidden  no shapes at all — the yard, the layers and the planting, with
+ *           the take-off lifted off them
+ *
+ * `hidden` is a VIEW PREFERENCE, not a deletion, exactly as `plantsHidden` and
+ * `hiddenAssemblyIds` are: the shapes stay on the take-off, they keep their
+ * cards and their loads, and the proposal never learns this field exists.
+ * There is a plan under there being priced whatever this says.
+ */
+export type LabelMode = "all" | "name" | "none" | "hidden";
 
-export const LABEL_MODES: LabelMode[] = ["all", "name", "none"];
+export const LABEL_MODES: LabelMode[] = ["all", "name", "none", "hidden"];
+
+/** Whether the shapes are drawn at all, as opposed to drawn unwritten. */
+export function shapesDrawn(mode: LabelMode): boolean {
+  return mode !== "hidden";
+}
 
 export function nextLabelMode(mode: LabelMode): LabelMode {
   return LABEL_MODES[(LABEL_MODES.indexOf(mode) + 1) % LABEL_MODES.length];
