@@ -557,6 +557,25 @@ export default function PlanPage({
         y: number;
         moved: boolean;
       }
+    /*
+     *   "label"   — a CULTIVAR out of the catalog rail. Dropped on a plant it
+     *               labels that planting with a picture of the species.
+     *
+     * It carries a finished link rather than a row, because a catalog picture
+     * has nothing else it could become: it cannot be given a position on the
+     * map — there is no photograph of a place here to place — and it cannot be
+     * a plan layer. Attach to a plant, or nothing. Keeping the row would only
+     * invite one of those.
+     */
+    | {
+        kind: "label";
+        link: ShapePhotoLink;
+        label: string;
+        url: string;
+        x: number;
+        y: number;
+        moved: boolean;
+      }
     | null
   >(null);
   const [selectedCalloutId, setSelectedCalloutId] = useState<string | null>(null);
@@ -874,6 +893,43 @@ export default function PlanPage({
   );
 
   /**
+   * A cultivar out of the catalog rail, dragged onto a plant to label it.
+   *
+   * THE PICTURE IS OF THE KIND, NOT OF THE VARIETY — every Arborvitae cultivar
+   * in the file points at the same `Thuja.jpeg` — and that is exactly what
+   * makes it the right thing to put on a plan. A crew reading a symbol wants
+   * to know what goes in the hole, and a photograph of an arborvitae answers
+   * that where "TH-4" does not. It is a label, not evidence.
+   *
+   * `plant:<id>` is the id convention the rail's own pick already uses, so the
+   * preview resolves one of these by the lookup that is already there.
+   */
+  const beginPlantDrag = useCallback(
+    (row: PlantRow, e: React.PointerEvent) => {
+      const id = `plant:${row.id}`;
+      dragStart.current = { x: e.clientX, y: e.clientY, id };
+      setDragPhoto({
+        kind: "label",
+        link: {
+          // Not a visit. The field is a note about provenance and this one
+          // came out of the catalog, so it says so rather than borrowing a
+          // session id that would read as a photograph somebody took.
+          sessionId: "catalog",
+          photoId: id,
+          url: row.image ?? "",
+          label: row.name,
+        },
+        label: row.name,
+        url: row.image ?? "",
+        x: e.clientX,
+        y: e.clientY,
+        moved: false,
+      });
+    },
+    [],
+  );
+
+  /**
    * Put a photograph where it was dropped.
    *
    * On screen first, then written. The pin has to appear under the finger that
@@ -1011,6 +1067,20 @@ export default function PlanPage({
       */
       if (drag.kind === "pin" && onPlants.length) {
         linkPhotoToPlants(onPlants, linkForEventPhoto(drag.photo, drag.label));
+        return;
+      }
+
+      /*
+        A CULTIVAR DROPPED ON A PLANT LABELS IT, and dropped anywhere else does
+        NOTHING — deliberately, and this is the whole reason it is its own kind
+        rather than another `"pin"`. A picture of a species has no position to
+        be given and is not a drawing of anything, so the two things a frame
+        can otherwise become — a photo pin on the map, a plan layer — are both
+        wrong for it, and a gesture that quietly did one of them would put a
+        stock photograph on the yard as though somebody had taken it there.
+      */
+      if (drag.kind === "label") {
+        if (onPlants.length) linkPhotoToPlants(onPlants, drag.link);
         return;
       }
 
@@ -2436,7 +2506,11 @@ export default function PlanPage({
             the mass you meant, and "2 · Shrub" answers it where "a plant"
             does not.
           */}
-          {dragPhoto?.kind === "pin" && dragPhoto.moved
+          {dragPhoto?.kind === "label" && dragPhoto.moved
+          ? photoDropIds.length
+            ? `Let go to label ${photoDropLabel} — ${dragPhoto.label}`
+            : `Drop ${dragPhoto.label} on a plant to label it · a mass takes the whole group`
+          : dragPhoto?.kind === "pin" && dragPhoto.moved
           ? photoDropIds.length
             ? `Let go to attach this photograph to ${photoDropLabel}`
             : "Drop a photograph on a plant to attach it · a mass takes the whole group"
@@ -3139,6 +3213,7 @@ export default function PlanPage({
         reference={referencePhotos}
         photoError={photoError}
         onDragPhoto={beginPhotoDrag}
+        onDragPlant={beginPlantDrag}
         /*
           THE CATALOG AS PICTURES, for whichever category is armed. The
           column's list is for finding a name you already know; this rail is

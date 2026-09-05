@@ -1675,21 +1675,38 @@ that was attaching them correctly, and the diagnosis came from dumping the
 keys. Tagging only the first plant of a mass turns one check red; writing the
 group as one `mutatePlan` per plant instead of one turns the undo check red.
 
-**AND THE RAIL YOU ARE ON IS THE WRONG ONE, because arming the Plant tool put
-you there.** The photographs are dragged out of the filmstrip, and the strip
-follows the Plant tool onto the *cultivar* rail — so the moment somebody is
-looking at plants is the moment the pictures are gone. Those catalog tiles have
-no drag handler at all and correctly never will: they are a stock picture of
-the species, not a photograph of this plant. Dragging one does nothing, and
-nothing is exactly what it looked like when the gesture was broken.
+#### And a cultivar dragged onto a plant labels it
 
-So the cultivar rail carries a sign at its **head** — *tap to arm a cultivar;
-photographs to drag onto a plant are under Property* — and a button that
-switches the strip rather than pointing at the tab that would. Written at the
-tail it sat 962 cultivars along a sideways scroll and the test could not click
-it; a user would have scrolled no further. Changing that button's target to any
-other source turns one check red, which is the half that matters: a note that
-merely renders leaves you exactly where you were.
+**The catalog rail drags too, and that is the one that gets used.** A picture
+of the species beside the symbol is what tells a crew what goes in the hole;
+"TH-4" does not. So a tile out of the Plants rail dropped on a plant — or on a
+mass — attaches as a `plant:<id>` link beside the `event:<id>` ones a site
+photograph makes, through the same drop and the same one-edit-per-mass rule.
+
+**The picture is of the KIND, not of the variety** — every Arborvitae cultivar
+in the file points at one `Thuja.jpeg` — and that is exactly what makes it
+right as a **label** and wrong as **evidence**. Which is why it is its own drag
+kind rather than another `"pin"`: a catalog picture has no position to be given
+and is not a drawing of anything, so dropped anywhere but on a plant it does
+**nothing**. The two things a frame can otherwise become — a photo pin on the
+map, a plan layer — would both put a stock photograph on the yard as though
+somebody had taken it there.
+
+Only the 734 rows that HAVE a picture are draggable; the other 228 would carry
+a leaf glyph out and label a shrub with nothing.
+
+**The rail says so at its head**, because a drag has no affordance of its own —
+*tap to arm a cultivar; drag its picture onto a plant to label it*. Written at
+the tail it sat 962 cultivars along a sideways scroll and the test could not
+click it; a user would have scrolled no further. And the line under the map
+names the cultivar as well as the target — **"Let go to label 2 · Shrub —
+Green Velvet Boxwood"** — since the ghost covers the plant and the picture is
+of a species, so the name is the half that says which one.
+
+**One check here was vacuous and mutation found it.** "Every `plant:` link is a
+`plant:` link" is true of the empty list, so a build that wrote the cultivar
+out as `event:<id>` passed it. It counts the `event:` links that did NOT appear
+instead. Removing the tile's drag handler turns four checks red.
 
 #### Two fingers is undo, three is redo
 

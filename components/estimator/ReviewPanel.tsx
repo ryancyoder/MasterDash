@@ -683,6 +683,7 @@ export function ReviewFilmstrip({
   reference,
   photoError,
   onDragPhoto,
+  onDragPlant,
   plants,
   plantGroupLabel,
   plantPickedId,
@@ -739,6 +740,12 @@ export function ReviewFilmstrip({
    * different component, so the drag belongs to the page that holds both.
    */
   onDragPhoto: (photo: EventPhoto, label: string, e: React.PointerEvent) => void;
+  /**
+   * Start dragging a CULTIVAR out onto a plant, to label it with a picture of
+   * the species. Same shape as `onDragPhoto` and for the same reason: the
+   * pointer comes up over the canvas, which is a different component.
+   */
+  onDragPlant: (row: PlantRow, e: React.PointerEvent) => void;
 }) {
   // Destructured names the body already used before the state moved upstairs.
 
@@ -831,44 +838,24 @@ export function ReviewFilmstrip({
       <div className="flex shrink-0 gap-2 overflow-x-auto border-t border-edge bg-bg px-3 py-2 md-scroll">
         {switcher}
         {/*
-          A SIGN AT THE HEAD OF THE CULTIVAR RAIL SAYING WHAT THIS ONE IS NOT.
+          A SIGN AT THE HEAD OF THE RAIL SAYING THE SECOND GESTURE IS THERE.
 
-          Arming the Plant tool swings the strip round to this rail, so the
-          moment somebody is looking at plants is the moment the photographs
-          are gone — and the gesture that attaches a photograph to a plant
-          starts by dragging a frame OUT of the strip. Dragging one of these
-          does nothing, correctly: they are the catalog, not the yard, and a
-          stock picture of the species is not a photograph of this plant.
+          A tap on one of these arms the cultivar, which is discoverable
+          because arming is what tapping a rail does everywhere. A DRAG puts
+          the picture on a plant, and nothing on a tile says so — a drag has no
+          affordance at all until somebody has already tried one, and a drag
+          that does nothing is indistinguishable from a broken app. Which is
+          exactly how this was reported.
 
           AT THE HEAD, NOT AT THE TAIL, and that was a real failure rather than
           a preference: written after the tiles it sat 962 cultivars along a
           rail that scrolls sideways, so the test could not even click it. A
-          sign nobody scrolls to is not a sign. It costs 9rem at the start of a
-          rail that is hundreds of tiles long, which is nothing.
-
-          And the button IS the way out rather than a pointer at the switcher's
-          own Property tab — the thing being answered is "what am I doing"
-          while looking straight at it.
+          sign nobody scrolls to is not a sign. It costs 8rem at the start of a
+          rail hundreds of tiles long, which is nothing.
         */}
-        {canPhotos ? (
-          <div className="flex shrink-0 flex-col justify-center gap-1 self-stretch border-r border-edge pr-2">
-            <p className="max-w-[9rem] text-[0.6rem] leading-snug text-muted">
-              Tap to arm a cultivar. Photographs to drag onto a plant are under
-              Property.
-            </p>
-            <button
-              onClick={() => onSource("property")}
-              className="self-start rounded-lg bg-surface2 px-2 py-1 text-[0.65rem] font-bold text-ink"
-            >
-              Property photos →
-            </button>
-          </div>
-        ) : null}
-        {/*
-          The generic leads, exactly as it does in the column: an unnamed shrub
-          is a real answer, and it has to be reachable from inside the rail or
-          choosing a cultivar would be a one-way door.
-        */}
+        <p className="max-w-[8rem] shrink-0 self-center border-r border-edge pr-2 text-[0.6rem] leading-snug text-muted">
+          Tap to arm a cultivar. Drag its picture onto a plant to label it.
+        </p>
         <button
           onClick={() => onPickPlant(null)}
           aria-label={`Any ${plantGroupLabel}`}
@@ -904,6 +891,22 @@ export function ReviewFilmstrip({
               <button
                 key={row.id}
                 onClick={() => onPickPlant(row)}
+                /*
+                  AND THE SAME TILE IS DRAGGED ONTO A PLANT TO LABEL IT.
+
+                  One tile, two gestures, which is the same bargain the
+                  property frames already make: a tap arms the cultivar, a
+                  drag carries its picture out. Only a tile that HAS a picture
+                  — 734 of the 962 — since the other 228 would drag a leaf
+                  glyph onto the plan and label a shrub with nothing.
+
+                  The picture is of the KIND, not of the variety, and that is
+                  what makes it right here rather than a caveat: a crew reading
+                  a symbol wants to know what goes in the hole.
+                */
+                onPointerDown={
+                  row.image ? (ev) => onDragPlant(row, ev) : undefined
+                }
                 aria-label={row.name}
                 aria-pressed={picked}
                 /* The name lives here now rather than under the picture: it is

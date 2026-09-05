@@ -4913,22 +4913,10 @@ try {
     `${beforeShots} before, ${await plantCount()} now`);
 
   /*
-    THE SIGN AT THE HEAD OF THE CULTIVAR RAIL, checked at the exact moment it
-    matters: the Plant tool has just been armed, which is what swung the strip
-    onto the Plants rail, so this is precisely the screen somebody is looking
-    at when they try to drag a plant tile onto the plan and nothing happens.
-
-    Two halves, and the second is the one that earns it. Saying "photographs
-    are under Property" while the Property tab is a small word in a column of
-    four is a sign pointing at a sign. The button has to BE the way out, so
-    the check clicks it and reads which tab is pressed afterwards — a note
-    that merely renders would pass the first half and leave the user exactly
-    where they were.
-
-    IT HAD TO MOVE TO PASS, and that is the check earning its keep rather than
-    a test being appeased: written at the END of the rail the button sat 962
-    cultivars along a sideways scroll and could not be clicked at all. A user
-    would have scrolled no further than the test did.
+    WHERE ARMING THE PLANT TOOL LEAVES THE STRIP, asserted rather than assumed,
+    because everything below depends on it: the tool swings the strip onto the
+    CULTIVAR rail, so that is the rail somebody is looking at the moment they
+    want to put a picture on a plant.
   */
   shotStep = "plants-rail sign";
   const pressedTab = () =>
@@ -4940,17 +4928,20 @@ try {
         .join("|"));
   ok("arming the Plant tool leaves the strip on the cultivar rail",
     (await pressedTab()) === "Plants", await pressedTab());
-  const railSign = page.locator('text=/Photographs to drag onto a plant are under/');
-  ok("the cultivar rail says where the photographs are",
-    (await railSign.count()) > 0,
+  /*
+    AND THE RAIL SAYS THE SECOND GESTURE IS THERE. A tap arms the cultivar and
+    a drag labels a plant with it; a drag has no affordance of its own, so
+    without a line saying so the gesture is only found by accident — and a drag
+    that does nothing is indistinguishable from a broken app.
+
+    IT HAD TO MOVE TO BE CHECKABLE AT ALL: written at the END of the rail it
+    sat 962 cultivars along a sideways scroll. A user would have scrolled no
+    further than the test did.
+  */
+  const railSign = page.locator("text=/Drag its picture onto a plant to label it/");
+  ok("the cultivar rail says a tile can be dragged onto a plant",
+    (await railSign.count()) > 0 && (await railSign.first().isVisible()),
     `${await railSign.count()} signs`);
-  const railOut = page.locator('button:has-text("Property photos")');
-  if ((await railOut.count()) > 0) {
-    await railOut.first().click();
-    await page.waitForTimeout(500);
-  }
-  ok("and its button is the way out, not a pointer at one",
-    (await pressedTab()) === "Property", await pressedTab());
 
   /*
     AND THE STRIP IS PUT ON THE YARD'S PHOTOGRAPHS — after the planting, not
@@ -5077,6 +5068,80 @@ try {
   ok("a drop on bare ground tags nothing",
     (await taggedCount()) === bareBefore,
     `${await taggedCount()} tagged, ${bareBefore} before`);
+
+  /*
+    AND THE OTHER RAIL DRAGS TOO, which is the one that was asked for.
+
+    A CULTIVAR is dragged onto a plant to LABEL it — a picture of the species
+    beside the symbol, so a crew reading the plan knows what goes in the hole.
+    The picture is of the kind rather than of the variety (every Arborvitae
+    cultivar in the file points at one `Thuja.jpeg`), and that is exactly what
+    makes it right for a label and wrong as evidence.
+
+    Checked as a DIFFERENT KIND of link, not merely as "a photograph landed":
+    `plant:<id>` against the property frames' `event:<id>`. The two travel
+    through the same drop, so a build that quietly turned a cultivar into a
+    site photograph — or placed it on the map as though somebody had taken it
+    there — would pass a check that only counted attachments.
+  */
+  shotStep = "cultivar-drag";
+  const plantsTab = page.locator('button:text-is("Plants")');
+  if ((await plantsTab.count()) > 0) {
+    await plantsTab.first().click();
+    await page.waitForTimeout(600);
+  }
+  // A tile with a PICTURE. 228 of the 962 rows have none and are deliberately
+  // not draggable — dragging a leaf glyph out would label a shrub with
+  // nothing — so the locator has to ask for the picture, not for the tile.
+  const cultivarTiles = page.locator("button[aria-pressed] > img");
+  const cultivarCount = await cultivarTiles.count();
+  ok("the cultivar rail has pictures to drag",
+    cultivarCount > 0, `${cultivarCount} tiles with a picture`);
+  const beforeLabel = await taggedCount();
+  const eventLinks = async () =>
+    (await plantShots()).flat().filter((x) => x.startsWith("event:")).length;
+  const beforeEvents = await eventLinks();
+  const tile = await cultivarTiles.first().boundingBox();
+  const labelPt = await pointNow(pairOff);
+  await page.mouse.move(tile.x + tile.width / 2, tile.y + tile.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(labelPt.x, labelPt.y, { steps: 10 });
+  await page.mouse.move(labelPt.x + 1, labelPt.y, { steps: 2 });
+  await page.waitForTimeout(200);
+  const labelCatch = await page.getAttribute("canvas[data-plan-canvas]", "data-photo-drop");
+  const labelHint = (await page.textContent("main p.text-muted, p.text-muted")) ?? "";
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  const labelled = (await plantShots()).filter((l) => l.some((x) => x.startsWith("plant:")));
+  ok("A CULTIVAR DRAGGED OUT OF THE RAIL LABELS THE PLANT IT LANDS ON",
+    labelled.length === 2, JSON.stringify(await plantShots()));
+  /*
+    AND IT IS A CATALOG LABEL RATHER THAN A SITE PHOTOGRAPH — counted as
+    `event:` links that did NOT appear, not as `plant:` links that did.
+
+    Written the other way round it was vacuous: filtering for `plant:` and
+    asking whether every one of them is a `plant:` is true of the empty list,
+    so a build that wrote the cultivar out as `event:<id>` passed it. Mutation
+    found that; this version turns red on it.
+  */
+  ok("and it is a catalog label, not a site photograph",
+    (await eventLinks()) === beforeEvents,
+    `${await eventLinks()} event links, ${beforeEvents} before`);
+  ok("the mass says it would catch both while the picture is over it",
+    labelCatch === "2", `${labelCatch} under the picture`);
+  /*
+    AND THE LINE UNDER THE MAP NAMES THE CULTIVAR, not just the target. The
+    ghost covers the plant, so this line is where the answer to "which plant
+    am I about to put on these" has to appear — and the catalog picture is of
+    a species, so the NAME is the half that says which one it is.
+  */
+  ok("AND THE LINE UNDER THE MAP NAMES THE CULTIVAR AND WHAT IT WOULD LABEL",
+    /Let go to label/.test(labelHint) && /2 · Shrub/.test(labelHint) &&
+      / — \S/.test(labelHint),
+    labelHint.slice(0, 100));
+  ok("and nothing else on the plan was touched",
+    (await taggedCount()) === beforeLabel + 2,
+    `${await taggedCount()} tagged, ${beforeLabel} before`);
 
   // Off the plan again, so what follows sees the yard it expects. Two taps of
   // the tool from Plant, not one: the cycle is plant → pick → remove.
