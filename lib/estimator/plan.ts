@@ -275,6 +275,21 @@ export interface PlacedPlant {
 export interface PhotoCallout {
   id: string;
   photoId: string;
+  /**
+   * The PLANT this one hangs off, when it hangs off a plant rather than a dot.
+   *
+   * A cultivar dragged out of the catalog labels a planting, and a planting is
+   * not a photograph: there is no dot to point at, so the far end of the line
+   * is the plant symbol itself. Looked up at draw time exactly as `photoId` is
+   * — drag the plant and the line follows it.
+   *
+   * It is also what makes the SAME picture usable more than once. One frame
+   * per photograph is right when the photograph is of a place, since a second
+   * would be two lines to one dot; but three boxwood masses in three beds all
+   * labelled *Green Velvet* is three labels, so a plant call-out is one per
+   * plant instead.
+   */
+  plantId?: string;
   /** Where the picture sits. Never where the dot is. */
   at: LatLng;
   /**
@@ -836,13 +851,25 @@ export function calloutsFrom(value: unknown): PhotoCallout[] {
     if (typeof r.photoId !== "string" || !r.photoId) continue;
     const id = typeof r.id === "string" && r.id && !seen.has(r.id) ? r.id : planId("c");
     seen.add(id);
-    // One call-out per photograph. Two would sit on top of each other with two
-    // lines to one dot, and nothing on screen would say there were two.
-    if (out.some((c) => c.photoId === r.photoId)) continue;
+    const plantId =
+      typeof r.plantId === "string" && r.plantId ? r.plantId : undefined;
+    /*
+      One call-out per photograph — or per PLANT, when it labels one.
+
+      Two of the first would sit on top of each other with two lines to one
+      dot, and nothing on screen would say there were two. But the same
+      cultivar labelling three different masses is three labels in three
+      places, so the key has to carry the plant or the second bed silently
+      loses its label on the next load.
+    */
+    const key = plantId ? `${r.photoId}|${plantId}` : r.photoId;
+    if (out.some((c) => (c.plantId ? `${c.photoId}|${c.plantId}` : c.photoId) === key))
+      continue;
     out.push({
       id,
       at,
       photoId: r.photoId,
+      ...(plantId ? { plantId } : {}),
       // Only when it is not the default, so a plan full of ordinary call-outs
       // does not carry the same number on every one of them.
       ...(r.w !== undefined && calloutWidth(r.w) !== CALLOUT_DEFAULT_W

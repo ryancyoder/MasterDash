@@ -5098,6 +5098,20 @@ try {
   ok("the cultivar rail has pictures to drag",
     cultivarCount > 0, `${cultivarCount} tiles with a picture`);
   const beforeLabel = await taggedCount();
+  /*
+    THE CANVAS AS IT STANDS, for the before-and-after below.
+
+    Taken BEFORE the drag starts rather than just before the release: the drop
+    ring is drawn on the canvas while a picture is over a plant, so a "before"
+    captured mid-drag has the app's own highlight in it.
+  */
+  const canvasShot = () =>
+    page.evaluate(() => {
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const g = c.getContext("2d");
+      return Array.from(g.getImageData(0, 0, c.width, c.height).data);
+    });
+  const beforePix = await canvasShot();
   const eventLinks = async () =>
     (await plantShots()).flat().filter((x) => x.startsWith("event:")).length;
   const beforeEvents = await eventLinks();
@@ -5142,6 +5156,107 @@ try {
   ok("and nothing else on the plan was touched",
     (await taggedCount()) === beforeLabel + 2,
     `${await taggedCount()} tagged, ${beforeLabel} before`);
+
+  /*
+    AND THE PICTURE IS HELD OPEN ON THE PLAN, WITH A LINE TO THE PLANT.
+
+    The whole point of the label: attaching it and leaving the plan looking
+    identical is exactly the "did that work?" this feature was reported for
+    twice. So it is a call-out — the same device a photograph's is — anchored
+    to a plant symbol instead of to a dot.
+
+    STORED FIRST, then LOOKED AT. The row says which plant the line runs to and
+    that it is the cultivar's picture; the canvas says whether any of that
+    reached the screen. This project has shipped maths verified to fourteen
+    decimal places with nothing rendered at all, so the row alone is not the
+    check.
+  */
+  shotStep = "cultivar-callout";
+  const labelCallouts = await page.evaluate(() => {
+    const e = JSON.parse(localStorage.getItem("qe-estimate") ?? "{}");
+    return (e?.plan?.callouts ?? []).filter((c) => c.plantId);
+  });
+  ok("THE LABEL IS HELD OPEN ON THE PLAN AS A CALL-OUT",
+    labelCallouts.length === 1 &&
+      labelCallouts[0].photoId.startsWith("plant:") &&
+      typeof labelCallouts[0].plantId === "string",
+    JSON.stringify(labelCallouts));
+  /*
+    AND ITS LINE RUNS TO THE PLANT IT LABELS — read off the canvas, as the
+    PIXELS THAT CHANGED between the plan before the drag and the plan after it.
+
+    Change rather than colour, because the leader is drawn white or in the
+    accent green and both of those are already on a plan full of plant symbols
+    and selection rings. Nothing else on the map moves between the two frames,
+    so a box that changed had something drawn into it.
+
+    WITH A RULER IN THE SAME FRAME: the same box, mirrored to the other side of
+    the plant, where the leader is not. A build that redrew the whole canvas
+    slightly differently — a repaint, a re-fit, a moved viewport — would light
+    up both, and the check has to be able to tell that from a line.
+  */
+  const changed = await page.evaluate(
+    ({ before, at, dx, dy }) => {
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const g = c.getContext("2d");
+      const now = g.getImageData(0, 0, c.width, c.height).data;
+      const r = c.getBoundingClientRect();
+      const sx = c.width / r.width;
+      const sy = c.height / r.height;
+      const box = (ox, oy) => {
+        const cx = Math.round((at.x + ox - r.left) * sx);
+        const cy = Math.round((at.y + oy - r.top) * sy);
+        const half = Math.round(14 * sx);
+        let n = 0;
+        for (let y = cy - half; y <= cy + half; y++) {
+          if (y < 0 || y >= c.height) continue;
+          for (let x = cx - half; x <= cx + half; x++) {
+            if (x < 0 || x >= c.width) continue;
+            const i = (y * c.width + x) * 4;
+            if (
+              Math.abs(now[i] - before[i]) > 24 ||
+              Math.abs(now[i + 1] - before[i + 1]) > 24 ||
+              Math.abs(now[i + 2] - before[i + 2]) > 24
+            )
+              n++;
+          }
+        }
+        return n;
+      };
+      // Half way along where the leader must run, and the mirror of it.
+      return { leader: box(dx / 2, dy / 2), mirror: box(-dx / 2, -dy / 2) };
+    },
+    { before: beforePix, at: labelPt, dx: 100, dy: -90 },
+  );
+  ok("AND A LINE RUNS FROM THE PICTURE TO THE PLANT",
+    changed.leader > 30,
+    `${changed.leader} pixels changed along the leader`);
+  ok("and the same box on the other side of the plant did not change",
+    changed.mirror < changed.leader / 3,
+    `leader ${changed.leader} · mirror ${changed.mirror}`);
+
+  /*
+    AND TAKING THE PICTURE OFF THE PLANT TAKES THE LABEL WITH IT, in one edit.
+
+    A frame left behind would draw a line to a plant that no longer claims the
+    picture — and `calloutDraws` drops exactly that on the next load, so the
+    plan would look one way now and another way tomorrow. Undo is the cheapest
+    way to ask: the drop was one edit, so one press must put both halves back.
+  */
+  await page.locator('button[aria-label="Undo the last change to the plan"]').click();
+  await page.waitForTimeout(450);
+  const afterUndo = await page.evaluate(() => {
+    const e = JSON.parse(localStorage.getItem("qe-estimate") ?? "{}");
+    return {
+      callouts: (e?.plan?.callouts ?? []).filter((c) => c.plantId).length,
+      labels: (e?.plan?.plants ?? []).filter((p) =>
+        (p.photos ?? []).some((x) => x.photoId.startsWith("plant:")),
+      ).length,
+    };
+  });
+  ok("ONE UNDO TAKES THE LABEL AND ITS CALL-OUT BACK TOGETHER",
+    afterUndo.callouts === 0 && afterUndo.labels === 0,
+    JSON.stringify(afterUndo));
 
   // Off the plan again, so what follows sees the yard it expects. Two taps of
   // the tool from Plant, not one: the cycle is plant → pick → remove.

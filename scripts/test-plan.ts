@@ -778,6 +778,33 @@ const link = (photoId: string, over: Partial<ShapePhotoLink> = {}): ShapePhotoLi
   ok("ONE CALL-OUT PER PHOTOGRAPH, not two on one dot",
     doubled.length === 1, JSON.stringify(doubled));
 
+  /*
+    BUT A CULTIVAR'S LABEL IS ONE PER PLANT, not one per picture, and the two
+    rules live in one key.
+
+    The same *Green Velvet* labelling three boxwood masses in three beds is
+    three labels — that is the ordinary case, not an edge one. Keyed by the
+    photograph alone, the second and third beds lose their label on the next
+    load with nothing said, which is the worst shape a bug can have here: the
+    plan looks right until it is reopened.
+  */
+  const label = (over = {}) => callout({ photoId: "plant:610", plantId: "p1", ...over });
+  ok("a plant's label round-trips, carrying which plant it points at",
+    calloutsFrom({ callouts: [label()] })[0]?.plantId === "p1",
+    JSON.stringify(calloutsFrom({ callouts: [label()] })));
+  const twoBeds = calloutsFrom({
+    callouts: [label(), label({ id: "c2", plantId: "p2", at: { lat: 41.4, lng: -87.2 } })],
+  });
+  ok("THE SAME CULTIVAR LABELS TWO DIFFERENT PLANTS",
+    twoBeds.length === 2, JSON.stringify(twoBeds));
+  const sameBed = calloutsFrom({
+    callouts: [label(), label({ id: "c3", at: { lat: 41.4, lng: -87.2 } })],
+  });
+  ok("but not the same plant twice",
+    sameBed.length === 1, JSON.stringify(sameBed));
+  ok("and a plain call-out carries no plant at all",
+    !("plantId" in (calloutsFrom({ callouts: [callout()] })[0] ?? {})));
+
   const collided = calloutsFrom({
     callouts: [callout(), callout({ photoId: "event:p2" })],
   });

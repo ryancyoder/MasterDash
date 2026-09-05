@@ -895,9 +895,65 @@ export function addCallout(photoId: string, at: LatLng): string {
   const id = planId("callout");
   mutatePlan((plan) => ({
     ...plan,
+    // Only the ones that hang off a DOT. A plant's label happens to be the
+    // same picture and is a different annotation in a different place.
     callouts: [
-      ...plan.callouts.filter((c) => c.photoId !== photoId),
+      ...plan.callouts.filter((c) => c.plantId || c.photoId !== photoId),
       { id, photoId, at },
+    ],
+  }));
+  return id;
+}
+
+/**
+ * Hold a cultivar's picture open beside the plant it labels.
+ *
+ * ONE PER PLANT, not one per picture, which is the whole difference from the
+ * call-out above: the same *Green Velvet* labelling three masses in three beds
+ * is three labels. Dropping it on a plant that already carries one moves that
+ * label rather than stacking a second frame on the first.
+ */
+export function addPlantCallout(
+  plantId: string,
+  photoId: string,
+  at: LatLng,
+): string {
+  const id = planId("callout");
+  mutatePlan((plan) => ({
+    ...plan,
+    callouts: [
+      ...plan.callouts.filter((c) => c.plantId !== plantId),
+      { id, photoId, plantId, at },
+    ],
+  }));
+  return id;
+}
+
+/**
+ * Label a planting with a cultivar's picture: the link AND the frame beside it.
+ *
+ * ONE EDIT, which is the whole reason this is not the two calls it obviously
+ * is. A drop is one act — a picture landed on a plant — and undo has to put
+ * the plan back the way it was in one press. Written as two `mutatePlan`s it
+ * was two: the first press took the frame off and left every plant in the mass
+ * still claiming a picture nothing on screen showed. That is the same rule
+ * `linkPhotoToPlants` already follows for a mass of eleven, applied to the two
+ * halves of the drop rather than to the eleven plants.
+ */
+export function labelPlantsWithPhoto(
+  plantIds: string[],
+  anchorId: string,
+  link: ShapePhotoLink,
+  at: LatLng,
+): string {
+  const id = planId("callout");
+  const ids = new Set(plantIds);
+  mutatePlan((plan) => ({
+    ...plan,
+    plants: plan.plants.map((p) => (ids.has(p.id) ? withPhotoLink(p, link) : p)),
+    callouts: [
+      ...plan.callouts.filter((c) => c.plantId !== anchorId),
+      { id, photoId: link.photoId, plantId: anchorId, at },
     ],
   }));
   return id;
@@ -923,7 +979,7 @@ export function setCalloutWidth(photoId: string, w: number) {
     (plan) => ({
       ...plan,
       callouts: plan.callouts.map((c) =>
-        c.photoId === photoId
+        !c.plantId && c.photoId === photoId
           ? calloutWidth(w) === CALLOUT_DEFAULT_W
             ? { id: c.id, photoId: c.photoId, at: c.at }
             : { ...c, w: calloutWidth(w) }
@@ -941,7 +997,7 @@ export function setCalloutWidth(photoId: string, w: number) {
 export function removeCalloutFor(photoId: string) {
   mutatePlan((plan) => ({
     ...plan,
-    callouts: plan.callouts.filter((c) => c.photoId !== photoId),
+    callouts: plan.callouts.filter((c) => c.plantId || c.photoId !== photoId),
   }));
 }
 
@@ -1177,6 +1233,15 @@ export function unlinkPhotoFromPlant(plantId: string, photoId: string) {
     ...plan,
     plants: plan.plants.map((p) =>
       p.id === plantId ? withoutPhotoLink(p, photoId) : p,
+    ),
+    /*
+      AND THE LABEL ON THE PLAN GOES WITH IT, in the same edit and the same
+      undo. A frame left behind would be drawing a line to a plant that no
+      longer claims the picture — `calloutDraws` would drop it silently on the
+      next load, so the plan would look one way now and another way tomorrow.
+    */
+    callouts: plan.callouts.filter(
+      (c) => !(c.plantId === plantId && c.photoId === photoId),
     ),
   }));
 }

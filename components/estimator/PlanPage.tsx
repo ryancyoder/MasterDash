@@ -121,6 +121,7 @@ import {
 } from "@/lib/estimator/propertyLayers";
 import {
   addCallout,
+  labelPlantsWithPhoto,
   addPlant,
   addShape,
   attachProperty,
@@ -761,10 +762,45 @@ export default function PlanPage({
    * claiming a position the map is not showing.
    */
   const calloutDraws = useMemo<CalloutDraw[]>(() => {
-    if (!photoDots) return [];
-    const dotById = new Map(photoDots.map((d) => [d.id, d.at]));
+    /*
+      NOT GATED ON THE PHOTO DOTS, and that is not a tidy-up — it is the bug
+      that made a plant's label invisible. `photoDots` is null until the yard's
+      photographs have been read, and the strip is on the CULTIVAR rail the
+      whole time a label is being dropped, so on that path it is null and this
+      returned nothing at all. A frame was written, undo took it back, and
+      nothing was ever on screen.
+
+      A plant call-out has nothing to do with the dots: both ends of its line
+      are plants. Only the ones that point at a dot need the list.
+    */
+    const dotById = new Map((photoDots ?? []).map((d) => [d.id, d.at]));
     const out: CalloutDraw[] = [];
     for (const callout of plan.callouts) {
+      /*
+        A LABEL HANGS OFF ITS PLANT, a call-out off its dot, and both ends are
+        looked up rather than stored so dragging either moves the line.
+
+        The picture comes off the PLANT'S OWN LINK rather than out of the
+        catalog: the plan is meant to be readable with no plant list loaded —
+        which is the same reason `variantLabel` is carried — and the rail is
+        only fetched for whichever category happens to be armed.
+      */
+      if (callout.plantId) {
+        const plant = plan.plants.find((p) => p.id === callout.plantId);
+        const url = plant?.photos?.find((x) => x.photoId === callout.photoId)?.url;
+        // A plant that has been removed, or one that no longer claims the
+        // picture, has nothing to point at. Dropped silently, exactly as a
+        // call-out whose dot is not on the map is.
+        if (!plant || !url) continue;
+        out.push({
+          id: callout.id,
+          at: callout.at,
+          dotAt: plant.at,
+          url,
+          w: calloutWidth(callout.w),
+        });
+        continue;
+      }
       const dotAt = dotById.get(callout.photoId);
       if (!dotAt) continue;
       const url = callout.photoId.startsWith("event:")
@@ -780,7 +816,7 @@ export default function PlanPage({
       });
     }
     return out;
-  }, [plan.callouts, photoDots, eventById, visit]);
+  }, [plan.callouts, plan.plants, photoDots, eventById, visit]);
 
   /** Whether the picked photograph is already held open, for the preview. */
   const pickedCalloutId = useMemo(() => {
@@ -996,6 +1032,56 @@ export default function PlanPage({
     [],
   );
 
+  /*
+    The plants, reachable from inside the drag effect without being a dep.
+
+    Same device `addAsLayerRef` uses and for the same reason: that effect is
+    subscribed once per drag and carries an `exhaustive-deps` disable, so a
+    value read through a closure is whatever existed when the drag started.
+    Nothing plants a shrub mid-drag, but the rule that bites is the one nobody
+    remembers, and a ref cannot go stale.
+  */
+  const plantsRef = useRef(plan.plants);
+  useEffect(() => {
+    plantsRef.current = plan.plants;
+  }, [plan.plants]);
+
+  /**
+   * Which of a caught group the line should run to: the one nearest the drop.
+   *
+   * A mass is written onto every plant in it and the list comes back in plan
+   * order, so taking the first would run the leader from the picture to
+   * whichever of eleven boxwood was planted first — across the whole group,
+   * rather than to the one under the finger.
+   *
+   * Longitude is scaled by `cos(lat)` before the comparison. At 41°N a degree
+   * of longitude is about three quarters of a degree of latitude on the
+   * ground, and comparing raw degrees would lean the choice north-south.
+   */
+  const nearestPlantOf = useCallback(
+    (ids: string[], clientX: number, clientY: number): string | null => {
+      if (!ids.length) return null;
+      const pool = plantsRef.current.filter((p) => ids.includes(p.id));
+      if (!pool.length) return ids[0];
+      const at = canvasApi.current?.latLngAt(clientX, clientY);
+      if (!at) return pool[0].id;
+      const kx = Math.cos((at.lat * Math.PI) / 180);
+      let best = pool[0];
+      let bestD = Infinity;
+      for (const p of pool) {
+        const dy = p.at.lat - at.lat;
+        const dx = (p.at.lng - at.lng) * kx;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) {
+          bestD = d;
+          best = p;
+        }
+      }
+      return best.id;
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!dragPhoto) return;
     const move = (e: PointerEvent) => {
@@ -1080,7 +1166,44 @@ export default function PlanPage({
         stock photograph on the yard as though somebody had taken it there.
       */
       if (drag.kind === "label") {
-        if (onPlants.length) linkPhotoToPlants(onPlants, drag.link);
+        if (onPlants.length) {
+          /*
+            AND THE PICTURE IS HELD OPEN BESIDE IT, with a line back to the
+            plant — the same device a photograph's call-out is, pointing at a
+            symbol instead of at a dot. A label nobody can see is not a label:
+            attaching it and leaving the plan looking identical is exactly the
+            "did that work?" this feature has already been reported for twice.
+
+            ANCHORED TO THE NEAREST PLANT OF THE GROUP, not to the first one
+            in the list. A mass is written onto every plant in it, and the list
+            comes back in plan order — so the line would run from the picture
+            to whichever of eleven boxwood happened to be planted first, across
+            the whole group, instead of to the one under the finger.
+          */
+          const anchor = nearestPlantOf(onPlants, e.clientX, e.clientY);
+          if (anchor) {
+            /*
+              PLACED CLEAR OF WHAT IT POINTS AT, up and to the right by about
+              its own size. Dropped ON the plant it would cover the very symbol
+              the line is drawn to, and the first thing anybody would do is
+              drag it off — so it starts where it would have been dragged to.
+              Falling back to the drop point rather than refusing: a label on
+              top of its plant is still a label, and can be moved.
+            */
+            const at =
+              canvasApi.current?.latLngAt(e.clientX + 100, e.clientY - 90) ??
+              canvasApi.current?.latLngAt(e.clientX, e.clientY);
+            if (at) {
+              setSelectedCalloutId(
+                labelPlantsWithPhoto(onPlants, anchor, drag.link, at),
+              );
+              return;
+            }
+          }
+          // No anchor and no coordinate is still an attachment — the picture
+          // belongs to the planting whether or not a frame could be placed.
+          linkPhotoToPlants(onPlants, drag.link);
+        }
         return;
       }
 
@@ -1125,7 +1248,7 @@ export default function PlanPage({
       window.removeEventListener("pointercancel", up);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dragPhoto?.url, linkForEventPhoto]);
+  }, [dragPhoto?.url, linkForEventPhoto, nearestPlantOf]);
 
   /** What the strip has picked, resolved to something the preview can show. */
   const pickedFrame = useMemo(() => {

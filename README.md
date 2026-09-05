@@ -1703,6 +1703,40 @@ names the cultivar as well as the target — **"Let go to label 2 · Shrub —
 Green Velvet Boxwood"** — since the ghost covers the plant and the picture is
 of a species, so the name is the half that says which one.
 
+**And the label is HELD OPEN on the plan, with a line to the plant.** A picture
+attached and nothing on screen is the "did that work?" this was reported for
+twice — so the drop also places a call-out: the same device a photograph's is,
+with the far end of the leader on a plant symbol instead of on a dot. Both ends
+are looked up at draw time, so dragging the plant moves the line with it.
+
+**`plantId` on the call-out is what makes the SAME picture usable more than
+once.** One frame per photograph is right when the photograph is of a place — a
+second would be two lines to one dot — but three boxwood masses in three beds
+all labelled *Green Velvet* is three labels, so a plant call-out is keyed one
+per **plant**. Keyed by the picture alone, the second and third beds lose their
+label on the next load with nothing said: the plan looks right until it is
+reopened.
+
+**The drop is ONE edit**, not the two calls it obviously is. Written as two
+`mutatePlan`s the first undo took the frame off and left every plant in the
+mass still claiming a picture nothing showed — the same rule
+`linkPhotoToPlants` follows for eleven plants, applied to the two halves of one
+act. Splitting it turns the undo check red.
+
+**And the bug that made it invisible was a gate, not the drawing.**
+`calloutDraws` opened with `if (!photoDots) return []` — and `photoDots` is
+null until the yard's photographs are read, which on this path they never are,
+because the strip is on the *cultivar* rail the whole time. A frame was
+written, undo took it back, and nothing was ever on screen. A plant call-out
+has nothing to do with the dots: both ends of its line are plants.
+
+**The rendering is read as PIXELS THAT CHANGED**, in a box halfway along where
+the leader must run, against the canvas as it stood before the drag — colour
+would not do, since the leader is white or accent green and a plan is full of
+both. The ruler in the same frame is that box mirrored to the other side of the
+plant: a repaint or a re-fit lights up both, and the check has to tell that
+from a line. Restoring the `photoDots` gate turns both red.
+
 **One check here was vacuous and mutation found it.** "Every `plant:` link is a
 `plant:` link" is true of the empty list, so a build that wrote the cultivar
 out as `event:<id>` passed it. It counts the `event:` links that did NOT appear
