@@ -54,8 +54,6 @@ import {
 } from "@/lib/estimator/assemblyColor";
 import {
   FALLBACK_CENTRE,
-  parseFeet,
-  scaleToKnownDimension,
   type Georef,
   type LatLng,
 } from "@/lib/estimator/geo";
@@ -91,6 +89,8 @@ import {
   type ShapeKind,
 } from "@/lib/estimator/plan";
 import { usePropertyLayers } from "@/lib/estimator/usePropertyLayers";
+import { useFullscreen } from "@/lib/estimator/useFullscreen";
+import { useLayerScaling } from "@/lib/estimator/useLayerScaling";
 import { useVisitReplay } from "@/lib/estimator/useVisitReplay";
 import { usePropertyPhotos } from "@/lib/estimator/usePropertyPhotos";
 import { shapesForPhoto, type ShapePhotoLink } from "@/lib/estimator/photoLink";
@@ -328,11 +328,6 @@ export default function PlanPage({
   const [pickingSurvey, setPickingSurvey] = useState(false);
   /** The layer the gestures are acting on, if any. */
   const [aligningId, setAligningId] = useState<string | null>(null);
-  /** Marking a dimension: layer gestures off, taps collect the two ends. */
-  const [scaling, setScaling] = useState(false);
-  const [scalePoints, setScalePoints] = useState<LatLng[]>([]);
-  const [scaleInput, setScaleInput] = useState("");
-  const [scaleError, setScaleError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const anchor = plan.anchor;
@@ -1331,7 +1326,6 @@ export default function PlanPage({
     if they have forgotten the button is there. It is a mode you step into for
     a minute and step back out of, like a lock on a door rather than a wall.
   */
-  const [fullscreen, setFullscreen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   /*
@@ -1610,59 +1604,40 @@ export default function PlanPage({
     });
   }, [setOverlays]);
 
-  const startAligning = useCallback((id: string) => {
-    setAligningId(id);
-    setScaling(false);
-    setScalePoints([]);
-    setScaleError(null);
-    // A half-drawn bed would otherwise sit on screen through the whole of an
-    // alignment and be finished against a plan that has since moved.
-    setPending([]);
-    setTool("select");
-  }, []);
+  /*
+    Marking a dimension on a layer and saying how long it really is — the four
+    pieces of state, the validation and the reset that three different exits
+    need, all in `useLayerScaling`.
+  */
+  const {
+    scaling,
+    scalePoints,
+    setScalePoints,
+    scaleInput,
+    setScaleInput,
+    scaleError,
+    toggleScaling,
+    resetScaling,
+    applyScale,
+  } = useLayerScaling(aligning, patchOverlay);
+
+  const startAligning = useCallback(
+    (id: string) => {
+      setAligningId(id);
+      resetScaling();
+      // A half-drawn bed would otherwise sit on screen through the whole of an
+      // alignment and be finished against a plan that has since moved.
+      setPending([]);
+      setTool("select");
+    },
+    [resetScaling],
+  );
 
   const stopAligning = useCallback(() => {
     setAligningId(null);
-    setScaling(false);
-    setScalePoints([]);
-    setScaleError(null);
-  }, []);
+    resetScaling();
+  }, [resetScaling]);
 
-  /**
-   * Resize the layer so the two marked features are the stated distance apart.
-   *
-   * This is what turns a layer from "placed by eye" into the measurement, so
-   * it sets `scaleLocked` — after which the pinch no longer resizes and the
-   * Size slider is disabled. Nothing can change the scale by eye again;
-   * Rescale re-runs the measurement.
-   */
-  const applyScale = useCallback(() => {
-    if (!aligning) return;
-    if (scalePoints.length < 2) {
-      setScaleError("Tap both ends of the dimension first.");
-      return;
-    }
-    const feet = parseFeet(scaleInput);
-    if (feet === null || !(feet > 0)) {
-      setScaleError("Try 100, 100' or 12'6\".");
-      return;
-    }
-    const georef = scaleToKnownDimension(
-      aligning.georef,
-      scalePoints[0],
-      scalePoints[1],
-      feet,
-    );
-    if (!georef) {
-      setScaleError("Those taps are too close — use the longest dimension you can.");
-      return;
-    }
-    patchOverlay(aligning.id, { georef, scaleLocked: true });
-    setScaling(false);
-    setScalePoints([]);
-    setScaleInput("");
-    setScaleError(null);
-  }, [aligning, scalePoints, scaleInput, patchOverlay]);
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1756,97 +1731,14 @@ export default function PlanPage({
   }, [settings.sideCollapsed]);
 
   /*
-    TWO FULLSCREENS, AND THE APP'S ONE IS THE ONE THAT ALWAYS WORKS.
-
-    The browser's Fullscreen API takes the browser's own chrome with it, which
-    is the bigger prize — but `requestFullscreen` on an ELEMENT is refused on
-    iPhone Safari outright and its support on iPad has changed more than once,
-    and this app is used on an iPad in a driveway. So the substance is the app's
-    own: the page goes `fixed inset-0` and covers everything, which needs no
-    API and no permission. The real thing is asked for on top, and a refusal is
-    swallowed rather than reported — there is nothing for a person to do about
-    it and the map is already filling the window.
+    ⛶ gives the whole screen to the map. Two fullscreens are involved and the
+    app's own is the one that always works — the page goes `fixed inset-0`,
+    and the browser's is asked for on top and its refusal swallowed, because
+    `requestFullscreen` on an ELEMENT is refused on iPhone Safari outright and
+    its iPad support has changed more than once. `useFullscreen` holds all of
+    that, including the one way out that both of them have to leave by.
   */
-  /*
-    ONE WAY OUT, AND EVERY EXIT GOES THROUGH IT.
-
-    The two fullscreens have to leave together. An earlier version had the
-    Escape key clear the app's state and leave the browser's alone, so the page
-    came back to its ordinary layout while the document was still the
-    fullscreen element — the map measured 56px taller than it had before going
-    in, and nothing on screen said why. The browser's own chrome would have
-    been missing on a real machine.
-  */
-  const leaveFullscreen = useCallback(() => {
-    setFullscreen(false);
-    const doc = document as Document & {
-      webkitExitFullscreen?: () => Promise<void>;
-      webkitFullscreenElement?: Element | null;
-    };
-    try {
-      if (document.fullscreenElement ?? doc.webkitFullscreenElement) {
-        void (document.exitFullscreen?.() ?? doc.webkitExitFullscreen?.())?.catch(
-          () => {},
-        );
-      }
-    } catch {
-      // Already out, or never in. The app's own layout is what matters.
-    }
-  }, []);
-
-  const toggleFullscreen = useCallback(() => {
-    if (fullscreen) {
-      leaveFullscreen();
-      return;
-    }
-    setFullscreen(true);
-    const el = rootRef.current as
-      | (HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> })
-      | null;
-    try {
-      void (el?.requestFullscreen?.() ?? el?.webkitRequestFullscreen?.())?.catch(
-        () => {},
-      );
-    } catch {
-      // Refused, or not implemented. The app's own fullscreen stands.
-    }
-  }, [fullscreen, leaveFullscreen]);
-
-  /*
-    THE WAYS OUT THAT ARE NOT THE BUTTON.
-
-    Escape, because every fullscreen anybody has ever used answers to it — and
-    the browser's own fullscreen answers to it whether or not we listen, so
-    without this the chrome would come back while the app stayed covered.
-    `fullscreenchange` catches that from the other side: leaving by the
-    browser's control, or by a gesture we never see.
-  */
-  useEffect(() => {
-    if (!fullscreen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") leaveFullscreen();
-    };
-    const onChange = () => {
-      const doc = document as Document & { webkitFullscreenElement?: Element | null };
-      if (!(document.fullscreenElement ?? doc.webkitFullscreenElement)) {
-        setFullscreen(false);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    document.addEventListener("fullscreenchange", onChange);
-    document.addEventListener("webkitfullscreenchange", onChange);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.removeEventListener("fullscreenchange", onChange);
-      document.removeEventListener("webkitfullscreenchange", onChange);
-    };
-    /*
-      Only while it is on. A `fullscreenchange` listener running the rest of
-      the time would fire on somebody putting a VIDEO fullscreen — the review
-      clip, on this very screen — and drop them out of a mode they were not in,
-      which is harmless, and would also run on every page that mounts this one.
-    */
-  }, [fullscreen, leaveFullscreen]);
+  const { fullscreen, toggleFullscreen } = useFullscreen(rootRef);
 
   const ready = anchorIsReal(anchor);
   const shared = useMemo(() => sharedNodeIds(plan.shapes), [plan.shapes]);
@@ -2246,9 +2138,7 @@ export default function PlanPage({
             </span>
             <button
               onClick={() => {
-                setScaling((v) => !v);
-                setScalePoints([]);
-                setScaleError(null);
+                toggleScaling();
               }}
               className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold ${
                 scaling ? "bg-[#f59e0b] text-black" : "bg-surface2 text-ink"

@@ -21,6 +21,20 @@
     lib/server/upright.ts        the Upright session, read through its own API
     app/api/                     the routes that hold the service key
 
+The Plan page's self-contained clusters live in hooks beside it, each owning
+one fetch, its invalidation and whatever is derived from it:
+
+    usePropertyPhotos.ts   the yard's photo sets, and placing one on the ground
+    usePropertyLayers.ts   the overlays: fetch, upload retry, object URLs
+    useVisitReplay.ts      the session being replayed, and its transcript
+    useLayerScaling.ts     marking a dimension to scale a layer by
+    useFullscreen.ts       the app's own fullscreen, and the browser's
+
+What stays in `PlanPage` is what the page is actually for: the drawing tool,
+what is selected, what is armed, and the three-errand photo drag. Those cross
+every other concern on the screen, so a hook around them would be relocation
+rather than encapsulation.
+
 ## The estimate is a log, not a total
 
 The estimate is stored as a **log of increments** rather than as totals, which
