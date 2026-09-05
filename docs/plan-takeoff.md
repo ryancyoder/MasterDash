@@ -217,6 +217,17 @@ the way CAD massing draws it, and a hatch for ground-cover masses.
   people can see. Where there is no photograph (the generic, or one of the 228
   rows of 962 that carry none, or one that will not load offline) it draws the
   stamp instead, which is what the map will actually put down.
+- **A picked plant carries its card on the map** — the same picture and name
+  the column shows, put at the plant it belongs to, because choosing a species
+  is looking at the bed rather than at a list. It is positioned imperatively on
+  an animation frame, so panning with a card open re-renders nothing, and it
+  fades out when the plant is panned off the canvas.
+- **The wheel runs the species on the plant itself**, not only in the column.
+  Claimed only when the pointer is over the picked plant or its card —
+  everywhere else on the map the wheel is still the zoom, and a trackpad pinch
+  (`ctrlKey`) always is. Being picked is deliberately *not* enough on its own:
+  placing a plant leaves it picked, so claiming on selection alone takes the
+  zoom away for the rest of the session.
 - **The wheel steps the species** over the names list. Deltas are accumulated
   against a notch, so a trackpad flick does not run through a whole category,
   and the list follows the selection rather than scrolling out from under it.

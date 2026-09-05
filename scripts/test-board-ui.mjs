@@ -2252,6 +2252,136 @@ try {
   await page.mouse.click(midBox.x + midBox.width / 2, midBox.y + midBox.height / 2);
   await page.waitForTimeout(400);
 
+  /*
+    7c-vii-4b. THE CARD ON THE PLANT, AND THE WHEEL THAT RUNS IT THERE.
+
+    Choosing a species is looking at the BED — at how the thing in hand sits
+    against what is already round it — so the picture and the name go on the
+    map at the plant they belong to, and the wheel runs the list right there
+    rather than eleven inches away in a side column.
+
+    Here rather than up with the drag, and that is worth knowing: the plant the
+    drag leaves behind sits near the edge drawing zero green, so every reading
+    taken against it says nothing. This one was just planted in the middle of
+    the canvas and is picked because placing picks.
+
+    Everything this section disturbs — the species and the zoom — is put back
+    at the end, because the size measurements below read both.
+  */
+  const plantX = midBox.x + midBox.width / 2;
+  const plantY = midBox.y + midBox.height / 2;
+  const popup = page.locator("[data-plant-popup]");
+  const popupName = () =>
+    page.locator("[data-plant-popup] div.font-bold").first().textContent();
+
+  ok("a picked plant carries a card on the map",
+    (await popup.count()) === 1, `${await popup.count()} cards`);
+  ok("and the card names the species in hand",
+    /Shrub/i.test((await popupName()) ?? ""), await popupName());
+
+  /*
+    ABOVE THE PLANT AND CENTRED ON IT, so the card never covers the thing it
+    describes. Read as GEOMETRY off the rendered box — a card parked in a
+    corner would satisfy "it exists" perfectly well.
+  */
+  const cardBox = await popup.boundingBox();
+  ok("THE CARD IS PUT ON THE PLANT, above it and centred",
+    !!cardBox &&
+      Math.abs(cardBox.x + cardBox.width / 2 - plantX) < 40 &&
+      cardBox.y + cardBox.height <= plantY,
+    cardBox
+      ? `card ${Math.round(cardBox.x + cardBox.width / 2)},` +
+        `${Math.round(cardBox.y + cardBox.height)} against plant ` +
+        `${Math.round(plantX)},${Math.round(plantY)}`
+      : "(no card)");
+
+  const plantLabels = () =>
+    page.evaluate(() =>
+      (JSON.parse(localStorage.getItem("qe-estimate") ?? "{}")?.plan?.plants ?? [])
+        .map((p) => p.variantLabel ?? "")
+        .join("|"));
+  const labelBefore = await plantLabels();
+  await page.mouse.move(plantX, plantY);
+  await page.mouse.wheel(0, 120);
+  await page.waitForTimeout(400);
+  ok("ROLLING ON THE PLANT ITSELF CHANGES ITS SPECIES",
+    (await plantLabels()) !== labelBefore,
+    `"${labelBefore}" -> "${await plantLabels()}"`);
+  ok("and the card follows what the roll chose",
+    ((await popupName()) ?? "").trim().length > 0 &&
+      (await plantLabels()).includes(((await popupName()) ?? "").trim()),
+    `card "${await popupName()}" against plants "${await plantLabels()}"`);
+
+  /*
+    AND THE MAP STILL ZOOMS EVERYWHERE ELSE.
+
+    The check that matters most here, and it exists because the first version
+    of the claim did not have it: being PICKED was the whole condition, and
+    since placing a plant leaves it picked, the wheel stopped zooming the map
+    for the rest of the session with nothing on screen saying why. Four
+    existing checks went red on that, which is the only reason it was caught —
+    this one states the rule rather than tripping over it.
+
+    Rolled well clear of the plant. One wheel event is one zoom step whatever
+    the delta, so the roll back below is one event the other way at the same
+    point, which puts the view exactly where it was.
+  */
+  /*
+    MEASURED ON THE CARD'S POSITION, not on the plant's ink, and the difference
+    is the whole check.
+
+    Ink was the obvious ruler and it proves nothing: a claimed roll changes the
+    SPECIES, which changes the symbol, which changes the ink — so a build that
+    wrongly swallowed the zoom moved the number just as well as one that
+    zoomed. The card is pinned to the plant's coordinate, so zooming about a
+    point well away from it MOVES it across the screen, while changing species
+    leaves it exactly where it is. Verified against the mutation: this reads
+    green only when the map really moved.
+  */
+  /*
+    Read as the CENTRE and the BOTTOM, never the left or the top. Those two are
+    what is pinned to the plant — the card is translated by minus half its
+    width and minus its whole height — so they move if and only if the plant
+    moved on screen. Its left edge and its top are not: a longer species name
+    makes a wider card, and reading `x` had this passing against the very
+    mutation it was written to catch.
+  */
+  const cardAt = async () => {
+    const b = await popup.boundingBox();
+    return b
+      ? { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height) }
+      : null;
+  };
+  const cardBeforeZoom = await cardAt();
+  await page.mouse.move(midBox.x + 60, midBox.y + 60);
+  await page.mouse.wheel(0, -120);
+  await page.waitForTimeout(500);
+  const cardAfterZoom = await cardAt();
+  ok("THE WHEEL IS STILL THE ZOOM AWAY FROM THE PLANT",
+    !!cardBeforeZoom &&
+      !!cardAfterZoom &&
+      (Math.abs(cardAfterZoom.x - cardBeforeZoom.x) > 8 ||
+        Math.abs(cardAfterZoom.y - cardBeforeZoom.y) > 8),
+    `card ${JSON.stringify(cardBeforeZoom)} then ${JSON.stringify(cardAfterZoom)}`);
+  /*
+    And the card followed the map to get there, which is the other half of it
+    being pinned to the ground rather than placed once.
+  */
+  ok("AND THE CARD FOLLOWED THE MAP WHILE IT MOVED",
+    !!cardAfterZoom && cardAfterZoom.y > midBox.y - 200,
+    JSON.stringify(cardAfterZoom));
+
+  // Put both back: one event the other way for the zoom, and the same three
+  // notches back for the species.
+  await page.mouse.wheel(0, 120);
+  await page.waitForTimeout(300);
+  await page.mouse.move(plantX, plantY);
+  await page.mouse.wheel(0, -120);
+  await page.waitForTimeout(400);
+  ok("(and the section leaves the species as it found it)",
+    (await plantLabels()) === labelBefore,
+    `"${await plantLabels()}" against "${labelBefore}"`);
+
   const symbolsBtn = page.locator('button[aria-label="Plant symbols and sizes"]');
   await symbolsBtn.click();
   await page.waitForTimeout(300);

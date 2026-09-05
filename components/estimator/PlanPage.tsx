@@ -89,6 +89,10 @@ import {
   type PlantMode,
   type ShapeKind,
 } from "@/lib/estimator/plan";
+import {
+  usePlantSpecies,
+  type PlantSpecies,
+} from "@/lib/estimator/usePlantSpecies";
 import { usePropertyLayers } from "@/lib/estimator/usePropertyLayers";
 import { useFullscreen } from "@/lib/estimator/useFullscreen";
 import { useLayerScaling } from "@/lib/estimator/useLayerScaling";
@@ -1460,6 +1464,59 @@ export default function PlanPage({
     [plantPick.itemId, selectedPlantId],
   );
 
+  /*
+    The armed category's species as one ordered list, and one way along it.
+
+    Shared, because two surfaces roll through it: the names list in the column,
+    and the map itself while a plant is picked. Two copies would eventually
+    disagree about what the next one is — and about how far one flick of a
+    trackpad should go, since the notch accumulator lives with the list.
+  */
+  const species = usePlantSpecies(plantPick, plantRows, pickPlantName);
+
+  /*
+    THE ROLL IS CLAIMED WHERE THE PLANT IS, and nowhere else on the map.
+
+    Being picked is NOT enough on its own, and that is the whole lesson here:
+    placing a plant leaves it selected, so a claim on selection alone takes the
+    wheel away from the map for the rest of the session — the zoom simply stops
+    working and nothing says why. It cost four checks to find that, and they
+    were right.
+
+    So the target is the plant itself, or the card standing over it — which is
+    where the hand already is, because the card is what you are reading while
+    you choose. `plantIdsAt` is the canvas's own hit test, so a plant inside a
+    MASS answers here exactly as it does to a tap. Everywhere else on the yard
+    the wheel is still the zoom.
+  */
+  const claimWheel = useCallback(
+    (
+      deltaY: number,
+      deltaMode: number,
+      ctrlKey: boolean,
+      clientX: number,
+      clientY: number,
+    ) => {
+      // A trackpad pinch arrives as a wheel event; it is always the zoom.
+      if (ctrlKey) return false;
+      if (tool !== "plant" || !selectedPlantId) return false;
+      const onPlant = (canvasApi.current?.plantIdsAt(clientX, clientY) ?? []).includes(
+        selectedPlantId,
+      );
+      const card = plantPopupRef.current?.getBoundingClientRect();
+      const onCard =
+        !!card &&
+        plantPopupRef.current?.style.opacity !== "0" &&
+        clientX >= card.left &&
+        clientX <= card.right &&
+        clientY >= card.top &&
+        clientY <= card.bottom;
+      if (!onPlant && !onCard) return false;
+      return species.roll(deltaY, deltaMode);
+    },
+    [tool, selectedPlantId, species],
+  );
+
   const placePlant = useCallback(
     (at: LatLng) => {
       const id = addPlant(at, plantPick);
@@ -1510,6 +1567,58 @@ export default function PlanPage({
     () => plan.plants.find((p) => p.id === selectedPlantId) ?? null,
     [plan.plants, selectedPlantId],
   );
+
+  /*
+    THE CARD THAT FOLLOWS THE PICKED PLANT.
+
+    Positioned imperatively on an animation frame rather than through state.
+    A card that follows the map has to move on every frame of a pan, and
+    putting that through React would re-render a 2,700-line page and a
+    3,800-line canvas sixty times a second to move one box — so the frame loop
+    writes a transform onto the element and nothing above it re-renders at all.
+
+    The plant's position is read from a ref rather than closed over, so
+    dragging the symbol moves the card with it without restarting the loop.
+    The loop itself runs only while something is picked.
+  */
+  const plantPopupRef = useRef<HTMLDivElement | null>(null);
+  /*
+    Keyed by URL rather than a flag that has to be reset when the species
+    changes — a reset is a second thing to get right, and forgetting it leaves
+    the next plant's picture hidden because the last one would not load.
+  */
+  const [brokenPopupImage, setBrokenPopupImage] = useState<Record<string, boolean>>({});
+  const popupAtRef = useRef<LatLng | null>(null);
+  useEffect(() => {
+    popupAtRef.current = selectedPlant?.at ?? null;
+  });
+  const popupOpen = selectedPlant !== null;
+  useEffect(() => {
+    if (!popupOpen) return;
+    let frame = 0;
+    const tick = () => {
+      const el = plantPopupRef.current;
+      const at = popupAtRef.current;
+      const p = at ? (canvasApi.current?.screenAt(at) ?? null) : null;
+      if (el) {
+        if (p) {
+          // Above the symbol and centred on it, so the card never covers the
+          // plant it is describing.
+          el.style.transform =
+            `translate(calc(${Math.round(p.x)}px - 50%), calc(${Math.round(p.y)}px - 100% - 22px))`;
+          el.style.opacity = "1";
+        } else {
+          // Panned off the canvas. Faded rather than moved, because a card
+          // pinned to the edge points at nothing.
+          el.style.opacity = "0";
+        }
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [popupOpen]);
+
 
   /**
    * What the map draws. A shape whose assembly is switched off is not in it.
@@ -2315,6 +2424,20 @@ export default function PlanPage({
             reached for Evergreen, the next tap must plant an evergreen and
             not the Green Velvet boxwood armed three categories ago.
           */
+          /*
+            THE WHEEL RUNS THE SPECIES WHILE A PLANT IS PICKED.
+
+            The map's wheel is its zoom and that is not up for grabs, so this
+            claims it only in a state that can be said plainly: the Plant tool
+            up, and a plant in hand. Roll then, and the plant under the cursor
+            changes species — which is the whole point, since choosing one is
+            looking at the bed rather than at a list.
+
+            A trackpad PINCH arrives as a wheel event with ctrlKey set, so it
+            is handed straight back: there has to be a way to zoom without
+            putting the plant down first.
+          */
+          claimWheel={claimWheel}
           onPickPlant={(itemId) => setPlantPick({ itemId })}
           /*
             TWO FINGERS TAPPED IS UNDO, THREE IS REDO.
@@ -2703,7 +2826,7 @@ export default function PlanPage({
                 updateSettings({ plantSymbols: all });
               }}
               onResetPrefs={() => updateSettings({ plantSymbols: {} })}
-              rows={plantRows}
+              species={species}
               symbolsOpen={symbolsOpen}
               onSymbolsOpen={setSymbolsOpen}
               kinds={plantKinds}
@@ -2893,6 +3016,68 @@ export default function PlanPage({
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={dragPhoto.url} alt="" className="h-full w-full object-cover" />
+        </div>
+      )}
+
+      {/*
+        WHAT IS IN HAND, WHERE IT IS STANDING.
+
+        The same picture the column carries, put on the map at the plant it
+        belongs to — because choosing a species is looking at the BED, at how
+        the thing in hand sits against what is already round it, and a preview
+        eleven inches away in a side column is a preview you have to look away
+        from the yard to read.
+
+        It follows the map rather than being placed once: the position is
+        written straight onto the element on every frame, not held in state, so
+        panning and zooming with a card open costs no re-render of a canvas
+        this size. Off the edge of the canvas it fades out rather than sticking
+        to the border — `screenAt` answers null there and that is the whole
+        test.
+      */}
+      {selectedPlant && (
+        <div
+          ref={plantPopupRef}
+          data-plant-popup
+          style={{ opacity: 0 }}
+          className="pointer-events-none fixed left-0 top-0 z-40 flex max-w-[13rem] items-center gap-2 rounded-xl border border-edge bg-surface/95 p-1.5 shadow-lg backdrop-blur-sm transition-opacity"
+        >
+          {species.current.row?.image && !brokenPopupImage[species.current.row.image] ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={species.current.row.image}
+              alt=""
+              onError={() =>
+                setBrokenPopupImage((b) => ({
+                  ...b,
+                  [species.current.row!.image!]: true,
+                }))
+              }
+              className="h-11 w-11 shrink-0 rounded-md object-cover"
+            />
+          ) : (
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-surface2">
+              <StampSwatch
+                kind={stampFor(plantPick.itemId, symbolPrefs)}
+                color="#22c55e"
+                size={34}
+              />
+            </div>
+          )}
+          <div className="min-w-0">
+            <div className="truncate text-[0.7rem] font-bold leading-tight text-ink">
+              {species.current.label}
+            </div>
+            {species.current.row?.botanical && (
+              <div className="truncate text-[0.6rem] italic leading-tight text-muted">
+                {species.current.row.botanical}
+              </div>
+            )}
+            <div className="text-[0.55rem] leading-tight text-muted">
+              {spreadFtFor(plantPick.itemId, symbolPrefs)}&#8242; spread
+              {species.options.length > 1 && " · roll to change"}
+            </div>
+          </div>
         </div>
       )}
 
@@ -3885,7 +4070,7 @@ function PlantsPanel({
   prefs,
   onPrefs,
   onResetPrefs,
-  rows,
+  species,
   symbolsOpen,
   onSymbolsOpen,
   open,
@@ -3908,55 +4093,20 @@ function PlantsPanel({
   prefs: PlantSymbolPrefs;
   onPrefs: (itemId: string, patch: { stamp?: PlantStampKind; spreadFt?: number }) => void;
   onResetPrefs: () => void;
-  rows: PlantRow[] | null;
+  /*
+    The ordered species list and the way along it, built once in
+    `usePlantSpecies` and shared: the map rolls through the same list while a
+    plant is picked, and two copies would eventually disagree about what the
+    next one is.
+  */
+  species: PlantSpecies;
   symbolsOpen: boolean;
   onSymbolsOpen: (v: boolean) => void;
   open: boolean;
   onToggle: () => void;
 }) {
-  const group = PLANT_GROUPS.find((g) => g.itemId === pick.itemId);
-  const named = rows === null ? null : plantsInGroup(rows, group?.group ?? "");
+  const { options, at, current, groupLabel, loaded, roll } = species;
   const total = kinds.reduce((sum, k) => sum + k.count, 0);
-
-  /*
-    THE CHOICES, AS ONE ORDERED LIST — the generic first, then the cultivars.
-
-    The buttons below already draw exactly this, and the wheel needs it as a
-    sequence to step along. Building it once means the two cannot disagree
-    about what "the next one" is, which is the only way a list you can both
-    click and roll stays honest.
-  */
-  const options = useMemo(
-    () => [
-      { key: "", label: `Any ${group?.label ?? "plant"}`, row: null as PlantRow | null },
-      ...(named ?? []).map((r) => ({ key: `plant:${r.id}`, label: r.name, row: r })),
-    ],
-    [named, group?.label],
-  );
-  const at = Math.max(0, options.findIndex((o) => o.key === (pick.variantId ?? "")));
-  const current = options[at] ?? options[0];
-
-  /*
-    Held in a ref so the wheel listener below can be attached ONCE. Re-attaching
-    it every render would be a `removeEventListener`/`addEventListener` pair per
-    frame of a roll, and the listener has to be non-passive (see below), which
-    is the expensive kind to churn.
-  */
-  const stepRef = useRef<(n: number) => void>(() => {});
-  // Refreshed after every render rather than assigned during one, so the
-  // listener always steps from the CURRENT selection without being re-bound.
-  useEffect(() => {
-    stepRef.current = (n: number) => {
-      const i = Math.min(options.length - 1, Math.max(0, at + n));
-      if (i === at) return;
-      const o = options[i];
-      onPick(
-        o.row
-          ? { itemId: pick.itemId, variantId: o.key, variantLabel: o.row.name }
-          : { itemId: pick.itemId },
-      );
-    };
-  });
 
   const pickerRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -3977,19 +4127,17 @@ function PlantsPanel({
     forty cultivars. `deltaMode` 1 is lines rather than pixels, which Firefox
     still sends.
   */
-  const roll = useRef(0);
+  const rollRef = useRef(roll);
+  useEffect(() => {
+    rollRef.current = roll;
+  });
   useEffect(() => {
     const el = pickerRef.current;
     if (!el) return;
-    const NOTCH = 40;
     const onWheel = (e: WheelEvent) => {
       if (e.ctrlKey) return; // a pinch-zoom gesture, not a roll
       e.preventDefault();
-      roll.current += e.deltaY * (e.deltaMode === 1 ? 16 : 1);
-      const steps = Math.trunc(roll.current / NOTCH);
-      if (steps === 0) return;
-      roll.current -= steps * NOTCH;
-      stepRef.current(steps);
+      rollRef.current(e.deltaY, e.deltaMode);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -4188,7 +4336,7 @@ function PlantsPanel({
           did not say which would be a list you could not trust either way.
         */}
         <span className="min-w-0 flex-1 truncate text-[0.65rem] text-muted">
-          {selectedName ? `naming ${selectedName}` : `next ${group?.label ?? "plant"}`}
+          {selectedName ? `naming ${selectedName}` : `next ${groupLabel}`}
         </span>
         {/*
           AND THE PICKED PLANT'S REMOVE, HERE.
@@ -4308,44 +4456,55 @@ function PlantsPanel({
           ref={listRef}
           className="relative mt-1 flex max-h-64 flex-col gap-1 overflow-y-auto md-scroll"
         >
-          <button
-            ref={at === 0 ? currentRef : undefined}
-            onClick={() => onPick({ itemId: pick.itemId })}
-            className={`shrink-0 rounded-lg px-2 py-1.5 text-left text-xs font-bold ${
-              pick.variantId === undefined ? "bg-accent text-black" : "bg-surface2 text-muted"
-            }`}
-          >
-            Any {group?.label ?? "plant"}
-          </button>
-          {named === null ? (
+          {/*
+            DRAWN STRAIGHT OFF THE SHARED LIST, generic included — it leads the
+            list there, so it leads here, and the wheel and the buttons cannot
+            end up walking two different orders.
+          */}
+          {options.map((o, i) => (
+            <button
+              key={o.key || "generic"}
+              ref={at === i ? currentRef : undefined}
+              onClick={() =>
+                onPick(
+                  o.row
+                    ? {
+                        itemId: pick.itemId,
+                        variantId: o.key,
+                        variantLabel: o.row.name,
+                      }
+                    : { itemId: pick.itemId },
+                )
+              }
+              /*
+                THE GENERIC IS NOT TRUNCATED AND THE CULTIVARS ARE, which is
+                the markup saying which is which: "Any Shrub" cannot overflow
+                and "Arborvitae Mr. Bowling Ball" always does. It is also what
+                tells the two apart from outside — and getting it wrong here
+                pointed every check that reaches for the first cultivar at the
+                generic instead, which renames nothing.
+              */
+              className={`shrink-0 rounded-lg px-2 py-1.5 text-left text-xs font-bold ${
+                o.row ? "truncate " : ""
+              }${
+                at === i
+                  ? "bg-accent text-black"
+                  : o.row
+                    ? "bg-surface2 text-ink"
+                    : "bg-surface2 text-muted"
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+          {!loaded ? (
             <span className="px-2 py-1 text-[0.7rem] text-muted">Loading names…</span>
-          ) : named.length === 0 ? (
+          ) : options.length === 1 ? (
             <span className="px-2 py-1 text-[0.7rem] leading-relaxed text-muted">
               No named plants cached for this category. The generic still prices
               the job.
             </span>
-          ) : (
-            named.map((row, i) => (
-              <button
-                key={row.id}
-                ref={at === i + 1 ? currentRef : undefined}
-                onClick={() =>
-                  onPick({
-                    itemId: pick.itemId,
-                    variantId: `plant:${row.id}`,
-                    variantLabel: row.name,
-                  })
-                }
-                className={`shrink-0 truncate rounded-lg px-2 py-1.5 text-left text-xs font-bold ${
-                  pick.variantId === `plant:${row.id}`
-                    ? "bg-accent text-black"
-                    : "bg-surface2 text-ink"
-                }`}
-              >
-                {row.name}
-              </button>
-            ))
-          )}
+          ) : null}
         </div>
       </div>
     </InfoBox>

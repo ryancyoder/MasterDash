@@ -378,6 +378,15 @@ export interface PlanCanvasApi {
   /** A point on the screen, as a coordinate. Null before the first layout. */
   latLngAt(clientX: number, clientY: number): LatLng | null;
   /**
+   * A coordinate, as a point on the screen — `latLngAt` the other way round.
+   *
+   * In client coordinates, so it can position something over the map without
+   * the caller knowing where the canvas sits. Null before the first layout,
+   * and null when the point is off the canvas, which is what lets an overlay
+   * following a plant simply not be drawn once the map is panned off it.
+   */
+  screenAt(at: LatLng): { x: number; y: number } | null;
+  /**
    * The plants under a point on the screen — one, or a whole mass.
    *
    * Empty off the canvas and empty on bare ground, so a photograph let go over
@@ -545,6 +554,7 @@ export default function PlanCanvas({
   pinsDraggable,
   onMovePin,
   apiRef,
+  claimWheel,
   rightAngle,
   smoothNew,
   labelFor,
@@ -701,6 +711,21 @@ export default function PlanCanvas({
    * crosses that boundary, so it is one function rather than a handle.
    */
   apiRef?: { current: PlanCanvasApi | null };
+  /**
+   * First refusal on the wheel, before it becomes a zoom.
+   *
+   * Return true to say the roll was used for something else and the map should
+   * stay where it is. `deltaMode` rides along because Firefox still reports
+   * lines rather than pixels, and `ctrlKey` because a trackpad pinch arrives
+   * as a wheel event and must always reach the zoom.
+   */
+  claimWheel?: (
+    deltaY: number,
+    deltaMode: number,
+    ctrlKey: boolean,
+    clientX: number,
+    clientY: number,
+  ) => boolean;
   /** Square up corners while drawing. Off is for the yards that are not. */
   rightAngle: boolean;
   /** Round the shape being drawn, so the pending outline previews as a curve. */
@@ -1184,6 +1209,17 @@ export default function PlanCanvas({
     [],
   );
 
+  /*
+    Held in a ref so the listener below is attached ONCE. `claimWheel` closes
+    over what the page has picked, so it is a new function on every render, and
+    naming it in the effect's dependencies would tear the listener down and put
+    it back on every frame of a roll.
+  */
+  const claimWheelRef = useRef(claimWheel);
+  useEffect(() => {
+    claimWheelRef.current = claimWheel;
+  });
+
   // Wheel-to-zoom, attached natively and non-passive so preventDefault
   // actually stops the browser zooming the page — the whole point.
   useEffect(() => {
@@ -1191,6 +1227,20 @@ export default function PlanCanvas({
     if (!canvas) return;
     function onWheel(e: WheelEvent) {
       e.preventDefault();
+      /*
+        FIRST REFUSAL, and the zoom only runs if nobody took it.
+
+        The wheel is the zoom on this canvas and that is not up for grabs — so
+        the page is asked rather than assumed at, and it only claims the roll
+        in a state it can say plainly: a plant picked, with the Plant tool up.
+        Returning false here leaves every other roll on this map doing exactly
+        what it has always done.
+      */
+      if (
+        claimWheelRef.current?.(e.deltaY, e.deltaMode, e.ctrlKey, e.clientX, e.clientY)
+      ) {
+        return;
+      }
       const rect = canvas!.getBoundingClientRect();
       zoomToPoint(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - rect.left, e.clientY - rect.top);
     }
@@ -2549,6 +2599,14 @@ export default function PlanCanvas({
         const y = clientY - rect.top;
         if (x < 0 || y < 0 || x > rect.width || y > rect.height) return null;
         return toLatLng(fromCanvas({ x, y }, transformNow()));
+      },
+      screenAt(at) {
+        const canvas = canvasRef.current;
+        if (!canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        const p = toCanvas(toWorld(at), transformNow());
+        if (p.x < 0 || p.y < 0 || p.x > rect.width || p.y > rect.height) return null;
+        return { x: p.x + rect.left, y: p.y + rect.top };
       },
       plantIdsAt(clientX, clientY) {
         const canvas = canvasRef.current;
