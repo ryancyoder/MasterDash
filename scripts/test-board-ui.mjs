@@ -2319,24 +2319,42 @@ try {
     !!tileGeneric && Math.abs(tileGeneric.w - tileGeneric.h) <= 2,
     JSON.stringify(tileGeneric));
   /*
-    Read off the LABEL's own required width against the tile's: `scrollWidth`
-    is what the text needs, `clientWidth` what it was given, so a name being
-    shaved by a character or two fails here rather than looking almost right.
+    AND THE PICTURE FILLS IT, corner to corner.
+
+    Read off whichever layer is doing the filling — the photograph, or the
+    stamp that stands in where there is none — because both are the same claim:
+    the tile is a MASK, and the thing inside it is enlarged to cover rather
+    than fitted inside with a margin. A layer that merely sits in the tile
+    passes "there is an image" perfectly well.
   */
-  const labelFits = () =>
+  const fillCovers = () =>
     page.evaluate(() => {
       const el = document.querySelector("[data-plant-popup]");
-      if (!el) return null;
-      const lines = [...el.querySelectorAll("div")].filter(
-        (d) => d.textContent && !d.querySelector("div"),
-      );
-      const need = Math.max(...lines.map((d) => d.scrollWidth));
-      return { need, got: el.clientWidth };
+      const fill = el?.firstElementChild;
+      if (!el || !fill) return null;
+      const a = el.getBoundingClientRect();
+      const b = fill.getBoundingClientRect();
+      return {
+        tile: [Math.round(a.width), Math.round(a.height)],
+        fill: [Math.round(b.width), Math.round(b.height)],
+      };
     });
-  const fitGeneric = await labelFits();
-  ok("and it is at least as wide as the label it carries",
-    !!fitGeneric && fitGeneric.got >= fitGeneric.need,
-    JSON.stringify(fitGeneric));
+  const cover = await fillCovers();
+  ok("and the picture fills the tile corner to corner",
+    !!cover &&
+      Math.abs(cover.fill[0] - cover.tile[0]) <= 2 &&
+      Math.abs(cover.fill[1] - cover.tile[1]) <= 2,
+    JSON.stringify(cover));
+  /*
+    WHAT IS NOT CHECKED HERE, AND WHY. That the photograph is `object-cover`
+    rather than letterboxed inside the tile is not read back, because the
+    catalog images cannot load in this suite at all: they are cross-origin and
+    the SERVICE WORKER answers them before Playwright's own routing sees the
+    request, so the fallback stamp is what renders and there is no `<img>` to
+    ask. A check written for it passed against a build set to `object-contain`,
+    which is worse than no check. Filling the tile is read above, on whichever
+    layer is doing the filling; the cover itself is verified by eye.
+  */
 
   const labelBefore = await plantLabels();
   await page.mouse.move(plantX, plantY);
@@ -2346,22 +2364,35 @@ try {
     (await plantLabels()) !== labelBefore,
     `"${labelBefore}" -> "${await plantLabels()}"`);
   /*
-    AND A LONGER NAME MAKES A BIGGER TILE, which is the rule stated as a
-    difference rather than as an absolute: "Any Shrub" is nine characters and a
-    cultivar is twenty-odd, so the tile has to have grown. A fixed-size tile
-    would satisfy "square" and "at least as wide" on the short name alone.
+    AND THE TILE DOES NOT MOVE WHEN THE SPECIES DOES.
+
+    This reverses a check that stood here for one commit. The card used to be
+    sized to its own text so a name could never be clipped — which meant it
+    changed shape on every step of a roll, pulsing under the eye of the person
+    reading it. A steady frame beats a name nobody has to scan for, so the
+    tile is a fixed mask now and the name wraps inside it.
+
+    "Any Shrub" against a twenty-odd character cultivar is the widest swing
+    this can be asked for, so if those two draw the same box, nothing does.
   */
   const tileNamed = await plantTileBox();
-  const fitNamed = await labelFits();
-  ok("A LONGER SPECIES NAME MAKES A BIGGER TILE",
-    !!tileNamed && !!tileGeneric && tileNamed.w > tileGeneric.w,
+  ok("THE TILE IS THE SAME SIZE WHATEVER SPECIES IS IN IT",
+    !!tileNamed &&
+      !!tileGeneric &&
+      tileNamed.w === tileGeneric.w &&
+      tileNamed.h === tileGeneric.h,
     `${JSON.stringify(tileGeneric)} then ${JSON.stringify(tileNamed)}`);
-  ok("and the longer label still fits inside it",
-    !!fitNamed && fitNamed.got >= fitNamed.need,
-    JSON.stringify(fitNamed));
   ok("and it is still square",
     !!tileNamed && Math.abs(tileNamed.w - tileNamed.h) <= 2,
     JSON.stringify(tileNamed));
+  /*
+    And the longer name is still all there — wrapped, not cut. Read as the
+    rendered text against the stored one, so a build that clipped it with an
+    ellipsis fails rather than looking tidy.
+  */
+  ok("and a long name is wrapped rather than cut",
+    ((await popupName()) ?? "").trim() === (await plantLabels()).split("|").find(Boolean),
+    `card "${await popupName()}" against plant "${await plantLabels()}"`);
 
   ok("and the card follows what the roll chose",
     ((await popupName()) ?? "").trim().length > 0 &&

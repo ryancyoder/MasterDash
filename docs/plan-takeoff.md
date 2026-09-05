@@ -222,10 +222,12 @@ the way CAD massing draws it, and a hatch for ground-cover masses.
   It is **the grid's tile**: a square with the photograph full-bleed under a
   bottom scrim and the name over it, so a plant tile on the map and one in the
   column read as one thing. Where there is no photograph the stamp fills it
-  instead. **Sized by its own label** — the lines do not wrap, so the tile is
-  at least as wide as the longest of them and `aspect-square` makes the height
-  follow: a name is what is being chosen, so the tile grows to hold it rather
-  than the name shrinking to fit. It is positioned imperatively on an animation
+  instead. **It is a fixed mask** — `PLANT_TILE_PX` square whatever is in it,
+  with the picture enlarged to cover and cropped by the corners, and the name
+  wrapped to fit rather than the tile grown to hold it. It was sized to its own
+  text for one commit; a card that changes shape on every step of a roll pulses
+  under the eye of the person reading it, and a steady frame is worth more than
+  a name nobody has to scan for. It is positioned imperatively on an animation
   frame, so panning with a card open re-renders nothing, and it fades out when
   the plant is panned off the canvas.
 - **The wheel runs the species on the plant itself**, not only in the column.

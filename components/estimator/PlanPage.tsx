@@ -229,6 +229,16 @@ const PLANT_MODE_UI: Record<
   },
 };
 
+/**
+ * The plant card on the map, square, in CSS pixels.
+ *
+ * One number rather than a `min`/`max` pair, because the whole point of it is
+ * that the card does not change shape as the species changes under it. Wide
+ * enough for a two-line cultivar name at 0.7rem — which is nearly all of them
+ * — and small enough to sit over a bed without hiding the planting round it.
+ */
+const PLANT_TILE_PX = 140;
+
 const HINTS: Record<PlanTool, string> = {
   select: "Tap a shape to select it · drag its dots to reshape · + splits a side",
   area: "Tap each corner · tap the big green dot to close",
@@ -3039,25 +3049,31 @@ export default function PlanPage({
         <div
           ref={plantPopupRef}
           data-plant-popup
-          style={{ opacity: 0 }}
+          style={{ opacity: 0, width: PLANT_TILE_PX, height: PLANT_TILE_PX }}
           /*
-            A SQUARE TILE, THE PICTURE FILLING IT, THE NAME OVER THE BOTTOM.
+            A SQUARE TILE OF ONE FIXED SIZE, THE PICTURE FILLING IT, THE NAME
+            OVER THE BOTTOM.
 
             The grid's own tile, to the letter — full-bleed photograph under a
             bottom scrim, label over it — because a plant tile on the map and a
             plant tile in the column are the same thing and two shapes for one
             thing reads as two things.
 
-            IT IS SIZED BY ITS OWN LABEL. The text is what sets the width: the
-            lines do not wrap, so the tile is at least as wide as the longest
-            of them, and `aspect-square` makes the height follow. A name is the
-            one part that must not be clipped — it is what is being chosen —
-            so the tile grows to hold it rather than the name shrinking to fit
-            a tile. The floor keeps a short name from drawing a stamp too small
-            to read; the cap keeps a botanical nobody can pronounce from
-            covering the yard, and past it the text truncates.
+            IT IS A MASK, AND IT DOES NOT MOVE. `PLANT_TILE_PX` square whatever
+            is in it: the photograph is enlarged to cover and cropped by the
+            corners, and the label is fitted to the tile rather than the tile to
+            the label.
+
+            An earlier version sized it to its own text, so that a name could
+            never be clipped. That was the wrong trade and it is worth saying
+            why: a card that changes shape every time the species changes is a
+            card that moves under your eye exactly while you are reading it,
+            and rolling the wheel through a category made it pulse. A steady
+            frame you can look at beats a name you never have to scan for. The
+            name wraps to two lines here rather than being cut, so almost
+            nothing is lost either.
           */
-          className="pointer-events-none fixed left-0 top-0 z-40 flex aspect-square min-w-[88px] max-w-[15rem] flex-col justify-end overflow-hidden rounded-2xl border border-edge bg-surface shadow-lg transition-opacity"
+          className={`pointer-events-none fixed left-0 top-0 z-40 flex flex-col justify-end overflow-hidden rounded-2xl border border-edge bg-surface shadow-lg transition-opacity`}
         >
           {species.current.row?.image && !brokenPopupImage[species.current.row.image] ? (
             /* eslint-disable-next-line @next/next/no-img-element */
@@ -3082,7 +3098,12 @@ export default function PlanPage({
               <StampSwatch
                 kind={stampFor(plantPick.itemId, symbolPrefs)}
                 color="#22c55e"
-                size={52}
+                /*
+                  Drawn large in the mask, the way a photograph fills it. Half
+                  the tile looked like a symbol that had failed to load rather
+                  than the answer for a plant that simply has no picture.
+                */
+                size={Math.round(PLANT_TILE_PX * 0.62)}
               />
             </div>
           )}
@@ -3092,17 +3113,11 @@ export default function PlanPage({
             would take the bottom third of a tile that is mostly picture.
           */}
           <div className="relative bg-gradient-to-t from-black/85 via-black/60 to-transparent px-2 pb-1.5 pt-4">
-            <div className="whitespace-nowrap text-[0.7rem] font-bold leading-tight text-white">
+            <div className="line-clamp-2 text-[0.7rem] font-bold leading-tight text-white">
               {species.current.label}
             </div>
             {species.current.row?.botanical && (
-              /*
-                Nowrap and NOT truncated, so this line sizes the tile too: a
-                truncated line is clipped out of the width it asked for, which
-                left the botanical shaved by a character or two against a tile
-                sized by the name alone. Both lines are the label.
-              */
-              <div className="whitespace-nowrap text-[0.6rem] italic leading-tight text-white/70">
+              <div className="truncate text-[0.6rem] italic leading-tight text-white/70">
                 {species.current.row.botanical}
               </div>
             )}
