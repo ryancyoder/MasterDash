@@ -959,6 +959,39 @@ export function labelPlantsWithPhoto(
   return id;
 }
 
+/**
+ * Resize one by its own id, which is what the grip on the plan drags.
+ *
+ * BY ID, where the card's slider goes by photograph. The card knows which
+ * PICTURE is picked and there is one frame per picture on that path; the plan
+ * knows which FRAME is picked, and the same cultivar can label three plantings
+ * with three frames sized for the three beds they sit in.
+ *
+ * Coalesced under the frame's own key, so a whole drag of the grip is one undo
+ * and sizing this frame and then that one is two.
+ */
+export function setCalloutWidthById(id: string, w: number) {
+  mutatePlan(
+    (plan) => ({
+      ...plan,
+      callouts: plan.callouts.map((c) =>
+        c.id === id
+          ? calloutWidth(w) === CALLOUT_DEFAULT_W
+            ? {
+                id: c.id,
+                photoId: c.photoId,
+                at: c.at,
+                // Kept, or a frame resized back to the default would forget
+                // which plant its line runs to and vanish off the plan.
+                ...(c.plantId ? { plantId: c.plantId } : {}),
+              }
+            : { ...c, w: calloutWidth(w) }
+          : c,
+      ),
+    }),
+    `callout-size:${id}`,
+  );
+}
 /** Move one, on release. Same one-write-per-drag rule a corner follows. */
 export function moveCallout(id: string, at: LatLng) {
   mutatePlan((plan) => ({

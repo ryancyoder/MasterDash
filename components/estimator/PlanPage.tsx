@@ -137,6 +137,7 @@ import {
   removeCalloutFor,
   removePlant,
   setCalloutWidth,
+  setCalloutWidthById,
   removePlantsOfKind,
   removeShape,
   setPlantVariant,
@@ -2708,6 +2709,7 @@ export default function PlanPage({
             );
           }}
           onMoveCallout={moveCallout}
+          onSizeCallout={setCalloutWidthById}
           /*
             HIDDEN MEANS NOT THERE, for every purpose the canvas has.
 

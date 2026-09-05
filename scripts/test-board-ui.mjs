@@ -5236,6 +5236,162 @@ try {
     `leader ${changed.leader} · mirror ${changed.mirror}`);
 
   /*
+    AND THE FRAME IS SIZED BY ITS OWN CORNER.
+
+    ON THE PICTURE RATHER THAN IN A CARD, because the judgement is about the
+    plan — is this big enough to read, is it now covering the bed it points at
+    — and both halves of that question are on the map. A label has no card of
+    its own anyway.
+
+    The corner is asked for rather than computed: the frame's height comes from
+    the DECODED photograph, so a check that guessed the aspect would be taking
+    hold of a grip that is not there. `data-callout` says where it is, the same
+    idiom `data-photo-drop` already uses and for the same reason.
+  */
+  shotStep = "callout-resize";
+  const frameCentre = { x: labelPt.x + 100, y: labelPt.y - 90 };
+  const drawnBox = async () =>
+    (await page.getAttribute("canvas[data-plan-canvas]", "data-callout"))
+      ?.split(",")
+      .map(Number) ?? [];
+  const [w0, h0] = await drawnBox();
+  ok("the picked label is drawn at the default width",
+    w0 === 132, `${w0}px wide`);
+  const beforeSize = await canvasShot();
+  await page.mouse.move(frameCentre.x + w0 / 2, frameCentre.y + h0 / 2);
+  await page.mouse.down();
+  await page.mouse.move(frameCentre.x + 130, frameCentre.y + 130 * (h0 / w0), {
+    steps: 8,
+  });
+  await page.waitForTimeout(150);
+  const [wLive] = await drawnBox();
+  /*
+    Within a pixel or two of twice the reach, not exactly it: the frame's
+    centre is a projected coordinate and the canvas rect a fractional one, so
+    demanding an exact 260 is demanding that two roundings agree. What is
+    under test is that the width follows the corner, at twice the distance
+    because it grows about its own centre.
+  */
+  ok("IT GROWS UNDER THE FINGER, before anything is written",
+    Math.abs(wLive - 260) <= 4, `${wLive}px while dragging, wanted ~260`);
+  const storedMid = await page.evaluate(() => {
+    const e = JSON.parse(localStorage.getItem("qe-estimate") ?? "{}");
+    return (e?.plan?.callouts ?? []).find((c) => c.plantId)?.w ?? null;
+  });
+  ok("and nothing is stored until the finger lifts",
+    storedMid === null || storedMid === undefined,
+    `stored ${storedMid}`);
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  const storedW = await page.evaluate(() => {
+    const e = JSON.parse(localStorage.getItem("qe-estimate") ?? "{}");
+    return (e?.plan?.callouts ?? []).find((c) => c.plantId)?.w ?? null;
+  });
+  ok("AND THE RESTING SIZE IS WRITTEN ONCE, ON RELEASE",
+    Math.abs(storedW - wLive) <= 1, `stored ${storedW}, drawn ${wLive}`);
+  /*
+    AND IT REALLY IS BIGGER ON SCREEN, read as the pixels that changed in a
+    band that is OUTSIDE the default frame and INSIDE the enlarged one — 100px
+    from the centre, against a default half-width of 66 and a new one of 130.
+
+    With the ruler in the same frame, as ever: the same band at 200px, outside
+    even the enlarged frame, where nothing should have changed. A repaint or a
+    re-fit lights up both, and the check has to tell that from a picture that
+    grew.
+  */
+  const grew = await page.evaluate(
+    ({ before, at }) => {
+      const c = document.querySelector("canvas[data-plan-canvas]");
+      const now = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+      const r = c.getBoundingClientRect();
+      const sx = c.width / r.width;
+      const sy = c.height / r.height;
+      /*
+        BELOW the centre line, not on it. `at.y` is the frame's middle and the
+        frame sits high on the map — a box centred there ran off the top of the
+        canvas, every row was skipped, and BOTH readings came back zero. Which
+        is the failure mode a ruler exists to catch: the check reported "the
+        picture did not grow" about a picture that had.
+      */
+      const box = (ox) => {
+        const cx = Math.round((at.x + ox - r.left) * sx);
+        const cy = Math.round((at.y + 30 - r.top) * sy);
+        const half = Math.round(12 * sx);
+        let n = 0;
+        for (let y = cy - half; y <= cy + half; y++) {
+          if (y < 0 || y >= c.height) continue;
+          for (let x = cx - half; x <= cx + half; x++) {
+            if (x < 0 || x >= c.width) continue;
+            const i = (y * c.width + x) * 4;
+            if (
+              Math.abs(now[i] - before[i]) > 24 ||
+              Math.abs(now[i + 1] - before[i + 1]) > 24 ||
+              Math.abs(now[i + 2] - before[i + 2]) > 24
+            )
+              n++;
+          }
+        }
+        return n;
+      };
+      /*
+        WHICHEVER SIDE IS ON THE CANVAS. The frame grows about its own centre,
+        so its left and right bands are the same measurement — and which of
+        them fits depends on where the plant happened to be planted. Fixing on
+        the right gave both bands off the edge, every row skipped, and two
+        zeroes that read as "it did not grow" about a picture that had.
+
+        Reported either way, so a zero can never be mistaken for a reading.
+      */
+      const onCanvas = (ox) => {
+        const cx = Math.round((at.x + ox - r.left) * sx);
+        const cy = Math.round((at.y + 30 - r.top) * sy);
+        return cx > 12 && cy > 12 && cx < c.width - 12 && cy < c.height - 12;
+      };
+      const side = onCanvas(100) && onCanvas(200) ? 1 : -1;
+      return {
+        inside: box(100 * side),
+        outside: box(200 * side),
+        side,
+        onCanvas: onCanvas(100 * side) && onCanvas(200 * side),
+      };
+    },
+    { before: beforeSize, at: frameCentre },
+  );
+  ok("AND THE PICTURE ON SCREEN IS THE ONE THAT GREW",
+    grew.onCanvas && grew.inside > 60,
+    `${grew.inside} pixels changed inside the new frame · side ${grew.side} · on canvas ${grew.onCanvas}`);
+  ok("and the band beyond the new edge did not change",
+    grew.outside < grew.inside / 3,
+    `inside ${grew.inside} · outside ${grew.outside}`);
+
+  /*
+    AND IT CANNOT BE DRAGGED PAST ITS LIMITS. The floor is where a photograph
+    stops being recognisable and becomes a coloured square; the ceiling is
+    where the call-out stops being an annotation on a plan and becomes a
+    picture with a plan behind it.
+  */
+  const [wNow, hNow] = await drawnBox();
+  await page.mouse.move(frameCentre.x + wNow / 2, frameCentre.y + hNow / 2);
+  await page.mouse.down();
+  await page.mouse.move(frameCentre.x + 900, frameCentre.y + 700, { steps: 6 });
+  await page.waitForTimeout(120);
+  const [wBig] = await drawnBox();
+  await page.mouse.move(frameCentre.x + 4, frameCentre.y + 4, { steps: 6 });
+  await page.waitForTimeout(120);
+  const [wSmall] = await drawnBox();
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  ok("dragged out past the ceiling it stops at it",
+    wBig === 420, `${wBig}px`);
+  ok("and pulled in past the floor it stops there",
+    wSmall === 70, `${wSmall}px`);
+  // Back to the default, so the undo below is the drop and not a resize.
+  await page.locator('button[aria-label="Undo the last change to the plan"]').click();
+  await page.waitForTimeout(350);
+  await page.locator('button[aria-label="Undo the last change to the plan"]').click();
+  await page.waitForTimeout(400);
+
+  /*
     AND TAKING THE PICTURE OFF THE PLANT TAKES THE LABEL WITH IT, in one edit.
 
     A frame left behind would draw a line to a plant that no longer claims the

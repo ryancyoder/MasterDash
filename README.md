@@ -1737,6 +1737,44 @@ both. The ruler in the same frame is that box mirrored to the other side of the
 plant: a repaint or a re-fit lights up both, and the check has to tell that
 from a line. Restoring the `photoDots` gate turns both red.
 
+**And a call-out is sized by its own corner.** A grip on the picked frame's
+bottom-right, dragged to resize — **on the picture rather than in a card**,
+because the judgement is about the plan (is this big enough to read, is it now
+covering the bed it points at) and both halves of that question are on the map.
+A label has no card of its own anyway. The photograph card's slider still
+works; the two write through different keys, `setCalloutWidth` by photograph
+and `setCalloutWidthById` by frame, because the same cultivar can label three
+plantings with three frames sized for the three beds.
+
+**It grows about its own CENTRE**, which is where the leader lands — growing
+from the corner would slide the middle of the picture away from the line's end
+as it grew, so the frame would appear to crawl off its own plant while being
+made bigger. Width alone: the height follows the photograph's aspect, so the
+corner cannot squash a picture out of shape.
+
+**Only the picked one wears a grip**, which is what makes it safe to claim the
+press **before the tools and in all of them**. Two things forced that. It has
+to be a `pointerdown`: the plant tool reads what is under the tip in
+`handleTap`, which runs on RELEASE, so a grab of the grip fell straight through
+and **planted a shrub where the corner was**. And dropping a cultivar is done
+with the Plant tool armed, with the new label selected the moment it lands —
+sending somebody to Select to size the frame they are already looking at is a
+step for nothing.
+
+**`data-callout` says the frame's DRAWN size**, the same idiom
+`data-photo-drop` uses. The height comes from the decoded photograph, so
+nothing outside the draw loop can work out where the corner is; a check that
+guessed the aspect would take hold of a grip that is not there. It is also the
+only honest answer to "how big is it" mid-drag, when nothing has been written.
+
+**Two rulers earned their keep in one check.** The growth is read as pixels
+that changed in a band outside the default frame and inside the enlarged one,
+with a control band beyond the new edge. Fixed on the right, both bands ran off
+the canvas, every row was skipped, and two zeroes read as *the picture did not
+grow* about a picture that had — so it probes whichever side fits and reports
+whether the boxes were on the canvas at all. Removing the clamps turns the two
+limit checks red; never committing the resize turns four red.
+
 **One check here was vacuous and mutation found it.** "Every `plant:` link is a
 `plant:` link" is true of the empty list, so a build that wrote the cultivar
 out as `event:<id>` passed it. It counts the `event:` links that did NOT appear

@@ -66,6 +66,8 @@ import {
   type SurveyKind,
 } from "@/lib/estimator/survey";
 import {
+  CALLOUT_MAX_W,
+  CALLOUT_MIN_W,
   measurementOf,
   outlineOf,
   pointsOf,
@@ -362,16 +364,30 @@ function calloutBox(
   t: Transform,
   drag: { id: string; at: LatLng } | null,
   images: Map<string, HTMLImageElement>,
+  sizing?: { id: string; w: number } | null,
 ) {
   const at = drag && drag.id === callout.id ? drag.at : callout.at;
   const c = toCanvas(toWorld(at), t);
   const img = images.get(callout.url);
   const aspect =
     img && img.naturalWidth > 0 ? img.naturalHeight / img.naturalWidth : 0.75;
-  const w = callout.w;
+  // The width being dragged, if this is the one being dragged. Held locally
+  // and committed on release, exactly as a moved call-out's position is: a
+  // resize fires on every pixel of the drag and only the resting size is worth
+  // a row in the op log.
+  const w = sizing && sizing.id === callout.id ? sizing.w : callout.w;
   const h = Math.round(w * aspect);
   return { img, c, w, h, x: c.x - w / 2, y: c.y - h / 2 };
 }
+
+/**
+ * How far from the frame's bottom-right corner still counts as the grip.
+ *
+ * A hair larger than the drawn square, which is 9px: the mark says where to
+ * put the finger and the target is what a finger actually is. The same
+ * relationship a plant's `PLANT_GRAB_MIN_PX` has to its 5px dot.
+ */
+export const CALLOUT_GRIP_PX = 15;
 
 /** What the page can ask the canvas, for a drop that starts somewhere else. */
 export interface PlanCanvasApi {
@@ -528,6 +544,7 @@ export default function PlanCanvas({
   selectedCalloutId,
   onSelectCallout,
   onMoveCallout,
+  onSizeCallout,
   plants,
   plantFace,
   plantName,
@@ -619,6 +636,14 @@ export default function PlanCanvas({
   onSelectCallout: (id: string | null) => void;
   /** One write per drag, on release. */
   onMoveCallout: (id: string, at: LatLng) => void;
+  /**
+   * Resize one, on release. Screen pixels, already clamped by the canvas.
+   *
+   * By ID rather than by photograph, which the card's slider uses: the same
+   * cultivar can label three different plantings, and each of those frames is
+   * sized for the bed it sits in.
+   */
+  onSizeCallout: (id: string, w: number) => void;
   /** Plants standing on the plan, one symbol each. */
   plants: PlacedPlant[];
   /** The category the next tap plants, so the ring can show which is armed. */
@@ -774,6 +799,7 @@ export default function PlanCanvas({
     */
     | { kind: "erase"; stroke: string; from: Pt }
     | { kind: "callout"; id: string }
+    | { kind: "callout-size"; id: string }
     | { kind: "label"; shapeId: string; base: { dx: number; dy: number }; startWorld: WorldPoint }
     | { kind: "pan"; startX: number; startY: number; centre: WorldPoint }
     | null
@@ -784,6 +810,16 @@ export default function PlanCanvas({
   const [dragPlant, setDragPlant] = useState<{ id: string; at: LatLng } | null>(null);
   /** A call-out being moved. Likewise. */
   const [dragCallout, setDragCallout] = useState<{ id: string; at: LatLng } | null>(
+    null,
+  );
+  /**
+   * A call-out being resized, held locally and committed on release.
+   *
+   * Separate from `dragCallout` rather than one "callout being changed": a
+   * frame is either being moved or being resized, never both, and folding them
+   * into one nullable would make every read of it ask which.
+   */
+  const [sizeCallout, setSizeCallout] = useState<{ id: string; w: number } | null>(
     null,
   );
   /*
@@ -2202,6 +2238,7 @@ export default function PlanCanvas({
         t,
         dragCallout,
         overlayImages.current,
+        sizeCallout,
       );
       const dot = toCanvas(toWorld(callout.dotAt), t);
       const picked = callout.id === selectedCalloutId;
@@ -2257,6 +2294,46 @@ export default function PlanCanvas({
       ctx.lineWidth = picked ? 3 : 2;
       ctx.strokeRect(x, y, w, h);
       ctx.restore();
+
+      /*
+        AND A GRIP ON THE PICKED ONE'S BOTTOM-RIGHT CORNER.
+
+        ON THE PICTURE RATHER THAN IN A CARD, because sizing a call-out is a
+        judgement about the plan — is this big enough to read, is it now
+        covering the bed it points at — and both halves of that question are on
+        the map. The card's slider is still there for a photograph, and this is
+        the answer for a label, which has no card of its own.
+
+        ONLY ON THE PICKED ONE. Six call-outs each wearing a corner mark is six
+        more things to catch a finger aimed at the plan, and the mark says
+        "this one is grabbable now" rather than decorating every frame.
+
+        Bottom-right by convention — it is where every window and every image
+        in every editor puts it — and drawn as a filled square with a dark
+        outline so it reads over a bright photograph as well as over turf.
+      */
+      if (picked) {
+        /*
+          THE DRAWN SIZE, ON THE ELEMENT — same idiom as `data-photo-drop`.
+
+          The frame's height comes from the DECODED photograph, so nothing
+          outside this loop can work out where its corner is: a check that
+          wants to take hold of the grip would have to guess the aspect of a
+          picture it cannot see. This says where the corner actually is,
+          which is also the only honest answer to "how big is it on screen"
+          while a resize is mid-drag and nothing has been written yet.
+        */
+        canvas.dataset.callout = `${Math.round(w)},${Math.round(h)}`;
+        ctx.save();
+        ctx.fillStyle = "#22c55e";
+        ctx.strokeStyle = "rgba(0,0,0,0.55)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.rect(x + w - 9, y + h - 9, 9, 9);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
     }
 
     // What a drop would land on. Drawn last so it sits over its target, and
@@ -2430,6 +2507,7 @@ export default function PlanCanvas({
     plantPickId,
     shapes,
     callouts,
+    sizeCallout,
     imageFailed,
     selectedCalloutId,
     dragCallout,
@@ -2659,6 +2737,22 @@ export default function PlanCanvas({
   }
 
   /** The call-out under a point, topmost first. */
+  /**
+   * The picked call-out's grip, if the press landed on it.
+   *
+   * Only the picked one has a grip, so only the picked one is asked — and it is
+   * asked BEFORE the frame itself, or the grab would move the picture instead
+   * of resizing it, since the grip sits inside the frame's own corner.
+   */
+  function calloutGripAt(cp: Pt, t: Transform): CalloutDraw | null {
+    if (!selectedCalloutId) return null;
+    const c = callouts.find((x) => x.id === selectedCalloutId);
+    if (!c) return null;
+    const box = calloutBox(c, t, dragCallout, overlayImages.current, sizeCallout);
+    const grip = { x: box.x + box.w, y: box.y + box.h };
+    return dist(cp, grip) <= CALLOUT_GRIP_PX ? c : null;
+  }
+
   function calloutAt(cp: Pt, t: Transform): CalloutDraw | null {
     for (let i = callouts.length - 1; i >= 0; i--) {
       const box = calloutBox(callouts[i], t, dragCallout, overlayImages.current);
@@ -2942,6 +3036,38 @@ function isPlantInput(type: string): boolean {
       pointersRef.current.delete(e.pointerId);
       return;
     }
+    /*
+      THE PICKED CALL-OUT'S GRIP, BEFORE THE TOOLS AND IN ALL OF THEM.
+
+      Two reasons it is here rather than inside `tool === "select"`.
+
+      It has to be a POINTERDOWN. The plant tool's own reading of what is under
+      the tip happens in `handleTap`, which runs on release — far too late to
+      claim a drag, so a grab of the grip there fell straight through and
+      PLANTED A SHRUB where the corner was. That is how this was found.
+
+      And the grip is only drawn on a call-out that is already picked, which
+      makes it the narrowest possible target: a 15px disc that exists only
+      because somebody selected that frame. Dropping a cultivar onto a plant is
+      done with the PLANT tool armed and the label it makes is selected the
+      moment it lands — sending somebody to Select to size the frame they are
+      already looking at, with its grip drawn on it, is a step for nothing.
+    */
+    {
+      const cp = canvasPoint(e);
+      const grip = calloutGripAt(cp, transformNow());
+      if (grip) {
+        dragRef.current = { kind: "callout-size", id: grip.id };
+        // CLIENT coordinates, which is what `pressRef` holds everywhere else —
+        // the slop that decides "moved" is measured against clientX/clientY,
+        // and canvas coordinates here would compare two different origins and
+        // call a still finger a drag.
+        pressRef.current = { x: e.clientX, y: e.clientY, moved: false };
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        return;
+      }
+    }
+
     // The tip has landed: whatever happens next is a real mark, so the ghost
     // stops standing in for it.
     if (penRef.current) {
@@ -3473,6 +3599,32 @@ function isPlantInput(type: string): boolean {
       setDragCallout({ id: drag.id, at: toLatLng(world) });
       return;
     }
+    /*
+      RESIZED ABOUT ITS OWN CENTRE, which is where the leader lands.
+
+      Growing from the corner would slide the middle of the picture away from
+      the line's end as it grew, so the frame would appear to crawl off its own
+      plant while being made bigger. About the centre it stays put and only
+      gets larger, which is what the gesture reads as.
+
+      Width alone. The height follows the photograph's aspect, so dragging the
+      corner cannot squash a picture out of shape — a distorted photograph on a
+      plan is a photograph nobody trusts, and there is no reason to want one.
+    */
+    if (drag.kind === "callout-size") {
+      const c = callouts.find((x) => x.id === drag.id);
+      if (c) {
+        const box = calloutBox(c, transformNow(), dragCallout, overlayImages.current, null);
+        setSizeCallout({
+          id: drag.id,
+          w: Math.min(
+            CALLOUT_MAX_W,
+            Math.max(CALLOUT_MIN_W, Math.round((cp.x - box.c.x) * 2)),
+          ),
+        });
+      }
+      return;
+    }
     if (drag.kind === "label") {
       // The offset it started with, plus how far the finger has come — rather
       // than "put the label under the finger", which would jump it by however
@@ -3602,6 +3754,15 @@ function isPlantInput(type: string): boolean {
       const moved = dragCallout;
       setDragCallout(null);
       if (moved && press?.moved) onMoveCallout(drag.id, moved.at);
+      return;
+    }
+
+    // A resized call-out, once, on release. Same rule: a tap that merely
+    // landed on the grip writes nothing.
+    if (drag && drag.kind === "callout-size") {
+      const sized = sizeCallout;
+      setSizeCallout(null);
+      if (sized && press?.moved) onSizeCallout(drag.id, sized.w);
       return;
     }
 
