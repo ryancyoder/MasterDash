@@ -21,12 +21,9 @@ import {
   driftScale,
   locatedPhotoAt,
   type GradeFrame,
-  type ReviewSegment,
-  type ReviewSession,
 } from "@/lib/estimator/review";
 import {
   fetchReviewSession,
-  fetchReviewTranscript,
   movePoint,
 } from "@/lib/estimator/reviewData";
 import {
@@ -66,8 +63,6 @@ import { SURVEY_COLORS, elevationFeet } from "@/lib/estimator/survey";
 import {
   ANCHOR_BLURB,
   anchorIsReal,
-  layersNeedingUpload,
-  mergeLayerRows,
   reorderLayers,
   visibleOverlays,
   type MapOverlay,
@@ -95,27 +90,22 @@ import {
   type PlantMode,
   type ShapeKind,
 } from "@/lib/estimator/plan";
-import { heldPlanImages } from "@/lib/estimator/planImage";
+import { usePropertyLayers } from "@/lib/estimator/usePropertyLayers";
+import { useVisitReplay } from "@/lib/estimator/useVisitReplay";
+import { usePropertyPhotos } from "@/lib/estimator/usePropertyPhotos";
 import { shapesForPhoto, type ShapePhotoLink } from "@/lib/estimator/photoLink";
 import {
-  eventLabel,
-  fetchPropertyPhotos,
-  placeEventPhoto,
   type EventPhoto,
-  type PhotoEvent,
   type PhotoSource,
 } from "@/lib/estimator/propertyPhotos";
 import { photoTakeoffLabel } from "@/lib/estimator/pendingTakeoff";
 import {
   addOverlayFromFile,
   addOverlayFromUrl,
-  uploadLayerImage,
   deleteLayer,
-  fetchLayers,
   fetchProperties,
   fetchSurvey,
   fetchSurveySessions,
-  localOverlayUrl,
   saveLayer,
   type PropertyOption,
   type UprightSurveySession,
@@ -324,9 +314,6 @@ export default function PlanPage({
     linear: null,
   });
 
-  const [overlays, setOverlays] = useState<MapOverlay[]>([]);
-  /** Object URLs for overlays this device holds the bytes for. */
-  const [localUrls, setLocalUrls] = useState<Record<string, string>>({});
   const [picking, setPicking] = useState(false);
   const [survey, setSurvey] = useState<SurveyLayer | null>(null);
   /**
@@ -351,96 +338,16 @@ export default function PlanPage({
   const anchor = plan.anchor;
   const propertyId = anchor?.propertyId ?? null;
 
-  // The property's layers. Fetched, because they are shared — another device,
-  // or Upright on site, may have placed one since this estimate was opened.
-  //
-  // The local half — whether THIS device holds the image bytes — is settled by
-  // asking IndexedDB, not by remembering. See `mergeLayerRows()`: remembering
-  // is what made a layer vanish the moment you left this view and came back.
-  useEffect(() => {
-    let live = true;
-    void (async () => {
-      // Nothing is set before the first await, including the empty case:
-      // state moves once, when the answer is in.
-      const rows = propertyId === null ? [] : await fetchLayers(propertyId);
-      const held = await heldPlanImages(rows.map((r) => r.id));
-      if (!live) return;
-      if (propertyId === null) {
-        setOverlays([]);
-        return;
-      }
-      // A layer this device just added has bytes here and no row yet; the
-      // fetch must not drop it.
-      setOverlays((current) => mergeLayerRows(rows, current, held));
-    })();
-    return () => {
-      live = false;
-    };
-  }, [propertyId]);
+  /*
+    The property's layers: where the list comes from, that the bytes reach
+    Storage, and that the object URLs are revoked. Three effects that all read
+    and write one array, kept together in `usePropertyLayers` where their
+    dependency rules can be read against each other.
 
-  /**
-   * Push the bytes of any layer this device holds that Storage does not.
-   *
-   * The other half of the same bug: nothing ever uploaded a layer image, so
-   * the picture lived in one iPad's IndexedDB and a second device listed a
-   * layer it could never draw. Retried on every load rather than queued, so a
-   * layer added with no signal lands the moment there is some, and a failed
-   * upload fixes itself the next time the map is opened.
-   *
-   * Fire-and-forget, like every other write in this flow: the layer already
-   * draws from the device's own copy, so a failure here costs nothing that is
-   * on screen.
-   */
-  useEffect(() => {
-    let live = true;
-    const pending = layersNeedingUpload(overlays);
-    if (pending.length === 0) return;
-    void (async () => {
-      for (const o of pending) {
-        const saved = await uploadLayerImage(o);
-        if (!live || !saved) continue;
-        setOverlays((current) =>
-          current.map((c) => (c.id === saved.id ? { ...c, ...saved } : c)),
-        );
-      }
-    })();
-    return () => {
-      live = false;
-    };
-    // Keyed on WHICH layers still need it, not on the array: the effect writes
-    // to `overlays`, so depending on the array itself would re-run on its own
-    // result and upload the same file for ever.
-  }, [overlays.map((o) => (o.storagePath === null && o.imageId ? o.id : "")).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Object URLs for the local copies, minted once each and revoked together.
-  useEffect(() => {
-    let live = true;
-    const minted: string[] = [];
-    void Promise.all(
-      overlays.map(async (o) => {
-        if (!o.imageId) return null;
-        const url = await localOverlayUrl(o);
-        return url ? ([o.id, url] as const) : null;
-      }),
-    ).then((pairs) => {
-      if (!live) {
-        for (const p of pairs) if (p) URL.revokeObjectURL(p[1]);
-        return;
-      }
-      const next: Record<string, string> = {};
-      for (const p of pairs) {
-        if (p) {
-          next[p[0]] = p[1];
-          minted.push(p[1]);
-        }
-      }
-      setLocalUrls(next);
-    });
-    return () => {
-      live = false;
-      for (const url of minted) URL.revokeObjectURL(url);
-    };
-  }, [overlays]);
+    The setter comes back because adding, placing, rescaling and deleting a
+    layer are this page's business — they belong to buttons and gestures.
+  */
+  const { overlays, setOverlays, localUrls } = usePropertyLayers(propertyId);
 
   // --- the visit being replayed -------------------------------------------
   //
@@ -460,9 +367,6 @@ export default function PlanPage({
   */
   const [mode, setMode] = useState<"plan" | "review" | "plants">("plan");
   const [pickingReview, setPickingReview] = useState(false);
-  const [visit, setVisit] = useState<ReviewSession | null>(null);
-  const [segments, setSegments] = useState<ReviewSegment[]>([]);
-  const [transcriptStatus, setTranscriptStatus] = useState("none");
   /**
    * What the filmstrip has picked, as `photo:<id>` or `grade:<id>`.
    *
@@ -495,37 +399,20 @@ export default function PlanPage({
     looks, and it is a request per estimate that would never be read.
   */
   const [stripSource, setStripSource] = useState<PhotoSource>("visit");
-  const [eventPhotos, setEventPhotos] = useState<PhotoEvent[] | null>(null);
-  /** The yard's own photographs — about the place, not about a visit. */
-  const [referencePhotos, setReferencePhotos] = useState<EventPhoto[] | null>(null);
-  const [photoError, setPhotoError] = useState<string | null>(null);
   const estimatePropertyId = estimate.propertyId;
-
-  useEffect(() => {
-    // One request carries both of the yard's sets, so switching between them
-    // costs nothing and either can be the one that fetched them.
-    if (stripSource === "visit" || estimatePropertyId === null) return;
-    let live = true;
-    void fetchPropertyPhotos(estimatePropertyId).then((r) => {
-      if (!live) return;
-      setEventPhotos(r.events);
-      setReferencePhotos(r.reference);
-      setPhotoError(r.error);
-    });
-    return () => {
-      live = false;
-    };
-  }, [stripSource, estimatePropertyId]);
-
-  // A change of yard invalidates what was fetched. Cleared during render, so
-  // no frame ever shows another property's photographs under this one's name.
-  const [lastPhotoProperty, setLastPhotoProperty] = useState(estimatePropertyId);
-  if (lastPhotoProperty !== estimatePropertyId) {
-    setLastPhotoProperty(estimatePropertyId);
-    setEventPhotos(null);
-    setReferencePhotos(null);
-    setPhotoError(null);
-  }
+  /*
+    The two sets, the request that gets them, the invalidation when the yard
+    changes, and the index that finds one by id — all in `usePropertyPhotos`,
+    because none of it touches anything else on this page and every one of
+    those four parts is wrong on its own.
+  */
+  const {
+    eventPhotos,
+    referencePhotos,
+    photoError,
+    eventById,
+    placePhoto: placePhotoAt,
+  } = usePropertyPhotos(estimatePropertyId, stripSource);
 
   /**
    * The picture being dragged, and where the pointer is.
@@ -613,34 +500,27 @@ export default function PlanPage({
 
   const reviewSessionId = plan.review?.sessionId ?? null;
 
-  // Changing the visit invalidates everything loaded for the last one.
-  // Adjusted during render rather than in an effect, so there is never a frame
-  // showing one visit's transcript against another's photographs.
+  /*
+    The session, its transcript, and the rule for throwing both away when the
+    visit changes — in `useVisitReplay`, where the fetch and the invalidation
+    can be read together.
+  */
+  const { visit, setVisit, segments, transcriptStatus } =
+    useVisitReplay(reviewSessionId);
+
+  /*
+    The strip's own share of that same invalidation. Kept here rather than
+    inside the hook because these belong to the filmstrip, not to the visit:
+    what is picked, and the last failed correction. Adjusted during render for
+    the same reason — no frame ever shows one visit's pick over another's
+    frames.
+  */
   const [lastVisitId, setLastVisitId] = useState(reviewSessionId);
   if (lastVisitId !== reviewSessionId) {
     setLastVisitId(reviewSessionId);
     setStripPick(null);
     setPinError(null);
-    setVisit(null);
-    setSegments([]);
-    setTranscriptStatus("none");
   }
-
-  useEffect(() => {
-    if (!reviewSessionId) return;
-    let live = true;
-    void fetchReviewSession(reviewSessionId).then((s) => {
-      if (live) setVisit(s);
-    });
-    void fetchReviewTranscript(reviewSessionId).then((t) => {
-      if (!live) return;
-      setSegments(t.segments);
-      setTranscriptStatus(t.status);
-    });
-    return () => {
-      live = false;
-    };
-  }, [reviewSessionId]);
 
   // Destructured rather than kept as one object: the hook hands back a ref
   // alongside plain values, and reading those off the object during render
@@ -727,20 +607,6 @@ export default function PlanPage({
     }
     return dots.length ? dots : null;
   }, [visit, stripSource, eventPhotos, referencePhotos]);
-
-  /** Every photograph of the yard, flat, for finding one by id. */
-  const eventById = useMemo(() => {
-    const m = new Map<string, { photo: EventPhoto; label: string }>();
-    for (const e of eventPhotos ?? []) {
-      for (const ph of e.photos) m.set(ph.id, { photo: ph, label: eventLabel(e) });
-    }
-    // The reference photographs answer here too, or picking one would preview
-    // nothing and a call-out on one would have no picture to draw.
-    for (const ph of referencePhotos ?? []) {
-      m.set(ph.id, { photo: ph, label: "Reference" });
-    }
-    return m;
-  }, [eventPhotos, referencePhotos]);
 
   /**
    * Held-open photographs, resolved: the picture, and where its own dot is.
@@ -929,28 +795,17 @@ export default function PlanPage({
     [eventPhotos],
   );
 
+  /*
+    The optimistic write and its rollback are `usePropertyPhotos`'s, since they
+    are that data changing. What is this page's is lighting the pin the drop
+    just made — the feedback half of the gesture, and the strip is this page's.
+  */
   const placePhoto = useCallback(
     async (photo: EventPhoto, at: { lat: number; lng: number }) => {
-      const before = { lat: photo.lat, lng: photo.lng, isOutlier: photo.isOutlier };
-      const patch = (next: Partial<EventPhoto>) =>
-        setEventPhotos((groups) =>
-          (groups ?? []).map((g) => ({
-            ...g,
-            photos: g.photos.map((p) => (p.id === photo.id ? { ...p, ...next } : p)),
-          })),
-        );
-      // Placed by hand overrules the flag that says the camera's own fix
-      // landed away from the site — see placeEventPhoto().
-      patch({ lat: at.lat, lng: at.lng, isOutlier: false });
       setStripPick(`event:${photo.id}`);
-      setPhotoError(null);
-      const saved = await placeEventPhoto(photo.id, at);
-      if (!saved) {
-        patch(before);
-        setPhotoError("That photograph could not be placed. Check the connection and try again.");
-      }
+      await placePhotoAt(photo, at);
     },
-    [],
+    [placePhotoAt],
   );
 
   useEffect(() => {
@@ -1281,7 +1136,7 @@ export default function PlanPage({
         }
       });
     },
-    [reviewSessionId, plan.survey?.sessionId],
+    [reviewSessionId, plan.survey?.sessionId, setVisit],
   );
 
   const surveySessionId = plan.survey?.sessionId ?? null;
@@ -1730,7 +1585,7 @@ export default function PlanPage({
         return next;
       });
     },
-    [],
+    [setOverlays],
   );
 
   /**
@@ -1753,7 +1608,7 @@ export default function PlanPage({
       for (const o of next) if (byId.has(o.id)) void saveLayer(o);
       return next;
     });
-  }, []);
+  }, [setOverlays]);
 
   const startAligning = useCallback((id: string) => {
     setAligningId(id);
@@ -1861,7 +1716,7 @@ export default function PlanPage({
         );
       }
     },
-    [propertyId, anchor, overlays.length, startAligning],
+    [propertyId, anchor, overlays.length, startAligning, setOverlays],
   );
 
   useEffect(() => {
